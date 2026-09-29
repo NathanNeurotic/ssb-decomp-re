@@ -1327,6 +1327,35 @@ static void fill_rect(int ulx, int uly, int lrx, int lry)
     gPS2RenderStats.rects++;
 }
 
+/* The GS UV register holds unsigned 14-bit (10.4) coordinates.  A negative
+ * texel coordinate - which the game produces for sprites at sub-pixel
+ * positions, e.g. s = -0.25 - wraps to ~1023.75 on a real GS, so under
+ * REGION_CLAMP almost the whole sprite samples the texture's last row/column
+ * and only a thin line of it shows (PCSX2's hardware renderer hides this).
+ * The N64 clamps such coordinates to texel 0; do the same by clipping the
+ * rectangle edge [p0, p1] until its texel coordinate t reaches 0. */
+static void clip_negative_texcoord(float *p0, float *p1, float *t0, float *t1)
+{
+    if (*t0 >= 0.0f && *t1 >= 0.0f)
+    {
+        return;
+    }
+    if (*t0 < 0.0f && *t1 < 0.0f)
+    {
+        *t0 = *t1 = 0.0f; /* everything samples the clamped first texel */
+    }
+    else if (*t0 < 0.0f)
+    {
+        *p0 += (*p1 - *p0) * (-*t0 / (*t1 - *t0));
+        *t0 = 0.0f;
+    }
+    else
+    {
+        *p1 -= (*p1 - *p0) * (-*t1 / (*t0 - *t1));
+        *t1 = 0.0f;
+    }
+}
+
 static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int flip)
 {
     uint32_t cyc = R.om_h & (3u << 20);
@@ -1386,6 +1415,23 @@ static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int fli
         v0 = t;
         u1 = s + (y1 - y0) * dsdx;
         v1 = t + (x1 - x0) * dtdy;
+    }
+    /* Repeat-wrapped axes are fine: 1024 texels is a multiple of every
+     * (power-of-two) GS texture size, so the 14-bit wrap lands on the same
+     * texel.  Clamped axes need the negative part clipped away. */
+    if (!dm.tex.wrap_s_repeat)
+    {
+        if (!flip)
+            clip_negative_texcoord(&x0, &x1, &u0, &u1);
+        else
+            clip_negative_texcoord(&y0, &y1, &u0, &u1);
+    }
+    if (!dm.tex.wrap_t_repeat)
+    {
+        if (!flip)
+            clip_negative_texcoord(&y0, &y1, &v0, &v1);
+        else
+            clip_negative_texcoord(&x0, &x1, &v0, &v1);
     }
     if (dm.prim_depth)
     {
