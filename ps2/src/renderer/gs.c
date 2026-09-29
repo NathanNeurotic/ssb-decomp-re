@@ -67,7 +67,13 @@ static volatile int sPktInFlight; /* a buffer was kicked and not yet waited on *
 
 /* The game's framebuffers (RDRAM on N64) - defined by the linker glue
  * (ps2/src/platform/arena.S) so every scene's arena-size arithmetic holds. */
-extern uint16_t gSYFramebufferSets[PS2_FB_COUNT][PS2_SCREEN_W * PS2_SCREEN_H];
+/* The game declares them [3][230][320] (src/sys/video.h): consecutive
+ * buffers are only 230 rows apart and overlap by 10 rows, which is fine on
+ * the N64 because rows 0-9 and 230-239 are never drawn (scissor border).
+ * Each maps to its own full 240-row GS framebuffer here. */
+#define N64_FB_ROWS 230
+#define N64_FB_STRIDE (N64_FB_ROWS * PS2_SCREEN_W * 2)
+extern uint16_t gSYFramebufferSets[PS2_FB_COUNT][N64_FB_ROWS * PS2_SCREEN_W];
 extern uint16_t gSYZBuffer[PS2_SCREEN_W * PS2_SCREEN_H] __attribute__((weak));
 
 static volatile int sDisplayedFb = -1;
@@ -268,18 +274,26 @@ void ps2_pkt_finish(void)
 int ps2_gs_fb_index_for(const void *n64_fb)
 {
     uintptr_t a = (uintptr_t)n64_fb & 0x0FFFFFFF;
+    uintptr_t base = (uintptr_t)gSYFramebufferSets & 0x0FFFFFFF;
+    uintptr_t off;
     int i;
 
-    for (i = 0; i < PS2_FB_COUNT; i++)
+    /* Buffer i starts at base + i * N64_FB_STRIDE (230 rows, not 240: see
+     * the declaration).  Mapping by 240-row ranges put the game's second
+     * buffer inside the first one's range, so both drew into GS
+     * framebuffer 0 - including while it was on screen, which showed on
+     * hardware as a black line flickering at the scanline being redrawn. */
+    if (a < base)
     {
-        uintptr_t fb = (uintptr_t)gSYFramebufferSets[i] & 0x0FFFFFFF;
-
-        if (a >= fb && a < fb + sizeof(gSYFramebufferSets[i]))
-        {
-            return i;
-        }
+        return -1;
     }
-    return -1;
+    off = a - base;
+    if (off >= (uintptr_t)(PS2_FB_COUNT - 1) * N64_FB_STRIDE + PS2_SCREEN_W * PS2_SCREEN_H * 2)
+    {
+        return -1;
+    }
+    i = (int)(off / N64_FB_STRIDE);
+    return (i < PS2_FB_COUNT) ? i : PS2_FB_COUNT - 1;
 }
 
 int ps2_gs_is_zbuffer(const void *n64_addr)
