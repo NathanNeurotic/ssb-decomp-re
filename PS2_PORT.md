@@ -118,6 +118,23 @@ read (a small metadata part is resident).
 Stage 1 (`n64prep.mk`) runs the decomp's own extractor without IDO; stage 2
 (`build_assets.py`) compiles and packs. `prepare_assets.sh` runs both.
 
+### Audio (`ps2/src/audio/`, `ps2/src/game/ps2_synth.c`, `ps2/tools/spu_samples.py`)
+No RSP audio microcode runs and nothing is mixed on the EE. The game's own
+sequence player and sound-effect engine run unchanged and drive libultra's
+synthesizer voice API (`n_alSyn*`); only the bottom layer, `n_alAudioFrame`,
+is replaced. It calls the players back at their sample times like the N64
+driver, then turns the queued voice updates (start, pitch, volume ramp, pan,
+FX mix, stop) into SPU2 voice registers: each of the game's 16 physical
+voices is one voice of SPU2 core 1 (dry output).
+
+Samples: all 439 wavetables of the two instrument banks are decoded from
+VADPCM and re-encoded to PS-ADPCM offline. Loops are block-aligned (silence
+prepended) and the loop body is unrolled and resampled by a factor ~1 so it
+spans whole 28-sample blocks; the runtime multiplies the pitch by that
+factor. The 4.1 MiB set lives in EE RAM and samples are copied to SPU RAM
+(1.9 MiB cache, LRU) on first use. All register changes of a frame go to the
+IOP as one `sceSdProcBatch` via sdrdrv.
+
 ### Input (`ps2/src/input/pad.c`)
 libpad + libmtap, up to four players (multitap on port 1, or port 1 + a
 multitap on port 2). One mapping table (Cross = A, Square = B,
@@ -140,6 +157,10 @@ own `syMainLoop`.
 
 ### Game-source changes
 - `include/PR/rcp.h`: register reads/writes go through the platform layer.
+- `include/PR/guint.h` + `src/libultra/gu/sinf.c`, `cosf.c`: `DU(hi, lo)`
+  initialisers so the double constants are right on little-endian (identical
+  initialisers on N64).
+- `src/libultra/n_audio/n_env.c`: `n_alAudioFrame` excluded on PS2.
 - `apply_ps2_guards.py`, `fix_missing_returns.py`, `le_bitfields.py`:
   scripted, reviewable edits (colour packing, top-of-RAM assumptions,
   unsigned-loop UB, missing returns, anti-tamper checks, LE bitfields).

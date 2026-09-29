@@ -2114,6 +2114,7 @@ void n_alSynNew(ALSynConfig *c)
 }
 
 // TODO
+#ifndef PLATFORM_PS2 // PS2: SPU2 voices instead of an RSP command list, see ps2/src/game/ps2_synth.c
 Acmd *n_alAudioFrame(Acmd *cmdList, s32 *cmdLen, s16 *outBuf, s32 outLen)
 {
   ALPlayer    *client;
@@ -2205,12 +2206,13 @@ Acmd *n_alAudioFrame(Acmd *cmdList, s32 *cmdLen, s16 *outBuf, s32 outLen)
   *cmdLen = (s32) (cmdlEnd - cmdList);
   
   _n_collectPVoices(); /* collect free physical voices */
-  
+
 #ifdef AUD_PROFILE
   PROFILE_AUD(drvr_num, drvr_cnt, drvr_max, drvr_min);
 #endif
   return cmdlEnd;
 }
+#endif /* PLATFORM_PS2 */
 
 ////////////////////////////////////////
 

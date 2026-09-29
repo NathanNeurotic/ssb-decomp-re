@@ -27,11 +27,14 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Virtual ROM address of the (re-encoded, uncompressed) relocData table.
 # Must match lLBRelocTableAddr in ps2/ps2_link.x.
 RELOC_VROM = 0x20000000
+SPU_SAMPLES_VROM = 0x28000000  # keep in sync with PS2_SPU_SAMPLES_VROM (ps2/include/ps2/assetpack.h)
 PACK_VERSION = 1
 REGION_RESIDENT = 1
 
@@ -739,6 +742,10 @@ def main():
         if len(blob) != rom_size:
             log("  note: audio %s is %d bytes (ROM segment %d)" % (name, len(blob), rom_size))
         regions.append((lo, bytes(blob), False))
+
+    # ---- SPU2 samples (PS-ADPCM, see spu_samples.py) ----
+    import spu_samples
+    regions.append((SPU_SAMPLES_VROM, spu_samples.build(rom, args.jobs, log), False))
 
     # ---- raw ROM header / boot area (read by harmless boot-time code) ----
     regions.append((0, rom[:0x1000], True))

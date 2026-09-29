@@ -26,6 +26,31 @@
 
 #define PS2PACK_REGION_RESIDENT 0x1u
 
+/* SPU2 sample set (PS-ADPCM), built by ps2/tools/spu_samples.py. */
+#define PS2_SPU_SAMPLES_VROM 0x28000000u /* after the relocData regions */
+#define PS2_SPU_SAMPLES_MAGIC "SPUS"
+#define PS2_SPU_SAMPLES_VERSION 1
+
+typedef struct PS2SpuSampleHeader
+{
+    char magic[4];
+    uint32_t version;
+    uint32_t count;
+    uint32_t entries_offset;
+} PS2SpuSampleHeader;
+
+typedef struct PS2SpuSampleEntry
+{
+    uint32_t key;          /* ROM address of the source wave data */
+    uint32_t len;          /* source length in bytes */
+    uint32_t loop_start;   /* source loop, samples (0,0 = one-shot) */
+    uint32_t loop_end;
+    uint32_t data_off;     /* PS-ADPCM data, from the region start */
+    uint32_t data_size;    /* bytes, multiple of 64 */
+    float pitch_scale;     /* multiply playback pitch by this */
+    uint32_t flags;        /* bit0: looped */
+} PS2SpuSampleEntry;
+
 typedef struct PS2PackHeader
 {
     char magic[8];
@@ -48,5 +73,8 @@ typedef struct PS2PackRegion
     uint32_t file_offset;
     uint32_t flags;
 } PS2PackRegion;
+
+/* Reads from the pack's virtual ROM address space (ps2/src/storage/assets.c). */
+void ps2_rom_read(uint32_t rom_addr, void *dst, uint32_t size);
 
 #endif /* PS2_ASSETPACK_H */

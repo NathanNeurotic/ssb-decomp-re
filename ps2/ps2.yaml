@@ -35,6 +35,7 @@ targets:
       - mc
       - filexio
       - patches
+      - sdr
     defines:
       - PLATFORM_PS2
       - REGION_US
@@ -210,6 +211,7 @@ targets:
       - mc
       - filexio
       - patches
+      - sdr
       - m
     embed_irx:
       - iomanx

@@ -1,20 +1,19 @@
 /*
- * PS2 audio backend (SPU2).
+ * PS2 audio: libultra AI (audio interface) side.
  *
- * Bring-up status: output silent. The IOP side (libsd + sdrdrv) is loaded
- * at boot so the SPU2 voice backend can be added without changing the IOP
- * module set; see PS2_PORT.md "Audio design" for the plan (offline
- * VADPCM -> PS-ADPCM conversion, SPU2 voices driven from the game's
- * synthesizer-driver layer).
+ * Sound is produced by SPU2 voices (spu.c) driven from the game's
+ * synthesizer driver (ps2/src/game/ps2_synth.c); the N64 PCM output buffers
+ * the audio thread still hands to the AI are never filled or played.
  */
 #include <ps2/platform.h>
+#include <ps2/spu.h>
 
 static uint32_t sAiFrequency;
 static uint32_t sAiQueuedBytes;
 
 void ps2_audio_init(void)
 {
-    ps2_log("audio: SPU2 backend not active yet (silent)");
+    ps2_spu_init();
 }
 
 int32_t ps2_audio_ai_set_frequency(uint32_t frequency)

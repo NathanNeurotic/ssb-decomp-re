@@ -12,6 +12,7 @@
 
 #include <ps2/input.h>
 #include <ps2/platform.h>
+#include <ps2/spu.h>
 
 #include <kernel.h>
 #include <string.h>
@@ -112,6 +113,17 @@ static void render_one(const RenderJob *job)
                     (unsigned)(ms->total_used / 1024), (unsigned)(ms->total_peak / 1024), (unsigned)ts->entries,
                     (unsigned)(ts->ee_bytes / 1024), (unsigned)(ts->ee_capacity / 1024),
                     (unsigned)ts->vram_blocks_peak, (unsigned)PS2_TEX_POOL_BLOCKS, (unsigned)ts->evictions);
+            {
+                const PS2SpuStats *ss = ps2_spu_stats();
+
+                ps2_log("spu: %u voices, %u/%u samples resident (%u/%u KiB), %u uploads (%u KiB), %u evictions, "
+                        "%u missing, batch %u, hw %u sounding (nax %x)",
+                        (unsigned)ss->active_voices, (unsigned)ss->resident, (unsigned)ss->samples,
+                        (unsigned)(ss->spu_bytes_used / 1024), (unsigned)(ss->spu_bytes_total / 1024),
+                        (unsigned)ss->uploads, (unsigned)(ss->upload_bytes / 1024), (unsigned)ss->evictions,
+                        (unsigned)ss->missing, (unsigned)ss->batch_entries, (unsigned)ss->hw_sounding,
+                        (unsigned)ss->hw_nax_sum);
+            }
         }
     }
 }
