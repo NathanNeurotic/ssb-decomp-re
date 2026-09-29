@@ -124,6 +124,12 @@ static void render_one(const RenderJob *job)
                 (unsigned)gPS2RenderStats.dl_commands, (unsigned)gPS2RenderStats.triangles,
                 (unsigned)gPS2RenderStats.rects, (unsigned)gPS2RenderStats.tex_uploads,
                 (unsigned)gPS2RenderStats.unknown_cmds, (unsigned)gPS2RenderStats.gfx_us);
+        {
+            extern uint32_t gPS2FbDrawDisplayed, gPS2FbDrawPending, gPS2FbRetireWaits;
+
+            ps2_log("vsync: drew into on-screen fb %u, into queued fb %u, retire waits %u",
+                    (unsigned)gPS2FbDrawDisplayed, (unsigned)gPS2FbDrawPending, (unsigned)gPS2FbRetireWaits);
+        }
         if (sTasksDone > 3)
         {
             const PS2MemStats *ms = ps2_mem_stats();

@@ -1378,7 +1378,10 @@ static void diag_finish_frame(void)
     sDiagOverflow = 0;
     if (--gPS2DiagCaptureFrames == 0)
     {
-        ps2_log("diag: capture done");
+        extern uint32_t gPS2FbDrawDisplayed, gPS2FbDrawPending, gPS2FbRetireWaits;
+
+        ps2_log("diag: capture done; vsync: drew into on-screen fb %u, into queued fb %u, retire waits %u",
+                (unsigned)gPS2FbDrawDisplayed, (unsigned)gPS2FbDrawPending, (unsigned)gPS2FbRetireWaits);
         ps2_log_save();
     }
 }
@@ -1734,10 +1737,16 @@ static void set_color_image(const void *addr)
     {
         R.color_target = fb;
         sLastColorTarget = fb;
-        if (gPS2FrameClearColor != 0 && !sFrameCleared)
+        if (!sFrameCleared)
         {
+            extern void ps2_gs_before_draw_into(int fb);
+
             sFrameCleared = 1;
-            ps2_gs_clear(fb, gPS2FrameClearColor & 0xFFFFFF, 0);
+            ps2_gs_before_draw_into(fb);
+            if (gPS2FrameClearColor != 0)
+            {
+                ps2_gs_clear(fb, gPS2FrameClearColor & 0xFFFFFF, 0);
+            }
         }
         ps2_gs_frame_setup(fb);
         sCurValid = 0;
