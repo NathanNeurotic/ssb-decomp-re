@@ -28,8 +28,8 @@
 #include <sifrpc.h>
 #include <string.h>
 
-#define DECLARE_IRX(name)            \
-    extern unsigned char name##_irx[]; \
+#define DECLARE_IRX(name)                         \
+    extern unsigned char name##_irx[] __attribute__((aligned(16))); \
     extern unsigned int size_##name##_irx
 
 DECLARE_IRX(iomanx);
@@ -58,7 +58,7 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
     int result = 0;
     int id = SifExecModuleBuffer(buf, size, (u32)args_len, args, &result);
 
-    if (id < 0 || result == 1 /* NO_RESIDENT_END means unloaded */)
+    if (id < 0 || result < 0 || result == 1 /* NO_RESIDENT_END means unloaded */)
     {
         ps2_log("IOP: %s failed (id=%d res=%d)", name, id, result);
         return -1;
@@ -79,19 +79,33 @@ void ps2_iop_init(void)
 
     SifInitRpc(0);
 
-    /* A host: boot (ps2link / PCSX2 host fs) keeps its IOP state; every other
-     * launcher leaves arbitrary modules behind, so start from a clean IOP. */
+    /* PCSX2 normally boots this port from host:, so it never exercises the
+     * IOP reboot below.  Real hardware usually boots from mass:/mc:/mmce:.
+     *
+     * stdout/stderr use an IOP RPC by default in ps2sdk/newlib.  Do not print
+     * while the IOP is being rebooted or while its RPC servers are being
+     * rebuilt: a stale console RPC can wait forever on hardware.  ps2_log()
+     * still records every line in RAM while console mirroring is disabled.
+     *
+     * The extra colours deliberately subdivide the old magenta "IOP" stage,
+     * so if hardware still stops here the visible colour identifies exactly
+     * which operation did not return. */
     if (dev != PS2_BOOT_HOST)
     {
+        ps2_log_console(0);
+        ps2_boot_stage("IOP: reset request", 0x800080);       /* magenta */
         while (!SifIopReset("", 0))
         {
         }
         while (!SifIopSync())
         {
         }
+        ps2_boot_stage("IOP: reset synced", 0x804000);        /* orange */
         SifInitRpc(0);
         sIopWasReset = 1;
     }
+
+    ps2_boot_stage("IOP: RPC + loader", 0x808000);            /* yellow */
     SifLoadFileInit();
     SifInitIopHeap();
 
@@ -99,20 +113,43 @@ void ps2_iop_init(void)
     sbv_patch_enable_lmb();
     sbv_patch_disable_prefix_check();
 
-    LOAD_IRX(iomanx);
-    if (LOAD_IRX(filexio) == 0)
+    ps2_boot_stage("IOP: file services", 0x408000);           /* yellow-green */
+    if (LOAD_IRX(iomanx) < 0 || LOAD_IRX(filexio) < 0 || fileXioInit() < 0)
     {
-        fileXioInit(); /* newlib's open/read/lseek now go through fileXio */
+        goto module_failure;
     }
-    LOAD_IRX(sio2man);
-    LOAD_IRX(mtapman);
-    LOAD_IRX(padman);
-    LOAD_IRX(mcman);
-    LOAD_IRX(mcserv);
-    LOAD_IRX(libsd);
-    LOAD_IRX(sdr);
 
+    ps2_boot_stage("IOP: pad + memory card", 0x008000);       /* green */
+    if (LOAD_IRX(sio2man) < 0 || LOAD_IRX(mtapman) < 0 || LOAD_IRX(padman) < 0 ||
+        LOAD_IRX(mcman) < 0 || LOAD_IRX(mcserv) < 0)
+    {
+        goto module_failure;
+    }
+
+    ps2_boot_stage("IOP: audio services", 0x008060);          /* blue-green */
+    if (LOAD_IRX(libsd) < 0 || LOAD_IRX(sdr) < 0)
+    {
+        goto module_failure;
+    }
+
+    /* All RPC services are stable again.  Console output is safe from here. */
+    if (sIopWasReset)
+    {
+        ps2_log_console(1);
+    }
     ps2_log("IOP: %s, %d modules", sIopWasReset ? "reset" : "kept (host boot)", sLoadedCount);
+    return;
+
+module_failure:
+    /* Keep this path independent of printf/file I/O: those services are the
+     * very thing that may have failed.  A solid red screen is therefore an
+     * unambiguous base-module failure instead of another possible deadlock. */
+    ps2_log_console(0);
+    ps2_boot_stage("IOP: module failure", 0x800000);
+    for (;;)
+    {
+        SleepThread();
+    }
 }
 
 void ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
