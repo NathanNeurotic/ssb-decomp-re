@@ -161,6 +161,39 @@ GUARDS = [
      "\twhile ((uintptr_t)fb16 < 0x80400000) { *fb16++ = GPACK_RGBA5551(0x00, 0x00, 0x00, 0x01); }\n",
      "\twhile ((uintptr_t)fb16 < SYVIDEO_RAM_END) { *fb16++ = GPACK_RGBA5551(0x00, 0x00, 0x00, 0x01); }\n"),
 
+    # 4d. alCents2Ratio: -INT_MIN is undefined and never reaches zero with an
+    #     arithmetic shift. The N64 FPU converts NaN to INT_MAX, the EE's to
+    #     INT_MIN, so the audio thread could spin forever here on PS2.
+    ("src/libultra/audio/cents2ratio.c",
+     "\twhile (cents)\n"
+     "\t{\n"
+     "\t\tif (cents & 1)\n"
+     "\t\t\tratio *= x;\n"
+     "\t\tx *= x;\n"
+     "\t\tcents >>= 1;\n"
+     "\t}\n",
+     "#ifdef AVOID_UB\n"
+     "\t{\n"
+     "\t\tu32 ucents = (u32)cents;\n"
+     "\n"
+     "\t\twhile (ucents)\n"
+     "\t\t{\n"
+     "\t\t\tif (ucents & 1)\n"
+     "\t\t\t\tratio *= x;\n"
+     "\t\t\tx *= x;\n"
+     "\t\t\tucents >>= 1;\n"
+     "\t\t}\n"
+     "\t}\n"
+     "#else\n"
+     "\twhile (cents)\n"
+     "\t{\n"
+     "\t\tif (cents & 1)\n"
+     "\t\t\tratio *= x;\n"
+     "\t\tx *= x;\n"
+     "\t\tcents >>= 1;\n"
+     "\t}\n"
+     "#endif\n"),
+
     # 5. Anti-tamper checks that execute N64 MIPS code shipped as data.
     ("src/sc/sc1pmode/sc1pgame.c",
      "    if (!(gSCManagerBackupData.error_flags & LBBACKUP_ERROR_VSBATTLECASTLE) && (gSCManagerBackupData.boot > 92))\n",

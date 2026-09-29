@@ -111,6 +111,8 @@ static void assign_slots(void)
     }
 }
 
+static void setup_pad_mode(PadSlot *s);
+
 void ps2_input_init(void)
 {
     int i;
@@ -130,7 +132,45 @@ void ps2_input_init(void)
         sSlots[i].open = padPortOpen(sSlots[i].port, sSlots[i].slot, sSlots[i].buf) != 0;
     }
     sInitDone = 1;
-    ps2_log("input: multitap port1=%d port2=%d", sMtap[0], sMtap[1]);
+
+    /* The N64 game checks for controllers once at boot ("No Controller"
+     * screen otherwise). Pads need a few frames after padPortOpen before
+     * they report STABLE, so give them up to ~1.5 s to settle. */
+    {
+        extern void ps2_delay_vblanks(int n);
+        int tries, n = 0;
+
+        for (tries = 0; tries < 90; tries++)
+        {
+            int all_settled = 1;
+
+            n = 0;
+            for (i = 0; i < PS2_INPUT_MAX_PLAYERS; i++)
+            {
+                int st;
+
+                if (!sSlots[i].open)
+                    continue;
+                st = padGetState(sSlots[i].port, sSlots[i].slot);
+                if (st == PAD_STATE_STABLE && !sSlots[i].analog_set)
+                {
+                    /* switch to analog now; the pad is busy for a few
+                     * frames and must settle again before the game asks */
+                    setup_pad_mode(&sSlots[i]);
+                    all_settled = 0;
+                }
+                else if (st == PAD_STATE_STABLE || st == PAD_STATE_FINDCTP1)
+                    n++;
+                else if (st != PAD_STATE_DISCONN)
+                    all_settled = 0;
+            }
+            if (n > 0 && all_settled)
+                break;
+            ps2_delay_vblanks(1);
+        }
+        ps2_input_poll();
+        ps2_log("input: multitap port1=%d port2=%d, %d pad(s) ready after %d frames", sMtap[0], sMtap[1], n, tries);
+    }
 }
 
 static int8_t stick_to_n64(uint8_t raw, int invert)
@@ -203,6 +243,10 @@ void ps2_input_poll(void)
             continue;
         }
         state = padGetState(s->port, s->slot);
+        if (state == PAD_STATE_EXECCMD)
+        {
+            continue; /* busy with a mode/actuator command: keep last state */
+        }
         if (state != PAD_STATE_STABLE && state != PAD_STATE_FINDCTP1)
         {
             st->connected = 0;

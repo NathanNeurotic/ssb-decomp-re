@@ -51,6 +51,17 @@ union FTAnimDesc
 
     struct
     {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+        ub32 is_use_animlocks : 1;          // 0x00000001
+        ub32 is_use_shieldpose : 1;         // 0x00000002
+        ub32 is_have_translate_scale : 1;   // 0x00000004
+        ub32 is_anim_joint : 1;             // 0x00000008 - whether current animation is type Figatree (0) or AnimJoint (1)
+        ub32 is_use_submotion_script : 1;   // 0x00000010
+        ub32 is_enabled_joints : 24;        // 0x10000000 to 0x00000020 - not actually a single variable, but 24 bits, each corresponding to a joint ID
+        ub32 is_use_yrotn_joint : 1;        // 0x20000000
+        ub32 is_use_transn_joint : 1;       // 0x40000000
+        ub32 is_use_xrotn_joint : 1;        // 0x80000000
+#else
         ub32 is_use_xrotn_joint : 1;        // 0x80000000
         ub32 is_use_transn_joint : 1;       // 0x40000000
         ub32 is_use_yrotn_joint : 1;        // 0x20000000
@@ -60,7 +71,7 @@ union FTAnimDesc
         ub32 is_have_translate_scale : 1;   // 0x00000004
         ub32 is_use_shieldpose : 1;         // 0x00000002
         ub32 is_use_animlocks : 1;          // 0x00000001
-
+#endif
     } flags;
 };
 
@@ -196,19 +207,39 @@ struct FTMotionScript
 
 struct FTMotionEventDefault // Event with no arguments
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+    u32 value : 26;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
     u32 value : 26;
+#endif
 };
 
 struct FTMotionEventDouble // Event with no arguments
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 pad1 : 26;
+	u32 opcode : 6;
+	u32 pad2 : 32;
+#else
 	u32 opcode : 6;
 	u32 pad1 : 26;
 	u32 pad2 : 32;
+#endif
 };
 
 struct FTMotionEventMakeAttack1
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 element : 4;
+	ub32 can_rebound : 1;
+	u32 damage : 8;
+	s32 joint_id : 7;
+	u32 group_id : 3;
+	u32 attack_id : 3;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	u32 attack_id: 3;
 	u32 group_id : 3;
@@ -216,34 +247,60 @@ struct FTMotionEventMakeAttack1
 	u32 damage : 8;
 	ub32 can_rebound : 1;
 	u32 element : 4;
+#endif
 };
 
 struct FTMotionEventMakeAttack2
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 off_x : 16;
+	u32 size : 16;
+#else
 	u32 size : 16;
 	s32 off_x : 16;
+#endif
 };
 
 struct FTMotionEventMakeAttack3
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 off_z : 16;
+	s32 off_y : 16;
+#else
 	s32 off_y : 16;
 	s32 off_z : 16;
+#endif
 };
 
 struct FTMotionEventMakeAttack4
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 is_hit_ground_air : 2;  // This should really be two separate bits, but it doesn't match that way
+	u32 knockback_weight : 10;
+	u32 knockback_scale : 10;
+	s32 angle : 10;
+#else
 	s32 angle : 10;
 	u32 knockback_scale : 10;
 	u32 knockback_weight : 10;
 	u32 is_hit_ground_air : 2;  // This should really be two separate bits, but it doesn't match that way
+#endif
 };
 
 struct FTMotionEventMakeAttack5
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 : 7; // PS2: unused bits of this word
+	u32 knockback_base : 10;
+	u32 fgm_kind : 4;
+	u32 fgm_level : 3;
+	s32 shield_damage : 8;
+#else
 	s32 shield_damage : 8;
 	u32 fgm_level : 3;
 	u32 fgm_kind : 4;
 	u32 knockback_base : 10;
+#endif
 };
 
 struct FTMotionEventMakeAttack
@@ -257,15 +314,27 @@ struct FTMotionEventMakeAttack
 
 struct FTMotionEventSetAttackOffset1
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 : 7; // PS2: unused bits of this word
+	s32 off_x : 16;
+	u32 attack_id : 3;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	u32 attack_id: 3;
 	s32 off_x : 16;
+#endif
 };
 
 struct FTMotionEventSetAttackOffset2
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 off_z : 16;
+	s32 off_y : 16;
+#else
 	s32 off_y : 16;
 	s32 off_z : 16;
+#endif
 };
 
 struct FTMotionEventSetAttackOffset
@@ -276,28 +345,54 @@ struct FTMotionEventSetAttackOffset
 
 struct FTMotionEventSetAttackCollDamage
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 : 15; // PS2: unused bits of this word
+	u32 damage : 8;
+	u32 attack_id : 3;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	u32 attack_id: 3;
 	u32 damage : 8;
+#endif
 };
 
 struct FTMotionEventSetAttackCollSize
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 : 7; // PS2: unused bits of this word
+	u32 size : 16;
+	u32 attack_id : 3;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	u32 attack_id: 3;
 	u32 size : 16;
+#endif
 };
 
 struct FTMotionEventSetAttackCollSound
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 : 20; // PS2: unused bits of this word
+	u32 fgm_level : 3;
+	u32 attack_id : 3;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	u32 attack_id: 3;
 	u32 fgm_level : 3;
+#endif
 };
 
 struct FTMotionEventSetThrow1
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 : 26; // PS2: unused bits of this word
 	u32 opcode : 6;
+#else
+	u32 opcode : 6;
+#endif
 };
 
 struct FTMotionEventSetThrow2
@@ -313,28 +408,50 @@ struct FTMotionEventSetThrow
 
 struct FTMotionEventMakeEffect1
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 flag : 10;
+	u32 effect_id : 9;
+	s32 joint_id : 7;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	s32 joint_id : 7;
 	u32 effect_id : 9;
 	u32 flag : 10;
+#endif
 };
 
 struct FTMotionEventMakeEffect2
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 off_y : 16;
+	s32 off_x : 16;
+#else
 	s32 off_x : 16;
 	s32 off_y : 16;
+#endif
 };
 
 struct FTMotionEventMakeEffect3
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 rng_x : 16;
+	s32 off_z : 16;
+#else
 	s32 off_z : 16;
 	s32 rng_x : 16;
+#endif
 };
 
 struct FTMotionEventMakeEffect4
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 rng_z : 16;
+	s32 rng_y : 16;
+#else
 	s32 rng_y : 16;
 	s32 rng_z : 16;
+#endif
 };
 
 struct FTMotionEventMakeEffect
@@ -347,33 +464,60 @@ struct FTMotionEventMakeEffect
 
 struct FTMotionEventSetHitStatusPartID
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 hitstatus : 19;
+	s32 joint_id : 7;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	s32 joint_id : 7;
 	u32 hitstatus : 19;
+#endif
 };
 
 struct FTMotionEventSetDamageCollPartID1
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 : 19; // PS2: unused bits of this word
+	s32 joint_id : 7;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	s32 joint_id : 7;
+#endif
 };
 
 struct FTMotionEventSetDamageCollPartID2
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 off_y : 16;
+	s32 off_x : 16;
+#else
 	s32 off_x : 16;
 	s32 off_y : 16;
+#endif
 };
 
 struct FTMotionEventSetDamageCollPartID3
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 size_x : 16;
+	s32 off_z : 16;
+#else
 	s32 off_z : 16;
 	s32 size_x : 16;
+#endif
 };
 
 struct FTMotionEventSetDamageCollPartID4
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 size_z : 16;
+	s32 size_y : 16;
+#else
 	s32 size_y : 16;
 	s32 size_z : 16;
+#endif
 };
 
 struct FTMotionEventSetDamageCollPartID
@@ -386,7 +530,12 @@ struct FTMotionEventSetDamageCollPartID
 
 struct FTMotionEventSubroutine1
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 : 26; // PS2: unused bits of this word
 	u32 opcode : 6;
+#else
+	u32 opcode : 6;
+#endif
 };
 
 struct FTMotionEventSubroutine2
@@ -402,7 +551,12 @@ struct FTMotionEventSubroutine
 
 struct FTMotionEventSetDamageThrown1
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 : 26; // PS2: unused bits of this word
 	u32 opcode : 6;
+#else
+	u32 opcode : 6;
+#endif
 };
 
 struct FTMotionEventSetDamageThrown2
@@ -423,7 +577,12 @@ struct FTMotionEventSetDamageThrown
 
 struct FTMotionEventGoto1
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 : 26; // PS2: unused bits of this word
 	u32 opcode : 6;
+#else
+	u32 opcode : 6;
+#endif
 };
 
 struct FTMotionEventGoto2
@@ -439,7 +598,12 @@ struct FTMotionEventGoto
 
 struct FTMotionEventParallel1
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 : 26; // PS2: unused bits of this word
 	u32 opcode : 6;
+#else
+	u32 opcode : 6;
+#endif
 };
 
 struct FTMotionEventParallel2
@@ -455,50 +619,91 @@ struct FTMotionEventParallel
 
 struct FTMotionEventSetModelPartID
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 modelpart_id : 19;
+	s32 joint_id : 7;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	s32 joint_id : 7;
 	s32 modelpart_id : 19;
+#endif
 };
 
 struct FTMotionEventSetTexturePartID
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 frame : 20;
+	u32 texturepart_id : 6;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	u32 texturepart_id : 6;
 	u32 frame : 20;
+#endif
 };
 
 struct FTMotionEventSetColAnimID
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 length : 18;
+	u32 colanim_id : 8;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	u32 colanim_id : 8;
 	u32 length : 18;
+#endif
 };
 
 struct FTMotionEventSetSlopeContour
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 flags : 3;
+	u32 pad : 23;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	u32 pad : 23;
 	u32 flags : 3;
+#endif
 };
 
 struct FTMotionEventSetAfterImage
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 drawstatus : 18;
+	u32 is_itemswing : 8;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	u32 is_itemswing : 8;
 	s32 drawstatus : 18;
+#endif
 };
 
 struct FTMotionEventMakeRumble
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 rumble_id : 13;
+	u32 length : 13;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	u32 length : 13;
 	u32 rumble_id : 13;
+#endif
 };
 
 struct FTMotionEventStopRumble
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 rumble_id : 26;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	u32 rumble_id : 26;
+#endif
 };
 
 struct FTStatusDesc
@@ -853,9 +1058,14 @@ union FTKeyEvent
 
     struct
     {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+        u16 param : 12;
+        u16 opcode : 4;
+#else
         u16 opcode : 4;
         u16 param : 12;
-    } 
+#endif
+} 
     command;
 
     Vec2b stick_range;

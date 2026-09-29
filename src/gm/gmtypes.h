@@ -116,13 +116,23 @@ struct GMColDesc
 
 struct GMColEventDefault
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 value : 26;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	u32 value : 26;
+#endif
 };
 
 struct GMColEventGoto1
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 : 26; // PS2: unused bits of this word
 	u32 opcode : 6;
+#else
+	u32 opcode : 6;
+#endif
 };
 
 struct GMColEventGoto2
@@ -138,7 +148,12 @@ struct GMColEventGoto
 
 struct GMColEventSubroutine1
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 : 26; // PS2: unused bits of this word
 	u32 opcode : 6;
+#else
+	u32 opcode : 6;
+#endif
 };
 
 struct GMColEventSubroutine2
@@ -154,7 +169,12 @@ struct GMColEventSubroutine
 
 struct GMColEventParallel1
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 : 26; // PS2: unused bits of this word
 	u32 opcode : 6;
+#else
+	u32 opcode : 6;
+#endif
 };
 
 struct GMColEventParallel2
@@ -170,15 +190,27 @@ struct GMColEventParallel
 
 struct GMColEventSetRGBA1
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 : 26; // PS2: unused bits of this word
 	u32 opcode : 6;
+#else
+	u32 opcode : 6;
+#endif
 };
 
 struct GMColEventSetRGBA2
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 a : 8;
+	u32 b : 8;
+	u32 g : 8;
+	u32 r : 8;
+#else
 	u32 r : 8;
 	u32 g : 8;
 	u32 b : 8;
 	u32 a : 8;
+#endif
 };
 
 struct GMColEventSetRGBA
@@ -189,16 +221,28 @@ struct GMColEventSetRGBA
 
 struct GMColEventBlendRGBA1
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 blend_frames : 26;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	u32 blend_frames : 26;
+#endif
 };
 
 struct GMColEventBlendRGBA2
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 a : 8;
+	u32 b : 8;
+	u32 g : 8;
+	u32 r : 8;
+#else
 	u32 r : 8;
 	u32 g : 8;
 	u32 b : 8;
 	u32 a : 8;
+#endif
 };
 
 struct GMColEventBlendRGBA
@@ -209,28 +253,50 @@ struct GMColEventBlendRGBA
 
 struct GMColEventMakeEffect1
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u32 flag : 10;
+	u32 effect_id : 9;
+	s32 joint_id : 7;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	s32 joint_id : 7;
 	u32 effect_id : 9;
 	u32 flag : 10;
+#endif
 };
 
 struct GMColEventMakeEffect2
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 off_y : 16;
+	s32 off_x : 16;
+#else
 	s32 off_x : 16;
 	s32 off_y : 16;
+#endif
 };
 
 struct GMColEventMakeEffect3
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 rng_x : 16;
+	s32 off_z : 16;
+#else
 	s32 off_z : 16;
 	s32 rng_x : 16;
+#endif
 };
 
 struct GMColEventMakeEffect4
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 rng_z : 16;
+	s32 rng_y : 16;
+#else
 	s32 rng_y : 16;
 	s32 rng_z : 16;
+#endif
 };
 
 struct GMColEventMakeEffect
@@ -243,9 +309,15 @@ struct GMColEventMakeEffect
 
 struct GMColEventSetLight
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	s32 light2 : 13;
+	s32 light1 : 13;
+	u32 opcode : 6;
+#else
 	u32 opcode : 6;
 	s32 light1 : 13;
 	s32 light2 : 13;
+#endif
 };
 
 union GMColEventAll
@@ -272,8 +344,13 @@ union GMColEventAll
 
 struct GMRumbleEventDefault
 {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+	u16 param : 13;
+	u16 opcode : 3;
+#else
 	u16 opcode : 3;
 	u16 param : 13;
+#endif
 };
 
 struct GMRumbleScript

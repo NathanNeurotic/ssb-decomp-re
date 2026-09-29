@@ -408,6 +408,17 @@ def swap_words(blob, offsets):
             blob[o:o + 4] = blob[o:o + 4][::-1]
 
 
+def swap_seq_headers(blob):
+    """S1_music_sbk: the ALSeqFile table is typed C (native), but every
+    compressed-MIDI sequence starts with an ALCMidiHdr (16 s32 track offsets
+    + s32 division) stored as raw bytes; n_alCSeqNew reads it as words."""
+    (revision, count) = struct.unpack_from("<hh", blob, 0)
+    for i in range(count):
+        off, length = struct.unpack_from("<Ii", blob, 4 + 8 * i)
+        if length >= 68:
+            swap_words(blob, range(off, off + 68, 4))
+
+
 def swap_fgm_pkg(blob):
     """fgm.tbl / fgm.ucd: {s32 count; u32 offsets[count]; u8 scripts...}"""
     (count,) = struct.unpack_from(">i", blob, 0)
@@ -611,6 +622,8 @@ def main():
             if e.rels(".rodata") or e.rels(".data"):
                 sys.exit("audio %s unexpectedly has relocations" % name)
             blob = bytearray(e.data(".rodata") + e.data(".data"))
+            if name.endswith("_sbk"):
+                swap_seq_headers(blob)
         else:
             with open(src, "rb") as f:
                 blob = bytearray(f.read())

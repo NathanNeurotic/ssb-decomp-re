@@ -28,6 +28,19 @@ f32 alCents2Ratio(s32 cents)
 		cents = -cents;
 	}
 	
+#ifdef AVOID_UB
+	{
+		u32 ucents = (u32)cents;
+
+		while (ucents)
+		{
+			if (ucents & 1)
+				ratio *= x;
+			x *= x;
+			ucents >>= 1;
+		}
+	}
+#else
 	while (cents)
 	{
 		if (cents & 1)
@@ -35,6 +48,7 @@ f32 alCents2Ratio(s32 cents)
 		x *= x;
 		cents >>= 1;
 	}
+#endif
 
 	return ratio;
 }

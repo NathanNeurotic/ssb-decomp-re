@@ -83,10 +83,15 @@ union AObjEvent16
 
     struct
     {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+        u16 toggle : 1;
+        u16 flags : 10;
+        u16 opcode : 5;
+#else
         u16 opcode : 5;
         u16 flags : 10;
         u16 toggle : 1;
-
+#endif
     } command;
 };
 
@@ -100,10 +105,15 @@ union AObjEvent32
 
     struct
     {
+#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
+        u32 payload : 15;
+        u32 flags : 10;
+        u32 opcode : 7;
+#else
         u32 opcode : 7;
         u32 flags : 10;
         u32 payload : 15;
-        
+#endif
     } command;
 };
 
