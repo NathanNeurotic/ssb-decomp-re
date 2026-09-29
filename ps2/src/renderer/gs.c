@@ -308,6 +308,27 @@ static void apply_blackout(void)
     *PGS_PMODE = PGS_PMODE_VAL(0, sBlackout ? 0 : 1, 1, 0x80);
 }
 
+/* Thread context, from osViSwapBuffer(): program the new display address
+ * right away instead of waiting for the VBlank handler.  The GS does not
+ * switch DISPFB mid-picture: it latches it around vertical sync.  Written
+ * only from the VBlank-start handler, the write sometimes lands after that
+ * latch (interrupt latency), so the old buffer stays on screen one more
+ * field while the game - told it was swapped - already clears and redraws
+ * it: the scanline being output at that moment shows the cleared colour,
+ * a thin black line that moves with the scene (PCSX2 applies the register
+ * at once and never shows it).  Written here, during the active picture,
+ * the address is latched at the next vertical sync, the same VBlank where
+ * ps2_vi_vblank_isr() then reports the swap to the game. */
+void ps2_gs_queue_display_framebuffer(void *n64_fb)
+{
+    int index = ps2_gs_fb_index_for(n64_fb);
+
+    if (index >= 0 && index < PS2_FB_COUNT)
+    {
+        *PGS_DISPFB2 = PGS_DISPFB_VAL(PS2_FB_PAGE(index), PS2_FBW, PS2_FB_PSM);
+    }
+}
+
 /* Interrupt context (VBlank): latch a new display framebuffer. */
 void ps2_gs_isr_display_framebuffer(void *n64_fb)
 {
