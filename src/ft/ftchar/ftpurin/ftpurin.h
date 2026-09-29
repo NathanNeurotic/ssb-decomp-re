@@ -7,7 +7,6 @@
 #define FTPURIN_POUND_VEL_BASE 65.0F
 #define FTPURIN_POUND_VEL_MUL 0.92F
 
-extern FTStatusDesc dFTPurinSpecialStatusDescs[/* */];
 
 extern void *gFTDataPurinMain;
 extern void *gFTDataPurinMainMotion;

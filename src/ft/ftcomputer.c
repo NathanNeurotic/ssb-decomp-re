@@ -4507,6 +4507,9 @@ sb32 ftComputerCheckDetectTarget(FTStruct *this_fp, f32 detect_range_base)
         }
     }
     else return FALSE;
+#ifdef AVOID_UB
+    return FALSE;
+#endif
 }
 
 // 0x80134000

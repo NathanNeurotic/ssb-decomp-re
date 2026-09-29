@@ -11,6 +11,7 @@
 #include <ps2/assetpack.h>
 
 #include <kernel.h>
+#include <stdio.h>
 #include <string.h>
 
 #define PACK_NAME "SSB64.DAT"
@@ -38,15 +39,24 @@ static int read_exact(void *dst, uint32_t offset, uint32_t size)
 int ps2_assets_init(void)
 {
     char path[300];
-    uint32_t i, table_bytes, res_off;
+    uint32_t i, table_bytes;
     ee_sema_t sema = { 0 };
 
     sema.init_count = 1;
     sema.max_count = 1;
     sReadSema = CreateSema(&sema);
 
+    /* Next to the ELF first. PCSX2's "Run ELF" passes argv[0] with its
+     * backslashes stripped, so for host: also try the host root, which
+     * PCSX2 maps to the ELF's directory. */
     ps2_storage_path(path, sizeof(path), PACK_NAME);
     sFd = ps2_file_open_read(path);
+    if (sFd < 0 && ps2_storage_boot_device() == PS2_BOOT_HOST)
+    {
+        ps2_log("assets: %s not found, trying host:%s", path, PACK_NAME);
+        snprintf(path, sizeof(path), "host:%s", PACK_NAME);
+        sFd = ps2_file_open_read(path);
+    }
     if (sFd < 0)
     {
         ps2_log("assets: cannot open %s", path);
@@ -68,37 +78,19 @@ int ps2_assets_init(void)
         return 0;
     }
 
+    /* All resident regions are stored back to back: one read at boot. */
     sResidentBlob = ps2_mem_alloc(PS2_MEM_GAME_HEAP, sHeader.resident_bytes + 64, 64);
-    res_off = 0;
-    for (i = 0; i < sHeader.region_count; i++)
+    if (sHeader.resident_bytes != 0 &&
+        !read_exact(sResidentBlob, sHeader.resident_offset, sHeader.resident_bytes))
     {
-        sResidentPtr[i] = NULL;
-        if (sRegions[i].flags & PS2PACK_REGION_RESIDENT)
-        {
-            sResidentPtr[i] = sResidentBlob + res_off;
-            res_off += sRegions[i].size;
-        }
+        ps2_log("assets: resident block read failed");
+        return 0;
     }
-    /* Resident regions are stored contiguously in the pack, in index order. */
     for (i = 0; i < sHeader.region_count; i++)
     {
-        if (sResidentPtr[i] != NULL)
-        {
-            uint32_t j = i, bytes = 0;
-
-            while (j < sHeader.region_count && sResidentPtr[j] != NULL &&
-                   sRegions[j].file_offset == sRegions[i].file_offset + bytes)
-            {
-                bytes += sRegions[j].size;
-                j++;
-            }
-            if (!read_exact(sResidentPtr[i], sRegions[i].file_offset, bytes))
-            {
-                ps2_log("assets: resident read failed");
-                return 0;
-            }
-            i = j - 1;
-        }
+        sResidentPtr[i] = (sRegions[i].flags & PS2PACK_REGION_RESIDENT)
+                              ? sResidentBlob + (sRegions[i].file_offset - sHeader.resident_offset)
+                              : NULL;
     }
     ps2_log("assets: %s: %u regions, %u KiB resident, %u KiB total", path, (unsigned)sHeader.region_count,
             (unsigned)(sHeader.resident_bytes >> 10), (unsigned)(sHeader.total_size >> 10));
@@ -129,6 +121,11 @@ void ps2_rom_read(uint32_t rom_addr, void *dst, uint32_t size)
     uint8_t *out = (uint8_t *)dst;
 
     sReads++;
+    /* PI addresses of the cartridge domain (KSEG1 0xB0000000 + offset). */
+    if ((rom_addr & 0xF0000000u) == 0xB0000000u)
+    {
+        rom_addr &= 0x0FFFFFFFu;
+    }
     while (size > 0)
     {
         int idx = (sRegions != NULL) ? find_region(rom_addr) : -1;

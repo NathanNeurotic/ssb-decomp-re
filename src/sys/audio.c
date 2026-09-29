@@ -347,6 +347,12 @@ void syAudioBnkfPatchBank(ALBank *bank, uintptr_t offset, uintptr_t table)
     }
     for (i = 0; i < bank->instCount; i++)
     {
+#ifdef PLATFORM_PS2
+        if (bank->instArray[i] == NULL)
+        {
+            continue;
+        }
+#endif
         bank->instArray[i] = (ALInstrument*) ((uintptr_t)bank->instArray[i] + offset);
 
         if (bank->instArray[i] != NULL)

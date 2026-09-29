@@ -61,6 +61,7 @@ typedef struct TmemLoad
     uint32_t pitch;     /* DRAM bytes per row as loaded */
     uint8_t siz;
     uint8_t is_tlut;
+    uint8_t odd_swap; /* LoadBlock with dxt 0: RAM holds TMEM's odd-row word swap */
 } TmemLoad;
 
 static struct
@@ -119,6 +120,7 @@ static struct
 } R;
 
 static int sLastColorTarget = -1;
+int gPS2GbiTrace; /* debug: log this many upcoming commands */
 
 /* ------------------------------------------------------------------ */
 /* GS state tracking and batching                                       */
@@ -615,7 +617,7 @@ static int find_load(uint16_t tmem, int tlut)
 }
 
 static void record_load(uint16_t tmem, uint16_t words, const uint8_t *src, uint32_t pitch, uint8_t siz,
-                        uint8_t is_tlut)
+                        uint8_t is_tlut, uint8_t odd_swap)
 {
     int i;
     TmemLoad *l;
@@ -646,6 +648,7 @@ static void record_load(uint16_t tmem, uint16_t words, const uint8_t *src, uint3
     l->pitch = pitch;
     l->siz = siz;
     l->is_tlut = is_tlut;
+    l->odd_swap = odd_swap;
 }
 
 typedef struct TexInfo
@@ -707,6 +710,7 @@ static void bind_texture(int tile_index, TexInfo *ti)
     }
     key.mirror_s = (t->cms & G_TX_MIRROR) && t->masks && !(t->cms & G_TX_CLAMP);
     key.mirror_t = (t->cmt & G_TX_MIRROR) && t->maskt && !(t->cmt & G_TX_CLAMP);
+    key.odd_swap = R.loads[li].odd_swap;
 
     if (t->fmt == G_IM_FMT_CI)
     {
@@ -1389,6 +1393,11 @@ void ps2_gbi_run(const void *dl_start)
 
         dl++;
         gPS2RenderStats.dl_commands++;
+        if (gPS2GbiTrace > 0)
+        {
+            gPS2GbiTrace--;
+            ps2_log("dl %p: %08x %08x", (const void *)(dl - 1), (unsigned)w0, (unsigned)w1);
+        }
         if (++guard > 400000)
         {
             ps2_log("gbi: runaway display list");
@@ -1787,7 +1796,7 @@ void ps2_gbi_run(const void *dl_start)
             const uint8_t *src = R.timg_addr + ((ult * R.timg_width + uls) * bpp) / 8;
             uint32_t row_words = dxt ? (2048 + dxt - 1) / dxt : 0;
 
-            record_load(t->tmem, (uint16_t)words, src, row_words * 8, R.timg_siz, 0);
+            record_load(t->tmem, (uint16_t)words, src, row_words * 8, R.timg_siz, 0, dxt == 0);
             sModeDirty = 1;
             break;
         }
@@ -1802,7 +1811,7 @@ void ps2_gbi_run(const void *dl_start)
             const uint8_t *src = R.timg_addr + ult * pitch + (uls * bpp) / 8;
             uint32_t rows = lrt - ult + 1;
 
-            record_load(t->tmem, (uint16_t)(t->line * rows), src, pitch, R.timg_siz, 0);
+            record_load(t->tmem, (uint16_t)(t->line * rows), src, pitch, R.timg_siz, 0, 0);
             sModeDirty = 1;
             break;
         }
@@ -1812,7 +1821,7 @@ void ps2_gbi_run(const void *dl_start)
             const GbiTile *t = &R.tiles[(w1 >> 24) & 7];
             uint32_t count = ((w1 >> 14) & 0x3FF) + 1;
 
-            record_load(t->tmem, (uint16_t)count, R.timg_addr, 0, G_IM_SIZ_16b, 1);
+            record_load(t->tmem, (uint16_t)count, R.timg_addr, 0, G_IM_SIZ_16b, 1, 0);
             sModeDirty = 1;
             break;
         }

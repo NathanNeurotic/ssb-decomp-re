@@ -101,6 +101,15 @@ typedef union SYColorPack
 
 } SYColorPack;
 
+#ifdef PLATFORM_PS2
+// SYColorPack.pack only equals 0xRRGGBBAA on big-endian CPUs; code that moves
+// colors between u32 words and SYColorPack uses these on little-endian PS2.
+#define SYCOLOR_PACK_TO_WORD(c) \
+    (((u32)(c).s.r << 24) | ((u32)(c).s.g << 16) | ((u32)(c).s.b << 8) | (u32)(c).s.a)
+#define SYCOLOR_PACK_FROM_WORD(c, w) \
+    ((c).s.r = (u8)((w) >> 24), (c).s.g = (u8)((w) >> 16), (c).s.b = (u8)((w) >> 8), (c).s.a = (u8)(w))
+#endif
+
 typedef struct SYRectangle
 {
     s32 ulx, uly;

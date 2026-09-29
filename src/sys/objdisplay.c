@@ -1209,11 +1209,19 @@ void gcDrawMObjForDObj(DObj *dobj, Gfx **dl_head)
         }
         if (flags & MOBJ_FLAG_LIGHT1)
         {
+#ifdef PLATFORM_PS2
+            gSPLightColor(branch_dl++, LIGHT_1, SYCOLOR_PACK_TO_WORD(mobj->sub.light1color));
+#else
             gSPLightColor(branch_dl++, LIGHT_1, mobj->sub.light1color.pack);
+#endif
         }
         if (flags & MOBJ_FLAG_LIGHT2)
         {
+#ifdef PLATFORM_PS2
+            gSPLightColor(branch_dl++, LIGHT_2, SYCOLOR_PACK_TO_WORD(mobj->sub.light2color));
+#else
             gSPLightColor(branch_dl++, LIGHT_2, mobj->sub.light2color.pack);
+#endif
         }
         if (flags & (MOBJ_FLAG_PRIMCOLOR | MOBJ_FLAG_FRAC | 0x8))
         {

@@ -130,6 +130,7 @@ typedef struct PS2TexKey
     uint8_t tlut_type;     /* 0 none, 2 RGBA16, 3 IA16 (G_TT_* >> 14) */
     uint8_t pal_index;     /* CI4 palette bank */
     uint8_t mirror_s, mirror_t;
+    uint8_t odd_swap;      /* odd rows stored with 32-bit halves swapped (TMEM order) */
 } PS2TexKey;
 
 typedef struct PS2TexBinding

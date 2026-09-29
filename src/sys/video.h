@@ -26,9 +26,16 @@
 #define SYVIDEO_BORDER_SIZE(dimension, pixels, type) \
 ((dimension) * (pixels) * sizeof(type))
 
+#ifdef PLATFORM_PS2
+extern u8 gPS2TopOfRam[]; // ps2/src/memory/arena_glue.S
+#define SYVIDEO_RAM_END ((uintptr_t)gPS2TopOfRam)
+#else
+#define SYVIDEO_RAM_END 0x80400000
+#endif
+
 #define SYVIDEO_DEFINE_FRAMEBUFFER_ADDR(width, height, w_border, h_border, type, id)   \
 (                                                                                   \
-    (0x80400000 - (((width) * (height) * sizeof(type)) * (3 - (id)))) -             \
+    (SYVIDEO_RAM_END - (((width) * (height) * sizeof(type)) * (3 - (id)))) -         \
     (                                                                               \
         SYVIDEO_BORDER_SIZE(height, w_border, type) +                               \
         SYVIDEO_BORDER_SIZE(width, h_border, type)                                  \

@@ -28,6 +28,7 @@ static RenderJob sQueue[RENDER_QUEUE];
 static volatile int sHead, sTail;
 static int sJobSema = -1;
 static int sThreadId = -1;
+static uint32_t sTasksDone;
 static uint8_t sStack[64 * 1024] __attribute__((aligned(64)));
 
 /* libultra side (ps2/src/ultra/sp.c): posts OS_EVENT_SP / OS_EVENT_DP. */
@@ -60,6 +61,27 @@ static void render_one(const RenderJob *job)
     memset(&gPS2RenderStats, 0, sizeof(gPS2RenderStats));
     ps2_texcache_frame_begin();
 
+    if (sTasksDone == 0)
+    {
+        /* The N64 game clears its framebuffers with CPU stores to RDRAM
+         * (scmanager boot, staff roll, congratulations); here the first
+         * game frame starts from cleared GS framebuffers instead. */
+        int i;
+
+        for (i = 0; i < PS2_FB_COUNT; i++)
+        {
+            ps2_gs_clear(i, 0x000000, i == 0);
+        }
+    }
+
+    {
+        extern int gPS2GbiTrace;
+
+        if (sTasksDone == 120)
+        {
+            gPS2GbiTrace = 80;
+        }
+    }
     ps2_gbi_run(job->dl);
 
     if (ps2_input_overlay_toggle_pressed())
@@ -76,6 +98,15 @@ static void render_one(const RenderJob *job)
 
     gPS2RenderStats.gfx_us = ps2_time_us() - t0;
     memcpy(&gPS2RenderStatsLast, &gPS2RenderStats, sizeof(gPS2RenderStats));
+
+    sTasksDone++;
+    if (sTasksDone <= 3 || (sTasksDone % 600) == 0)
+    {
+        ps2_log("gfx #%u: fb %d, %u cmds, %u tris, %u rects, %u uploads, %u unk, %u us", (unsigned)sTasksDone, target,
+                (unsigned)gPS2RenderStats.dl_commands, (unsigned)gPS2RenderStats.triangles,
+                (unsigned)gPS2RenderStats.rects, (unsigned)gPS2RenderStats.tex_uploads,
+                (unsigned)gPS2RenderStats.unknown_cmds, (unsigned)gPS2RenderStats.gfx_us);
+    }
 }
 
 static void render_thread(void *arg)

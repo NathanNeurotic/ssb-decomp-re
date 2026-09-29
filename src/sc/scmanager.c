@@ -853,7 +853,7 @@ void scManagerRunLoop(sb32 arg)
 	lbBackupApplyOptions();
 
 	framebuffer = (u16*) gSYFramebufferSets;
-	end = 0x80400000;
+	end = SYVIDEO_RAM_END;
 
 	while ((uintptr_t)framebuffer < end)
 	{

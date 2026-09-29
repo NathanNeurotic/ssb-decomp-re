@@ -1195,6 +1195,9 @@ s32 mnVSModeGetShade(s32 player)
             return i;
         }
     }
+#ifdef AVOID_UB
+    return 0;
+#endif
 }
 
 // 0x8013394C
@@ -1232,6 +1235,9 @@ s32 mnVSModeGetCostume(s32 fkind, s32 arg1)
             return i;
         }
     }
+#ifdef AVOID_UB
+    return 0;
+#endif
 }
 
 // 0x80133A8C

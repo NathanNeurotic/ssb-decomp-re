@@ -110,7 +110,6 @@
 
 extern intptr_t lFTKirbySpecialNCopyData;
 
-extern FTStatusDesc dFTKirbySpecialStatusDescs[/* */];
 
 extern void *gFTDataKirbyMain;
 extern void *gFTDataKirbyMainMotion;

@@ -47,7 +47,6 @@
 #define FTNESS_PSYCHICMAGNET_COLANIM_ID 0x3F
 #define FTNESS_PSYCHICMAGNET_COLANIM_LENGTH 0
 
-extern FTStatusDesc dFTNessSpecialStatusDescs[/* */];
 
 extern void *gFTNessFileMain;
 extern void *gFTNessFileMainMotion;

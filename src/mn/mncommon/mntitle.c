@@ -334,6 +334,9 @@ s32 mnTitleSetDemoFighterKinds(void)
 		gSCManagerSceneData.demo_fkind[1] = mnTitleGetShuffledFighterKind(unlocked_mask, gSCManagerSceneData.demo_mask_prev, syUtilsRandIntRange(non_recently_demoed_count));
 		gSCManagerSceneData.demo_mask_prev |= LBBACKUP_MASK_FIGHTER(gSCManagerSceneData.demo_fkind[1]);
 	}
+#ifdef AVOID_UB
+    return 0;
+#endif
 }
 
 // 0x80131CF4

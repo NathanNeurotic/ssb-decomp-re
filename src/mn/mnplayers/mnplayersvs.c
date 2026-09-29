@@ -1534,6 +1534,9 @@ s32 mnPlayersVSGetFreeCostumeRoyal(s32 fkind, s32 player)
 			return k;
 		}
 	}
+#ifdef AVOID_UB
+    return 0;
+#endif
 }
 
 // 0x8013487C
@@ -1547,6 +1550,9 @@ s32 mnPlayersVSGetFreeCostume(s32 fkind, s32 player)
 	{
 		return ftParamGetCostumeTeamID(fkind, sMNPlayersVSSlots[player].team);
 	}
+#ifdef AVOID_UB
+    return 0;
+#endif
 }
 
 // 0x801348EC
@@ -2916,6 +2922,9 @@ s32 mnPlayersVSUpdateCursorPlacementPriorities(s32 player, s32 puck)
 			unheld_id--;
 		}
 	}
+#ifdef AVOID_UB
+    return 0;
+#endif
 }
 
 // 0x801375A8

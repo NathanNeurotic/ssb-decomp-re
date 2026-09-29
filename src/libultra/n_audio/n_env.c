@@ -734,6 +734,9 @@ s32
   default:
     break;
   }
+#ifdef AVOID_UB
+    return 0;
+#endif
 }
 
 Acmd *_decodeChunk(Acmd *ptr, N_PVoice *f, s32 tsam,
@@ -4430,7 +4433,7 @@ void func_80027458_28058(void)
 
 s32 func_800264A4_270A4();
 void func_8002668C_2728C(ALWhatever8009EE0C*);
-ALWhatever8009EDD0_siz34* func_80026844_27444(void *id);
+static ALWhatever8009EDD0_siz34* func_80026844_27444(void *id);
 ALWhatever8009EDD0_siz34* func_80026958_27558(void *id);
 ALWhatever8009EE0C* func_80026A6C_2766C(void *arg0);
 ALWhatever8009EE0C* func_80026B40_27740(u16 id);
@@ -5231,6 +5234,9 @@ s32 func_80026594_27194(void)
         var_v1_2 = var_v0_2;
     }
     osSetIntMask(im);
+#ifdef AVOID_UB
+    return 0;
+#endif
 }
 
 s32 func_800264A4_270A4(void)
@@ -5293,6 +5299,9 @@ s32 func_800264A4_270A4(void)
         D_8009EDD0_406D0.unk_alsound_0x60 = NULL;
     }
     osSetIntMask(im);
+#ifdef AVOID_UB
+    return 0;
+#endif
 }
 
 void func_80026204_26E04(N_ALUnk80026204 *arg0)

@@ -591,7 +591,16 @@ u8* lbParticleReadFloatBigEnd(u8 *csr, f32 *f)
 	bytes[2] = *csr++;
 	bytes[3] = *csr++;
 
+#ifdef PLATFORM_PS2
+	{
+		union { u32 w; f32 f; } conv;
+
+		conv.w = ((u32)bytes[0] << 24) | ((u32)bytes[1] << 16) | ((u32)bytes[2] << 8) | bytes[3];
+		*f = conv.f;
+	}
+#else
 	*f = *(f32*)bytes;
+#endif
 
 	return csr;
 }

@@ -2878,6 +2878,9 @@ SObj* lbCommonMakeSObjForGObj(GObj *gobj, Sprite *sprite)
     sobj->cmt = sobj->cms = 2;
     
     sobj->pos.x = sobj->pos.y = 0.0F;
+#ifdef AVOID_UB
+    return sobj;
+#endif
 }
 
 // 0x800CD050

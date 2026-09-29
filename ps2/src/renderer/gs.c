@@ -280,15 +280,15 @@ static void display_fb(int index)
         return;
     }
     dispfb = PGS_DISPFB_VAL(PS2_FB_PAGE(index), PS2_FBW, PS2_FB_PSM);
-    *PGS_DISPFB1 = dispfb;
     *PGS_DISPFB2 = dispfb;
     sDisplayedFb = index;
 }
 
 static void apply_blackout(void)
 {
-    /* Read circuit 1 only; with it disabled the GS outputs BGCOLOR (black). */
-    *PGS_PMODE = PGS_PMODE_VAL(sBlackout ? 0 : 1, 0, 1, 0x80);
+    /* gsKit programs DISPLAY2 for the mode, so read circuit 2 only; with it
+     * disabled the GS outputs BGCOLOR (black). */
+    *PGS_PMODE = PGS_PMODE_VAL(0, sBlackout ? 0 : 1, 1, 0x80);
 }
 
 /* Interrupt context (VBlank): latch a new display framebuffer. */

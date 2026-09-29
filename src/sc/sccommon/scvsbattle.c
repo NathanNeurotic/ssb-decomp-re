@@ -136,7 +136,12 @@ void scVSBattleStartBattle(void)
 
 	scVSBattleSetupFiles();
 
+#ifdef PLATFORM_PS2
+	// The KSEG1 check runs N64 machine code from a relocData file.
+	if (FALSE)
+#else
 	if (!(gSCManagerBackupData.error_flags & LBBACKUP_ERROR_1PGAMEMARIO) && (gSCManagerBackupData.boot > 68))
+#endif
 	{
 		file = lbRelocGetExternHeapFile((u32)&llSYKseg1ValidateFileID, syTaskmanMalloc(lbRelocGetFileSize((u32)&llSYKseg1ValidateFileID), 0x10));
 		func_kseg1 = lbRelocGetFileData(sb32 (*)(void), file, &llSYKseg1ValidateFunc);

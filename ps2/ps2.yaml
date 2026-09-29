@@ -49,13 +49,158 @@ targets:
       - -fno-strict-aliasing
       - -Wall
 
+  # The decompiled game itself, shared with the N64 build. N64-only pieces
+  # are left out here (replaced by ssb_platform): libultra io/os and IDO
+  # runtime helpers and sys/framebuffer.c (the framebuffers live in the PS2
+  # scene-arena glue). ps2/src/game holds the few PS2-side definitions that
+  # the N64 build gets from assembly or excluded debug overlays.
+  - name: ssb_game
+    type: ee_lib
+    sources:
+      - ../src/ef/*.c
+      - ../src/ft/*.c
+      - ../src/ft/ftchar/ftboss/*.c
+      - ../src/ft/ftchar/ftcaptain/*.c
+      - ../src/ft/ftchar/ftdonkey/*.c
+      - ../src/ft/ftchar/ftfox/*.c
+      - ../src/ft/ftchar/ftgdonkey/*.c
+      - ../src/ft/ftchar/ftkirby/*.c
+      - ../src/ft/ftchar/ftlink/*.c
+      - ../src/ft/ftchar/ftluigi/*.c
+      - ../src/ft/ftchar/ftmario/*.c
+      - ../src/ft/ftchar/ftmmario/*.c
+      - ../src/ft/ftchar/ftncaptain/*.c
+      - ../src/ft/ftchar/ftndonkey/*.c
+      - ../src/ft/ftchar/ftness/*.c
+      - ../src/ft/ftchar/ftnfox/*.c
+      - ../src/ft/ftchar/ftnkirby/*.c
+      - ../src/ft/ftchar/ftnlink/*.c
+      - ../src/ft/ftchar/ftnluigi/*.c
+      - ../src/ft/ftchar/ftnmario/*.c
+      - ../src/ft/ftchar/ftnness/*.c
+      - ../src/ft/ftchar/ftnpikachu/*.c
+      - ../src/ft/ftchar/ftnpurin/*.c
+      - ../src/ft/ftchar/ftnsamus/*.c
+      - ../src/ft/ftchar/ftnyoshi/*.c
+      - ../src/ft/ftchar/ftpikachu/*.c
+      - ../src/ft/ftchar/ftpurin/*.c
+      - ../src/ft/ftchar/ftsamus/*.c
+      - ../src/ft/ftchar/ftyoshi/*.c
+      - ../src/ft/ftcommon/*.c
+      - ../src/gm/*.c
+      - ../src/gr/*.c
+      - ../src/gr/grbonus/*.c
+      - ../src/gr/grcommon/*.c
+      - ../src/if/*.c
+      - ../src/it/*.c
+      - ../src/it/itcommon/*.c
+      - ../src/it/itfighter/*.c
+      - ../src/it/itground/*.c
+      - ../src/it/itmonster/*.c
+      - ../src/lb/*.c
+      - ../src/mn/mn1pmode/*.c
+      - ../src/mn/mncommon/*.c
+      - ../src/mn/mndata/*.c
+      - ../src/mn/mnmaps/*.c
+      - ../src/mn/mnoption/*.c
+      - ../src/mn/mnplayers/*.c
+      - ../src/mn/mnvsmode/*.c
+      - ../src/mp/*.c
+      - ../src/mv/*.c
+      - ../src/mv/mvending/*.c
+      - ../src/mv/mvopening/*.c
+      - ../src/sc/*.c
+      - ../src/sc/sc1pmode/*.c
+      - ../src/sc/sccommon/*.c
+      - ../src/sc/scsubsys/*.c
+      - ../src/wp/*.c
+      - ../src/wp/wpboss/*.c
+      - ../src/wp/wpfox/*.c
+      - ../src/wp/wpkirby/*.c
+      - ../src/wp/wplink/*.c
+      - ../src/wp/wpmario/*.c
+      - ../src/wp/wpness/*.c
+      - ../src/wp/wppikachu/*.c
+      - ../src/wp/wpsamus/*.c
+      - ../src/wp/wpyoshi/*.c
+      - src/game/*.c
+      - ../src/sys/audio.c
+      - ../src/sys/controller.c
+      - ../src/sys/debug.c
+      - ../src/sys/dma.c
+      - ../src/sys/interp.c
+      - ../src/sys/main.c
+      - ../src/sys/maindevice.c
+      - ../src/sys/malloc.c
+      - ../src/sys/matrix.c
+      - ../src/sys/objanim.c
+      - ../src/sys/objdisplay.c
+      - ../src/sys/objhelper.c
+      - ../src/sys/objman.c
+      - ../src/sys/objscript.c
+      - ../src/sys/rdp.c
+      - ../src/sys/scheduler.c
+      - ../src/sys/sintable.c
+      - ../src/sys/taskman.c
+      - ../src/sys/unref.c
+      - ../src/sys/utils.c
+      - ../src/sys/vector.c
+      - ../src/sys/video.c
+      - ../src/sys/zbuffer.c
+      - ../src/libultra/gu/*.c
+      - ../src/libultra/sp/*.c
+      - ../src/libultra/audio/*.c
+      - ../src/libultra/n_audio/*.c
+      - ../src/libultra/vimodes/*.c
+      - ../src/libultra/libc/ldiv.c
+      - ../src/libultra/libc/xprintf.c
+      - ../src/libultra/libc/xldtob.c
+      - ../src/libultra/libc/xlitob.c
+    include_dirs:
+      - ../include
+      - ../src
+      - ../build/us/src
+      - include
+    defines:
+      - PLATFORM_PS2
+      - REGION_US
+      - F3DEX_GBI_2
+      - _MIPS_SZLONG=32
+      - NDEBUG
+      - N_MICRO
+      - _FINALROM
+      - NON_MATCHING
+      - AVOID_UB
+    cflags:
+      - -std=gnu99
+      - -fpermissive
+      - -fno-strict-aliasing
+      - -fwrapv
+      # The EE FPU is single precision; keep literal constants in f32 so
+      # N64-era expressions like x * 0.5 do not fall back to soft doubles.
+      - -fsingle-precision-constant
+      - -Wno-unused-variable
+      - -Wno-unused-but-set-variable
+      - -Wno-unused-function
+      - -Wno-missing-braces
+      - -Wno-unknown-pragmas
+      - -Wno-multichar
+
   - name: ssb64
     type: ee
     sources:
       - src/boot/main.c
     include_dirs:
       - include
+    ldflags:
+      # N64 linker constants: generated ll* relocData symbols + PS2 values.
+      - ../../symbols/reloc_data_symbols.us.txt
+      - ../ps2_link.x
     libs:
+      # game <-> platform reference each other; repeat for the 1-pass linker
+      - ssb_game
+      - ssb_platform
+      - ssb_game
       - ssb_platform
       - gskit
       - dmakit

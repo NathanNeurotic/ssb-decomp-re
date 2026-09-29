@@ -1318,4 +1318,6 @@ struct FTStruct
     s32 display_mode;
 };
 
+#include <ft/ftchardata.h>
+
 #endif

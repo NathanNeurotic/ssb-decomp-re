@@ -2040,7 +2040,12 @@ void sc1PGameFuncStart(void)
     sc1PGameSetupStageAll();
     sc1PGameSetupFiles();
 
+#ifdef PLATFORM_PS2
+    // The ROM-signature check runs N64 machine code from a relocData file.
+    if (FALSE)
+#else
     if (!(gSCManagerBackupData.error_flags & LBBACKUP_ERROR_VSBATTLECASTLE) && (gSCManagerBackupData.boot > 92))
+#endif
     {
         syDmaReadRom(0xF10, signature, ARRAY_COUNT(signature));
 

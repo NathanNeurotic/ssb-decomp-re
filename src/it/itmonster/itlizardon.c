@@ -152,6 +152,9 @@ sb32 itLizardonFallUnusedSetStatus(GObj *item_gobj) // Unused
 
     itMapSetAir(ip);
     itMainSetStatus(item_gobj, dITLizardonStatusDescs, nITLizardonStatusFallUnused);
+#ifdef AVOID_UB
+    return FALSE;
+#endif
 }
 
 // 0x8017F53C

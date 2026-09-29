@@ -7,7 +7,6 @@
 
 // #include "ftmariofunctions.h"
 
-extern FTStatusDesc dFTLuigiSpecialStatusDescs[/* */];
 
 extern void *gFTDataLuigiMain;
 extern void *gFTDataLuigiMainMotion;

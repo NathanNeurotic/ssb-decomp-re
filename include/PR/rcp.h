@@ -861,8 +861,17 @@ The Indy development board use cartridge domain 1:
  * Common macros
  */
 #if defined(_LANGUAGE_C) || defined(_LANGUAGE_C_PLUS_PLUS)
+#ifdef PLATFORM_PS2
+/* No RCP on the PS2: the few register reads the game makes are answered by
+ * the platform layer (ps2/src/ultra/misc.c). */
+extern u32 ps2_io_read(u32 addr);
+extern void ps2_io_write(u32 addr, u32 data);
+#define IO_READ(addr) ps2_io_read((u32)(addr))
+#define IO_WRITE(addr, data) ps2_io_write((u32)(addr), (u32)(data))
+#else
 #define IO_READ(addr) (*(vu32*)PHYS_TO_K1(addr))
 #define IO_WRITE(addr, data) (*(vu32*)PHYS_TO_K1(addr) = (u32)(data))
+#endif
 #define RCP_STAT_PRINT                                                                                                 \
 	rmonPrintf("current=%x start=%x end=%x dpstat=%x spstat=%x\n", IO_READ(DPC_CURRENT_REG), IO_READ(DPC_START_REG),   \
 			   IO_READ(DPC_END_REG), IO_READ(DPC_STATUS_REG), IO_READ(SP_STATUS_REG))

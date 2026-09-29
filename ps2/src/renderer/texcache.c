@@ -264,6 +264,13 @@ static inline uint32_t fetch4(const uint8_t *row, int x)
     return (x & 1) ? (b & 0xF) : (b >> 4);
 }
 
+static inline uint32_t fetch4_swz(const uint8_t *row, int x, uint32_t swz)
+{
+    uint8_t b = row[((uint32_t)x >> 1) ^ swz];
+
+    return (x & 1) ? (b & 0xF) : (b >> 4);
+}
+
 static inline uint16_t be16(const uint8_t *p)
 {
     return (uint16_t)((p[0] << 8) | p[1]);
@@ -401,7 +408,12 @@ static int make_resident(TexEntry *e, int16_t idx)
     memset(dst, 0, bytes);
     for (y = 0; y < h; y++)
     {
-        const uint8_t *row = src + src_coord(y, sh, k->mirror_t) * pitch;
+        int sy = src_coord(y, sh, k->mirror_t);
+        const uint8_t *row = src + sy * pitch;
+        /* Rows loaded by LoadBlock without dxt are stored the way TMEM
+         * holds them: odd rows have the two 32-bit halves of every 64-bit
+         * word swapped (64-bit halves for 32-bit texels). */
+        uint32_t swz = (k->odd_swap && (sy & 1)) ? ((k->siz == SIZ_32) ? 8u : 4u) : 0u;
 
         for (x = 0; x < w; x++)
         {
@@ -411,14 +423,14 @@ static int make_resident(TexEntry *e, int16_t idx)
             switch (psm)
             {
             case GSPSM_T4:
-                dst[di >> 1] |= (uint8_t)(fetch4(row, sx) << ((di & 1) ? 4 : 0));
+                dst[di >> 1] |= (uint8_t)(fetch4_swz(row, sx, swz) << ((di & 1) ? 4 : 0));
                 break;
             case GSPSM_T8:
-                dst[di] = row[sx];
+                dst[di] = row[(uint32_t)sx ^ swz];
                 break;
             case GSPSM_CT16:
             {
-                uint16_t c = be16(row + sx * 2);
+                uint16_t c = be16(row + (((uint32_t)sx * 2) ^ swz));
                 uint16_t g = (uint16_t)(((c >> 11) & 31) | (((c >> 6) & 31) << 5) | (((c >> 1) & 31) << 10) |
                                         ((c & 1) << 15));
 
@@ -428,13 +440,13 @@ static int make_resident(TexEntry *e, int16_t idx)
             default:
                 if (k->siz == SIZ_32)
                 {
-                    const uint8_t *p = row + sx * 4;
+                    const uint8_t *p = row + (((uint32_t)sx * 4) ^ swz);
 
                     ((uint32_t *)dst)[di] = ct32(p[0], p[1], p[2], p[3]);
                 }
                 else
                 {
-                    ((uint32_t *)dst)[di] = ia16_to_ct32(be16(row + sx * 2));
+                    ((uint32_t *)dst)[di] = ia16_to_ct32(be16(row + (((uint32_t)sx * 2) ^ swz)));
                 }
                 break;
             }
@@ -498,7 +510,8 @@ static int key_eq(const PS2TexKey *a, const PS2TexKey *b)
 {
     return a->addr == b->addr && a->tlut == b->tlut && a->width == b->width && a->height == b->height &&
            a->fmt == b->fmt && a->siz == b->siz && a->line_bytes == b->line_bytes &&
-           a->tlut_type == b->tlut_type && a->mirror_s == b->mirror_s && a->mirror_t == b->mirror_t;
+           a->tlut_type == b->tlut_type && a->mirror_s == b->mirror_s && a->mirror_t == b->mirror_t &&
+           a->odd_swap == b->odd_swap;
 }
 
 static void entry_release(int16_t i)

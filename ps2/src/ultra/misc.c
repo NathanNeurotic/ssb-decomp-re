@@ -250,3 +250,47 @@ u32 osAiGetStatus(void)
 {
     return 0;
 }
+
+OSThread *__osGetActiveQueue(void)
+{
+    return NULL; /* crash-screen thread list: not available on PS2 */
+}
+
+/* Interrupt mask: the game only uses it for short critical sections
+ * (osSetIntMask(OS_IM_NONE) ... osSetIntMask(prev)). */
+OSIntMask osSetIntMask(OSIntMask mask)
+{
+    s32 was_enabled = ps2_intr_disable();
+
+    if (mask != OS_IM_NONE)
+    {
+        EIntr();
+    }
+    return was_enabled ? OS_IM_ALL : OS_IM_NONE;
+}
+
+/* ------------------------------------------------------------------ */
+/* IO_READ / IO_WRITE (PR/rcp.h): the handful of RCP registers the game
+ * touches directly, answered with their meaning rather than emulated.  */
+/* ------------------------------------------------------------------ */
+
+u32 ps2_io_read(u32 addr)
+{
+    switch (addr)
+    {
+    case AI_LEN_REG:
+        return osAiGetLength();
+    case SP_IMEM_START:
+        return 6103; /* main.c boot check: IMEM holds the expected ucode word */
+    case SP_DMEM_START:
+        return 0xFFFFFFFF; /* main.c boot check */
+    default:
+        ps2_log("IO_READ of unhandled RCP register 0x%08lx", (unsigned long)addr);
+        return 0;
+    }
+}
+
+void ps2_io_write(u32 addr, u32 data)
+{
+    ps2_log("IO_WRITE of unhandled RCP register 0x%08lx = 0x%08lx", (unsigned long)addr, (unsigned long)data);
+}

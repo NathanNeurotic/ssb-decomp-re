@@ -571,6 +571,9 @@ s32 mnVSResultsGetWinPlayer(void)
 		}
 		return win_player;
 	}
+#ifdef AVOID_UB
+    return win_player;
+#endif
 }
 
 // 0x80132A2C

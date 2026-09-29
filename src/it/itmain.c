@@ -555,13 +555,20 @@ s32 itMainSearchRandomWeight(s32 random, ITRandomWeights *weights, u32 min, u32 
 
         if (random < weights->blocks[avg])
         {
+#ifdef AVOID_UB
+            return
+#endif
             itMainSearchRandomWeight(random, weights, min, avg);
         }
         else if (random < weights->blocks[avg + 1])
         {
             return avg;
         }
-        else itMainSearchRandomWeight(random, weights, avg, max);
+        else
+#ifdef AVOID_UB
+            return
+#endif
+            itMainSearchRandomWeight(random, weights, avg, max);
     }
 }
 

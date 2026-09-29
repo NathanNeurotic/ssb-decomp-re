@@ -25,7 +25,6 @@
 #define FTLINK_SPINATTACK_LANDING_LAG 0.75F            // Divide landing animation length by this value
 #endif
 
-extern FTStatusDesc dFTLinkSpecialStatusDescs[/* */];
 
 extern void *gFTDataLinkMain;
 extern void *gFTDataLinkMainMotion;

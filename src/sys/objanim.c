@@ -1351,6 +1351,18 @@ void gcPlayMObjMatAnim(MObj *mobj)
                     {
                     case nGCAnimKindLinear: 
                         interp = (aobj->length * aobj->length_invert * 256.0F);
+#ifdef PLATFORM_PS2
+                        {
+                            u32 w0 = *(u32*)&aobj->value_base, w1 = *(u32*)&aobj->value_target;
+                            s32 t = (interp < 0) ? 0 : (interp > 256) ? 256 : interp;
+
+                            color.s.r = (u8)((((w0 >> 24) & 0xFF) * (256 - t) + ((w1 >> 24) & 0xFF) * t) >> 8);
+                            color.s.g = (u8)((((w0 >> 16) & 0xFF) * (256 - t) + ((w1 >> 16) & 0xFF) * t) >> 8);
+                            color.s.b = (u8)((((w0 >> 8) & 0xFF) * (256 - t) + ((w1 >> 8) & 0xFF) * t) >> 8);
+                            color.s.a = (u8)(((w0 & 0xFF) * (256 - t) + (w1 & 0xFF) * t) >> 8);
+                        }
+                        break;
+#endif
                     
                         if (interp < 0)
                         { 
@@ -1389,7 +1401,15 @@ void gcPlayMObjMatAnim(MObj *mobj)
                         break;
                     
                     case nGCAnimKindStep:
+#ifdef PLATFORM_PS2
+                        {
+                            u32 w = (aobj->length_invert <= aobj->length) ? *(u32*)&aobj->value_target : *(u32*)&aobj->value_base;
+
+                            SYCOLOR_PACK_FROM_WORD(color, w);
+                        }
+#else
                         color = (aobj->length_invert <= aobj->length) ? *(SYColorPack*)&aobj->value_target : *(SYColorPack*)&aobj->value_base;
+#endif
                         break;
                     }
                     switch (aobj->track)

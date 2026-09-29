@@ -36,7 +36,8 @@ typedef struct PS2PackHeader
     uint32_t total_size;
     uint32_t reloc_vrom;         /* virtual ROM address of the reloc table */
     uint32_t reloc_file_count;
-    uint32_t reserved[3];
+    uint32_t resident_offset;    /* all RESIDENT regions, contiguous */
+    uint32_t reserved[2];
     char build_id[16];
 } PS2PackHeader; /* 64 bytes */
 

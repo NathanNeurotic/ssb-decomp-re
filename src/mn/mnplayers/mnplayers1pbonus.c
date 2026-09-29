@@ -1258,6 +1258,9 @@ void func_ovl29_80133F54(void)
 // 0x80133F5C
 s32 mnPlayers1PBonusGetCostume(s32 fkind, s32 select_button)
 {
+#ifdef AVOID_UB
+	return
+#endif
 	ftParamGetCostumeCommonID(fkind, ftParamGetCostumeCommonID(fkind, select_button));
 }
 

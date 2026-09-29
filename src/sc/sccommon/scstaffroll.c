@@ -2325,7 +2325,7 @@ void scStaffrollStartScene(void)
 
 	fb32 = (u32*)SYVIDEO_DEFINE_FRAMEBUFFER_ADDR(640, 480, 0, 0, u16, 0);
 
-	while ((uintptr_t)fb32 < 0x80400000) { *fb32++ = 0x00000000; }
+	while ((uintptr_t)fb32 < SYVIDEO_RAM_END) { *fb32++ = 0x00000000; }
 
 	dSCStaffrollVideoSetup.zbuffer = SYVIDEO_ZBUFFER_START(640, 480, 0, 10, u16);
 	syVideoInit(&dSCStaffrollVideoSetup);
@@ -2335,5 +2335,5 @@ void scStaffrollStartScene(void)
 
 	fb16 = (u16*) gSYFramebufferSets;
 
-	while ((uintptr_t)fb16 < 0x80400000) { *fb16++ = GPACK_RGBA5551(0x00, 0x00, 0x00, 0x01); }
+	while ((uintptr_t)fb16 < SYVIDEO_RAM_END) { *fb16++ = GPACK_RGBA5551(0x00, 0x00, 0x00, 0x01); }
 }
