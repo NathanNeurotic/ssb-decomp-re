@@ -334,7 +334,13 @@ void ps2_gs_frame_setup(int fb_index)
     {
         fb_index = 0;
     }
-    ps2_pkt_ad_begin(10);
+    ps2_pkt_ad_begin(12);
+    /* Neither this renderer nor gsKit's init otherwise writes these two, and
+     * a real GS keeps whatever the launcher left in them (PCSX2 starts them
+     * at 0): PABE=1 turns alpha blending off for pixels with source alpha
+     * below 0x80, SCANMSK=2/3 stops every even/odd line from being drawn. */
+    ps2_pkt_ad(GSR_PABE, 0);
+    ps2_pkt_ad(GSR_SCANMSK, 0);
     ps2_pkt_ad(GSR_FRAME_1, GSV_FRAME(PS2_FB_PAGE(fb_index), PS2_FBW, PS2_FB_PSM, 0));
     ps2_pkt_ad(GSR_ZBUF_1, GSV_ZBUF(PS2_Z_PAGE, PS2_Z_PSM, 0));
     /* Primitive coordinates are emitted relative to a 2048,2048 origin so the
@@ -347,7 +353,7 @@ void ps2_gs_frame_setup(int fb_index)
     ps2_pkt_ad(GSR_TEXA, GSV_TEXA(0x00, 0, 0x80)); /* 1-bit alpha -> 0 / 1.0 */
     ps2_pkt_ad(GSR_TEST_1, GSV_TEST(0, 0, 0, 0, 0, 0, 1, GSZTST_ALWAYS));
     ps2_pkt_ad(GSR_FBA_1, 0);
-    gPS2RenderStats.state_writes += 10;
+    gPS2RenderStats.state_writes += 12;
 }
 
 void ps2_gs_clear(int fb_index, uint32_t rgba, int clear_z)
