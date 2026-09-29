@@ -192,6 +192,7 @@ targets:
       - src/boot/main.c
     include_dirs:
       - include
+    linkfile: ps2_linkfile.ld
     ldflags:
       # N64 linker constants: generated ll* relocData symbols + PS2 values.
       - ../../symbols/reloc_data_symbols.us.txt

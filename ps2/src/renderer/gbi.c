@@ -677,6 +677,7 @@ static void bind_texture(int tile_index, TexInfo *ti)
     PS2TexKey key;
     int li = find_load(t->tmem, 0);
     int w, h;
+    uint32_t tmem_bytes;
     uint32_t tlut_type = (R.om_h >> 14) & 3;
 
     ti->valid = 0;
@@ -703,13 +704,17 @@ static void bind_texture(int tile_index, TexInfo *ti)
         return;
     }
 
-    key.addr = R.loads[li].src + (uint32_t)(t->tmem - R.loads[li].tmem) * 8u;
+    /* 32-bit texels are split across TMEM's two halves (RG low, BA high), so
+     * tile line and TMEM addresses count half-words: one TMEM word there
+     * holds 16 source bytes. */
+    tmem_bytes = (t->siz == G_IM_SIZ_32b) ? 16u : 8u;
+    key.addr = R.loads[li].src + (uint32_t)(t->tmem - R.loads[li].tmem) * tmem_bytes;
     key.width = (uint16_t)w;
     key.height = (uint16_t)h;
     key.fmt = t->fmt;
     key.siz = t->siz;
-    key.line_bytes = (uint16_t)((t->line ? t->line : 1) * 8);
-    if (R.loads[li].pitch != 0 && R.loads[li].siz == t->siz && t->line * 8u != R.loads[li].pitch)
+    key.line_bytes = (uint16_t)((t->line ? t->line : 1) * tmem_bytes);
+    if (R.loads[li].pitch != 0 && R.loads[li].siz == t->siz && t->line * tmem_bytes != R.loads[li].pitch)
     {
         /* LoadTile rows keep the DRAM image pitch. */
         key.line_bytes = (uint16_t)R.loads[li].pitch;
@@ -1807,7 +1812,8 @@ void ps2_gbi_run(const void *dl_start)
             uint32_t texels = ((w1 >> 12) & 0xFFF) + 1;
             uint32_t dxt = w1 & 0xFFF;
             uint32_t bpp = (4u << R.timg_siz); /* bits */
-            uint32_t words = (texels * bpp + 63) / 64;
+            /* TMEM words used; 32-bit texels occupy both halves in parallel */
+            uint32_t words = (texels * ((bpp == 32) ? 16u : bpp) + 63) / 64;
             uint32_t uls = (w0 >> 12) & 0xFFF, ult = w0 & 0xFFF;
             const uint8_t *src = R.timg_addr + ((ult * R.timg_width + uls) * bpp) / 8;
             uint32_t row_words = dxt ? (2048 + dxt - 1) / dxt : 0;

@@ -25,6 +25,7 @@ extern void ps2_save_init(void);
 extern void ps2_audio_init(void);
 extern void ps2_render_thread_init(void);
 extern void ps2_arena_init(void);
+extern void ps2_overlay_state_init(void);
 
 #define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port"
 
@@ -65,6 +66,7 @@ int ps2_main(int argc, char *argv[])
     ps2_ultra_threads_init();
     ps2_vi_init();
     ps2_arena_init();
+    ps2_overlay_state_init();
     ps2_input_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 

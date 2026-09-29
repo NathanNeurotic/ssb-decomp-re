@@ -1360,6 +1360,77 @@ gPS2OverlayNames:
     .word .Lname_ovl64
     .word .Lname_ovl65
     .word .Lname_scmanager
+    .align 2
+    .globl gPS2OverlayRanges
+gPS2OverlayRanges:
+    .word 0, 0, 0, 0
+    .word __ps2_ovl0_data_start, __ps2_ovl0_data_end, __ps2_ovl0_bss_start, __ps2_ovl0_bss_end
+    .word __ps2_ovl1_data_start, __ps2_ovl1_data_end, __ps2_ovl1_bss_start, __ps2_ovl1_bss_end
+    .word __ps2_ovl2_data_start, __ps2_ovl2_data_end, __ps2_ovl2_bss_start, __ps2_ovl2_bss_end
+    .word __ps2_ovl3_data_start, __ps2_ovl3_data_end, __ps2_ovl3_bss_start, __ps2_ovl3_bss_end
+    .word __ps2_ovl4_data_start, __ps2_ovl4_data_end, __ps2_ovl4_bss_start, __ps2_ovl4_bss_end
+    .word __ps2_ovl5_data_start, __ps2_ovl5_data_end, __ps2_ovl5_bss_start, __ps2_ovl5_bss_end
+    .word __ps2_ovl6_data_start, __ps2_ovl6_data_end, __ps2_ovl6_bss_start, __ps2_ovl6_bss_end
+    .word __ps2_ovl7_data_start, __ps2_ovl7_data_end, __ps2_ovl7_bss_start, __ps2_ovl7_bss_end
+    .word __ps2_ovl8_data_start, __ps2_ovl8_data_end, __ps2_ovl8_bss_start, __ps2_ovl8_bss_end
+    .word __ps2_ovl9_data_start, __ps2_ovl9_data_end, __ps2_ovl9_bss_start, __ps2_ovl9_bss_end
+    .word __ps2_ovl10_data_start, __ps2_ovl10_data_end, __ps2_ovl10_bss_start, __ps2_ovl10_bss_end
+    .word __ps2_ovl11_data_start, __ps2_ovl11_data_end, __ps2_ovl11_bss_start, __ps2_ovl11_bss_end
+    .word __ps2_ovl12_data_start, __ps2_ovl12_data_end, __ps2_ovl12_bss_start, __ps2_ovl12_bss_end
+    .word __ps2_ovl13_data_start, __ps2_ovl13_data_end, __ps2_ovl13_bss_start, __ps2_ovl13_bss_end
+    .word __ps2_ovl14_data_start, __ps2_ovl14_data_end, __ps2_ovl14_bss_start, __ps2_ovl14_bss_end
+    .word __ps2_ovl15_data_start, __ps2_ovl15_data_end, __ps2_ovl15_bss_start, __ps2_ovl15_bss_end
+    .word __ps2_ovl16_data_start, __ps2_ovl16_data_end, __ps2_ovl16_bss_start, __ps2_ovl16_bss_end
+    .word __ps2_ovl17_data_start, __ps2_ovl17_data_end, __ps2_ovl17_bss_start, __ps2_ovl17_bss_end
+    .word __ps2_ovl18_data_start, __ps2_ovl18_data_end, __ps2_ovl18_bss_start, __ps2_ovl18_bss_end
+    .word __ps2_ovl19_data_start, __ps2_ovl19_data_end, __ps2_ovl19_bss_start, __ps2_ovl19_bss_end
+    .word __ps2_ovl20_data_start, __ps2_ovl20_data_end, __ps2_ovl20_bss_start, __ps2_ovl20_bss_end
+    .word __ps2_ovl21_data_start, __ps2_ovl21_data_end, __ps2_ovl21_bss_start, __ps2_ovl21_bss_end
+    .word __ps2_ovl22_data_start, __ps2_ovl22_data_end, __ps2_ovl22_bss_start, __ps2_ovl22_bss_end
+    .word __ps2_ovl23_data_start, __ps2_ovl23_data_end, __ps2_ovl23_bss_start, __ps2_ovl23_bss_end
+    .word __ps2_ovl24_data_start, __ps2_ovl24_data_end, __ps2_ovl24_bss_start, __ps2_ovl24_bss_end
+    .word __ps2_ovl25_data_start, __ps2_ovl25_data_end, __ps2_ovl25_bss_start, __ps2_ovl25_bss_end
+    .word __ps2_ovl26_data_start, __ps2_ovl26_data_end, __ps2_ovl26_bss_start, __ps2_ovl26_bss_end
+    .word __ps2_ovl27_data_start, __ps2_ovl27_data_end, __ps2_ovl27_bss_start, __ps2_ovl27_bss_end
+    .word __ps2_ovl28_data_start, __ps2_ovl28_data_end, __ps2_ovl28_bss_start, __ps2_ovl28_bss_end
+    .word __ps2_ovl29_data_start, __ps2_ovl29_data_end, __ps2_ovl29_bss_start, __ps2_ovl29_bss_end
+    .word __ps2_ovl30_data_start, __ps2_ovl30_data_end, __ps2_ovl30_bss_start, __ps2_ovl30_bss_end
+    .word __ps2_ovl31_data_start, __ps2_ovl31_data_end, __ps2_ovl31_bss_start, __ps2_ovl31_bss_end
+    .word __ps2_ovl32_data_start, __ps2_ovl32_data_end, __ps2_ovl32_bss_start, __ps2_ovl32_bss_end
+    .word __ps2_ovl33_data_start, __ps2_ovl33_data_end, __ps2_ovl33_bss_start, __ps2_ovl33_bss_end
+    .word __ps2_ovl34_data_start, __ps2_ovl34_data_end, __ps2_ovl34_bss_start, __ps2_ovl34_bss_end
+    .word __ps2_ovl35_data_start, __ps2_ovl35_data_end, __ps2_ovl35_bss_start, __ps2_ovl35_bss_end
+    .word __ps2_ovl36_data_start, __ps2_ovl36_data_end, __ps2_ovl36_bss_start, __ps2_ovl36_bss_end
+    .word __ps2_ovl37_data_start, __ps2_ovl37_data_end, __ps2_ovl37_bss_start, __ps2_ovl37_bss_end
+    .word __ps2_ovl38_data_start, __ps2_ovl38_data_end, __ps2_ovl38_bss_start, __ps2_ovl38_bss_end
+    .word __ps2_ovl39_data_start, __ps2_ovl39_data_end, __ps2_ovl39_bss_start, __ps2_ovl39_bss_end
+    .word __ps2_ovl40_data_start, __ps2_ovl40_data_end, __ps2_ovl40_bss_start, __ps2_ovl40_bss_end
+    .word __ps2_ovl41_data_start, __ps2_ovl41_data_end, __ps2_ovl41_bss_start, __ps2_ovl41_bss_end
+    .word __ps2_ovl42_data_start, __ps2_ovl42_data_end, __ps2_ovl42_bss_start, __ps2_ovl42_bss_end
+    .word __ps2_ovl43_data_start, __ps2_ovl43_data_end, __ps2_ovl43_bss_start, __ps2_ovl43_bss_end
+    .word __ps2_ovl44_data_start, __ps2_ovl44_data_end, __ps2_ovl44_bss_start, __ps2_ovl44_bss_end
+    .word __ps2_ovl45_data_start, __ps2_ovl45_data_end, __ps2_ovl45_bss_start, __ps2_ovl45_bss_end
+    .word __ps2_ovl46_data_start, __ps2_ovl46_data_end, __ps2_ovl46_bss_start, __ps2_ovl46_bss_end
+    .word __ps2_ovl47_data_start, __ps2_ovl47_data_end, __ps2_ovl47_bss_start, __ps2_ovl47_bss_end
+    .word __ps2_ovl48_data_start, __ps2_ovl48_data_end, __ps2_ovl48_bss_start, __ps2_ovl48_bss_end
+    .word __ps2_ovl49_data_start, __ps2_ovl49_data_end, __ps2_ovl49_bss_start, __ps2_ovl49_bss_end
+    .word __ps2_ovl50_data_start, __ps2_ovl50_data_end, __ps2_ovl50_bss_start, __ps2_ovl50_bss_end
+    .word __ps2_ovl51_data_start, __ps2_ovl51_data_end, __ps2_ovl51_bss_start, __ps2_ovl51_bss_end
+    .word __ps2_ovl52_data_start, __ps2_ovl52_data_end, __ps2_ovl52_bss_start, __ps2_ovl52_bss_end
+    .word __ps2_ovl53_data_start, __ps2_ovl53_data_end, __ps2_ovl53_bss_start, __ps2_ovl53_bss_end
+    .word __ps2_ovl54_data_start, __ps2_ovl54_data_end, __ps2_ovl54_bss_start, __ps2_ovl54_bss_end
+    .word __ps2_ovl55_data_start, __ps2_ovl55_data_end, __ps2_ovl55_bss_start, __ps2_ovl55_bss_end
+    .word __ps2_ovl56_data_start, __ps2_ovl56_data_end, __ps2_ovl56_bss_start, __ps2_ovl56_bss_end
+    .word __ps2_ovl57_data_start, __ps2_ovl57_data_end, __ps2_ovl57_bss_start, __ps2_ovl57_bss_end
+    .word __ps2_ovl58_data_start, __ps2_ovl58_data_end, __ps2_ovl58_bss_start, __ps2_ovl58_bss_end
+    .word __ps2_ovl59_data_start, __ps2_ovl59_data_end, __ps2_ovl59_bss_start, __ps2_ovl59_bss_end
+    .word __ps2_ovl60_data_start, __ps2_ovl60_data_end, __ps2_ovl60_bss_start, __ps2_ovl60_bss_end
+    .word __ps2_ovl61_data_start, __ps2_ovl61_data_end, __ps2_ovl61_bss_start, __ps2_ovl61_bss_end
+    .word __ps2_ovl62_data_start, __ps2_ovl62_data_end, __ps2_ovl62_bss_start, __ps2_ovl62_bss_end
+    .word __ps2_ovl63_data_start, __ps2_ovl63_data_end, __ps2_ovl63_bss_start, __ps2_ovl63_bss_end
+    .word __ps2_ovl64_data_start, __ps2_ovl64_data_end, __ps2_ovl64_bss_start, __ps2_ovl64_bss_end
+    .word __ps2_ovl65_data_start, __ps2_ovl65_data_end, __ps2_ovl65_bss_start, __ps2_ovl65_bss_end
+    .word __ps2_scmanager_data_start, __ps2_scmanager_data_end, __ps2_scmanager_bss_start, __ps2_scmanager_bss_end
     .globl gPS2OverlayCount
 gPS2OverlayCount:
     .word 67

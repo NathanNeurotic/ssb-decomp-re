@@ -93,6 +93,12 @@ void syDmaCopy(OSPiHandle *handle, uintptr_t phys, uintptr_t virtual, size_t siz
 // 0x80002BE4
 void syDmaLoadOverlay(SYOverlay *ovl)
 {
+#ifdef PLATFORM_PS2
+    // Statically linked overlay: reset its .data/.bss like the N64 reload does.
+    extern void ps2_overlay_state_reset(uintptr_t rom_start);
+
+    ps2_overlay_state_reset(ovl->rom_start);
+#endif
     if ((ovl->ram_text_end - ovl->ram_text_start) != 0)
     {
         osInvalICache((void*) ovl->ram_text_start, ovl->ram_text_end - ovl->ram_text_start);

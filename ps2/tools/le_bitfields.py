@@ -13,7 +13,8 @@ list in which every storage unit's bitfields are declared in reverse order
 exactly the same bits of the data word as on the N64. The N64 declaration
 stays untouched in the #else branch, so the matching build is unaffected.
 
-Only types whose instances come from integer words are listed; types that are
+Only types whose instances come from integer words are listed (not, e.g.,
+GMRumbleEvent*, whose scripts are positional C initializers); types that are
 filled through C initializers or at runtime are consistent under GCC as is.
 
 Usage (repo root): python3 ps2/tools/le_bitfields.py
@@ -34,9 +35,7 @@ TARGETS = [
     ("src/ft/fttypes.h", r"union FTKeyEvent\s*\{\s*u16 halfword;\s*struct\s*\{"),
     ("src/ft/fttypes.h", r"struct\s*\{(?=\s*ub32 is_use_xrotn_joint)"),
     ("src/gm/gmscript.h", r"struct GMColEvent\w+\s*\{"),
-    ("src/gm/gmscript.h", r"struct GMRumbleEvent\w+\s*\{"),
     ("src/gm/gmtypes.h", r"struct GMColEvent\w+\s*\{"),
-    ("src/gm/gmtypes.h", r"struct GMRumbleEvent\w+\s*\{"),
 ]
 
 SIZES = {"u8": 8, "s8": 8, "ub8": 8, "sb8": 8,

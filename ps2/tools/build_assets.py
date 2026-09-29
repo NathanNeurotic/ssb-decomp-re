@@ -262,6 +262,42 @@ def fix_mistyped_scripts(files, stats):
                 break
 
 
+def fix_animjoint_files(root, files, stats):
+    """Fighter animations the motion tables flag FTANIM_FLAG_ANIMJOINT.
+
+    Those files are AObjEvent32 scripts (parsed by gcParseDObjAnimJoint),
+    but the decomp types them like figatree data, as u16 arrays. On the N64
+    that is the same bytes; compiled natively, every 32-bit event would have
+    its halfwords swapped, so swap them back in the script arrays."""
+    ids = set()
+    rx = re.compile(r"&(ll\w+FileID)\s*,[^,]*,\s*([^}]*)\}")
+    for dirpath, _, names in os.walk(os.path.join(root, "src")):
+        if "relocData" in dirpath:
+            continue
+        for n in names:
+            if not n.endswith(".c"):
+                continue
+            with open(os.path.join(dirpath, n), encoding="utf-8", errors="replace") as f:
+                for m in rx.finditer(f.read()):
+                    if "FTANIM_FLAG_ANIMJOINT" in m.group(2):
+                        ids.add(m.group(1))
+    fids = set()
+    with open(os.path.join(root, "symbols", "reloc_data_symbols.us.txt"), encoding="utf-8") as f:
+        for line in f:
+            m = re.match(r"\s*(ll\w+FileID)\s*=\s*(0x[0-9A-Fa-f]+|\d+)\s*;", line)
+            if m and m.group(1) in ids:
+                fids.add(int(m.group(2), 0))
+    for rf in files:
+        if rf.fid not in fids:
+            continue
+        for start, size, sym in rf.sym_list:
+            if rf.types.get(sym) not in ("u16", "s16"):
+                continue
+            for o in range(start, start + size - 3, 4):
+                rf.blob[o:o + 4] = rf.blob[o + 2:o + 4] + rf.blob[o:o + 2]
+        stats["animjoint_files"] += 1
+
+
 def load_reloc(fid, master, obj):
     e = Elf(obj)
     rf = RelocFile()
@@ -594,8 +630,9 @@ def main():
         log("WARNING: %d relocData files differ in size from the ROM" % size_mismatch)
 
     relocs_by_fid = {rf.fid: resolve_relocs(rf, index) for rf in files}
-    stats = {"tlut_swapped": 0, "sprite_luts_swapped": 0, "mistyped_scripts": 0, "texels_restored": 0}
+    stats = {"tlut_swapped": 0, "sprite_luts_swapped": 0, "mistyped_scripts": 0, "texels_restored": 0, "animjoint_files": 0}
     fix_mistyped_scripts(files, stats)
+    fix_animjoint_files(ROOT, files, stats)
     normalise_palettes(files, relocs_by_fid, stats)
 
     # Encode chains + table

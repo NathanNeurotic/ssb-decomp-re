@@ -319,13 +319,8 @@ typedef union GMColEventAll
 
 typedef struct GMRumbleEventDefault
 {
-#ifdef PLATFORM_PS2 // little-endian bitfield order, see ps2/tools/le_bitfields.py
-	u16 param : 13;
-	u16 opcode : 3;
-#else
 	u16 opcode : 3;
 	u16 param : 13;
-#endif
 } GMRumbleEventDefault;
 
 typedef struct gmRumbleEvent
