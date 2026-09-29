@@ -494,14 +494,16 @@ static int sGsReady;
 
 void ps2_boot_stage(const char *name, uint32_t rgb)
 {
-    ps2_log("boot: %s", name);
     if (!sGsReady)
     {
-        /* Both display circuits off: the whole screen shows BGCOLOR in the
-         * video mode the launcher left. */
+        /* Hardware diagnostics must not depend on printf/RPC.  Show the
+         * marker first; if logging itself wedges after an IOP reboot the TV
+         * must still identify the stage we actually entered. */
         *PGS_PMODE = PGS_PMODE_VAL(0, 0, 1, 0);
         *PGS_BGCOLOR = ((rgb >> 16) & 0xFF) | (rgb & 0xFF00) | ((uint64_t)(rgb & 0xFF) << 16);
+        __asm__ volatile("sync.p" ::: "memory");
     }
+    ps2_log("boot: %s", name);
 }
 
 void ps2_gs_boot_screen(const char *title)
