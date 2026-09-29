@@ -75,7 +75,7 @@ void ps2_overlay_draw(void)
     const PS2RenderStats *r = &gPS2RenderStatsLast;
     uint32_t now = ps2_time_us();
     uint32_t arena_used = 0;
-    int y = 4;
+    int y = 12; /* clear of the top overscan area on TVs */
     uint32_t warn = 0x4040FF, ok = 0xE0FFE0, dim = 0xC0C0C0;
 
     if (now - sFpsWindowStart >= 1000000u)

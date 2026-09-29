@@ -103,6 +103,16 @@ static void render_one(const RenderJob *job)
                 (unsigned)gPS2RenderStats.dl_commands, (unsigned)gPS2RenderStats.triangles,
                 (unsigned)gPS2RenderStats.rects, (unsigned)gPS2RenderStats.tex_uploads,
                 (unsigned)gPS2RenderStats.unknown_cmds, (unsigned)gPS2RenderStats.gfx_us);
+        if (sTasksDone > 3)
+        {
+            const PS2MemStats *ms = ps2_mem_stats();
+            const PS2TexStats *ts = ps2_texcache_stats();
+
+            ps2_log("mem: %u KiB committed, peak %u KiB; tex: %u entries, EE %u/%u KiB, VRAM %u/%u blocks peak, %u evictions",
+                    (unsigned)(ms->total_used / 1024), (unsigned)(ms->total_peak / 1024), (unsigned)ts->entries,
+                    (unsigned)(ts->ee_bytes / 1024), (unsigned)(ts->ee_capacity / 1024),
+                    (unsigned)ts->vram_blocks_peak, (unsigned)PS2_TEX_POOL_BLOCKS, (unsigned)ts->evictions);
+        }
     }
 }
 
