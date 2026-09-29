@@ -1195,6 +1195,141 @@ static void tri(int i0, int i1, int i2)
     tri_pass(&R.vtx[i0], &R.vtx[i1], &R.vtx[i2], &sMode);
 }
 
+/* ------------------------------------------------------------------ */
+/* Row-coverage capture (hardware diagnostic, Select + R1)              */
+/* ------------------------------------------------------------------ */
+
+/* When armed, every primitive drawn into a colour framebuffer is recorded
+ * in GS coordinates; at the end of the frame the rows no primitive covers
+ * (by the GS rule: a row r is drawn when y0 <= r < y1, clipped to the
+ * scissor) are written to the log together with the primitives bordering
+ * them, and the log is saved to SSB64.LOG. */
+enum { DIAG_FILL, DIAG_FILL_CYC, DIAG_TEXRECT, DIAG_TRI };
+static const char *const sDiagKindName[] = { "fill", "fill1c", "texrect", "tri" };
+
+typedef struct DiagPrim
+{
+    int32_t x0, y0, x1, y1; /* 1/16 px, primitive bounds */
+    int16_t sy0, sy1;       /* scissor rows, inclusive */
+    uint8_t kind, fb;
+    uint32_t cmd;           /* display-list command index */
+} DiagPrim;
+
+#define DIAG_MAX 6144
+static DiagPrim sDiag[DIAG_MAX];
+static int sDiagCount;
+static int sDiagOverflow;
+int gPS2DiagCaptureFrames; /* frames still to capture */
+
+static void diag_add(int kind, float x0, float y0, float x1, float y1, int zonly)
+{
+    DiagPrim *d;
+    uint64_t sc;
+
+    if (gPS2DiagCaptureFrames <= 0 || zonly || R.color_target < 0)
+        return;
+    if (sDiagCount >= DIAG_MAX)
+    {
+        sDiagOverflow = 1;
+        return;
+    }
+    sc = gs_scissor();
+    d = &sDiag[sDiagCount++];
+    d->x0 = (int32_t)(x0 * 16.0f);
+    d->y0 = (int32_t)(y0 * 16.0f);
+    d->x1 = (int32_t)(x1 * 16.0f);
+    d->y1 = (int32_t)(y1 * 16.0f);
+    d->sy0 = (int16_t)((sc >> 32) & 0x7FF);
+    d->sy1 = (int16_t)((sc >> 48) & 0x7FF);
+    d->kind = (uint8_t)kind;
+    d->fb = (uint8_t)R.color_target;
+    d->cmd = gPS2RenderStats.dl_commands;
+}
+
+/* first/last row a primitive covers by the GS rule, clipped to scissor */
+static void diag_rows(const DiagPrim *d, int *first, int *last)
+{
+    int f = (d->y0 + 15) >> 4; /* ceil */
+    int l = ((d->y1 + 15) >> 4) - 1;
+
+    if (f < d->sy0) f = d->sy0;
+    if (l > d->sy1) l = d->sy1;
+    *first = f;
+    *last = l;
+}
+
+static void diag_log_prim(const char *tag, const DiagPrim *d)
+{
+    int f, l;
+
+    diag_rows(d, &f, &l);
+    /* coordinates in 1/16 pixel (no %f: keep to integer printf) */
+    ps2_log("diag:  %s %s cmd %u fb%d y16 %d..%d (rows %d..%d) x16 %d..%d scis %d..%d", tag,
+            sDiagKindName[d->kind], (unsigned)d->cmd, d->fb, (int)d->y0, (int)d->y1, f, l, (int)d->x0, (int)d->x1,
+            d->sy0, d->sy1);
+}
+
+static void diag_finish_frame(void)
+{
+    static uint8_t cov[PS2_SCREEN_H];
+    int i, r, fb = sLastColorTarget, gaps = 0, lo = PS2_SCREEN_H, hi = -1;
+
+    if (gPS2DiagCaptureFrames <= 0)
+        return;
+    memset(cov, 0, sizeof(cov));
+    for (i = 0; i < sDiagCount; i++)
+    {
+        const DiagPrim *d = &sDiag[i];
+        int f, l;
+
+        if (d->fb != fb)
+            continue;
+        diag_rows(d, &f, &l);
+        if (f < lo) lo = f;
+        if (l > hi) hi = l;
+        for (r = (f < 0 ? 0 : f); r <= l && r < PS2_SCREEN_H; r++)
+            cov[r] = 1;
+    }
+    ps2_log("diag: frame fb%d, %d prims%s, drawn rows %d..%d", fb, sDiagCount, sDiagOverflow ? " (overflow)" : "",
+            lo, hi);
+    for (r = (lo < 0 ? 0 : lo); r <= hi && r < PS2_SCREEN_H; r++)
+    {
+        int e, n = 0;
+
+        if (cov[r])
+            continue;
+        for (e = r; e + 1 <= hi && e + 1 < PS2_SCREEN_H && !cov[e + 1]; e++)
+            ;
+        ps2_log("diag: UNCOVERED rows %d..%d", r, e);
+        for (i = 0; i < sDiagCount && n < 8; i++)
+        {
+            const DiagPrim *d = &sDiag[i];
+            int f, l;
+
+            if (d->fb != fb)
+                continue;
+            diag_rows(d, &f, &l);
+            if (l == r - 1 || f == e + 1 || (d->y0 < (e + 1) * 16 && d->y1 > r * 16))
+            {
+                diag_log_prim(l == r - 1 ? "above" : f == e + 1 ? "below" : "spans", d);
+                n++;
+            }
+        }
+        if (++gaps >= 6)
+            break;
+        r = e;
+    }
+    if (gaps == 0)
+        ps2_log("diag: every row %d..%d is covered by some primitive", lo, hi);
+    sDiagCount = 0;
+    sDiagOverflow = 0;
+    if (--gPS2DiagCaptureFrames == 0)
+    {
+        ps2_log("diag: capture done");
+        ps2_log_save();
+    }
+}
+
 static void tri_pass(const GbiVtx *a, const GbiVtx *b, const GbiVtx *c, const DrawMode *dm)
 {
     OutVtx poly[12], tmp[12];
@@ -1229,6 +1364,26 @@ static void tri_pass(const GbiVtx *a, const GbiVtx *b, const GbiVtx *c, const Dr
         emit_vertex(q + stride, &poly[i], dm);
         emit_vertex(q + stride * 2, &poly[i + 1], dm);
         q += stride * 3;
+        if (gPS2DiagCaptureFrames > 0)
+        {
+            const OutVtx *t3[3] = { &poly[0], &poly[i], &poly[i + 1] };
+            float ymin = 1e9f, ymax = -1e9f, xmin = 1e9f, xmax = -1e9f;
+            int k;
+
+            for (k = 0; k < 3; k++)
+            {
+                float wi = 1.0f / t3[k]->w;
+                /* same fixed-point truncation as emit_vertex() */
+                float sx = (float)(int32_t)((2048.0f + t3[k]->x * wi * R.vp_scale[0] + R.vp_trans[0]) * 16.0f) / 16.0f - 2048.0f;
+                float sy = (float)(int32_t)((2048.0f + t3[k]->y * wi * R.vp_scale[1] + R.vp_trans[1]) * 16.0f) / 16.0f - 2048.0f;
+
+                if (sy < ymin) ymin = sy;
+                if (sy > ymax) ymax = sy;
+                if (sx < xmin) xmin = sx;
+                if (sx > xmax) xmax = sx;
+            }
+            diag_add(DIAG_TRI, xmin, ymin, xmax, ymax, R.cimg_is_z);
+        }
     }
     gPS2Pkt.ptr = q;
     gPS2RenderStats.triangles += (uint32_t)(n - 2);
@@ -1264,6 +1419,7 @@ static void fill_rect(int ulx, int uly, int lrx, int lry)
     x0 = floorf(x0);
     y0 = floorf(y0);
 
+    diag_add(cyc == G_CYC_FILL ? DIAG_FILL : DIAG_FILL_CYC, x0, y0, x1, y1, R.cimg_is_z);
     if (cyc == G_CYC_FILL)
     {
         uint8_t c[4];
@@ -1474,6 +1630,7 @@ static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int fli
     {
         z = (uint32_t)(0xFFFF - ((R.prim_z > 0x7FFF) ? 0xFFFF : (uint32_t)R.prim_z * 2));
     }
+    diag_add(DIAG_TEXRECT, x0, y0, x1, y1, R.cimg_is_z);
 
     {
         GsState st = dm.gs;
@@ -2056,4 +2213,5 @@ void ps2_gbi_run(const void *dl_start)
         }
     }
     batch_close();
+    diag_finish_frame();
 }

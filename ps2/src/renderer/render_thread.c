@@ -92,6 +92,14 @@ static void render_one(const RenderJob *job)
         ps2_log("diag: frame clear %s", gPS2FrameClearColor == 0 ? "off"
                                         : (gPS2FrameClearColor & 0xFFFFFF) ? "magenta" : "black");
     }
+    if (ps2_input_capture_pressed())
+    {
+        extern int gPS2DiagCaptureFrames;
+
+        /* three frames: one per rotating framebuffer */
+        gPS2DiagCaptureFrames = 3;
+        ps2_log("diag: capturing row coverage for 3 frames");
+    }
     ps2_gbi_run(job->dl);
 
     if (ps2_input_overlay_toggle_pressed())
