@@ -157,6 +157,13 @@ assets → saves → sound drivers (libsd, sdr) → audio → render thread → 
 game's own `syMainLoop`. The sound drivers are optional: if they fail to
 load, the game runs silent.
 
+`sdr.irx` (ps2sdk's sdrdrv) returns `MODULE_REMOVABLE_END` (2) from its
+module start, which only IOP MODLOAD versions newer than 1.2 accept. After
+the IOP reset the console's own `rom0:MODLOAD` loads it, and on hardware that
+hung the boot at "IOP: loading sdr". `iop.c` therefore loads a RAM copy of
+the module patched to return `MODULE_RESIDENT_END` (0); if the patch site is
+not found, sdr is skipped and the game runs silent.
+
 #### Troubleshooting on hardware
 
 Until the GS is initialised, every boot stage paints the whole screen in its
