@@ -41,6 +41,22 @@ PS2Packet gPS2Pkt;
 PS2RenderStats gPS2RenderStats;
 PS2RenderStats gPS2RenderStatsLast;
 
+/* This port only needs gsKit for low-level screen setup.  Keep its state
+ * entirely static so retail hardware never depends on newlib heap state,
+ * OSD config RPCs, or ROM-region probing during GS bring-up. */
+#define PS2_GSKIT_BOOT_OS_QUEUE_BYTES  (16 * 1024)
+#define PS2_GSKIT_BOOT_PER_QUEUE_BYTES (4 * 1024)
+
+static GSGLOBAL sGsGlobalStorage;
+static GSBGCOLOR sGsBgColor;
+static GSTEST sGsTest;
+static GSCLAMP sGsClamp;
+static GSQUEUE sGsOsQueue;
+static GSQUEUE sGsPerQueue;
+static uint8_t sGsOsPool0[PS2_GSKIT_BOOT_OS_QUEUE_BYTES] __attribute__((aligned(64)));
+static uint8_t sGsOsPool1[PS2_GSKIT_BOOT_OS_QUEUE_BYTES] __attribute__((aligned(64)));
+static uint8_t sGsPerPool[PS2_GSKIT_BOOT_PER_QUEUE_BYTES] __attribute__((aligned(64)));
+static uint8_t sGsDmaMisc[512] __attribute__((aligned(64)));
 static GSGLOBAL *sGsGlobal;
 
 /* Two packet buffers: one is filled while the other may still be in DMA. */
@@ -485,13 +501,6 @@ void ps2_gs_rect(int x0, int y0, int x1, int y1, uint32_t rgba)
 
 static int sGsReady;
 
-/* We only use gsKit's queues during gsKit_init_screen()'s one bootstrap
- * clear.  The actual port renderer uses sPktBuf above, so the stock gsKit
- * 1 MiB/256 KiB queue sizes waste more than 2 MiB of EE heap at boot.
- * Keep just enough queue space for gsKit's bootstrap frame. */
-#define PS2_GSKIT_BOOT_OS_QUEUE_BYTES  (16 * 1024)
-#define PS2_GSKIT_BOOT_PER_QUEUE_BYTES (4 * 1024)
-
 void ps2_boot_stage(const char *name, uint32_t rgb)
 {
     if (!sGsReady)
@@ -568,30 +577,107 @@ void ps2_gs_show_panic(const char *msg)
 /* Init                                                                 */
 /* ------------------------------------------------------------------ */
 
+static void *gs_ucab_alias(void *p)
+{
+    return (void *)((uintptr_t)p | 0x30000000u);
+}
+
+static void ps2_gskit_queue_init_static(GSQUEUE *queue, void *pool0, void *pool1, int size, int mode)
+{
+    memset(queue, 0, sizeof(*queue));
+    queue->pool[0] = gs_ucab_alias(pool0);
+    queue->pool_max[0] = (void *)((uintptr_t)queue->pool[0] + (uintptr_t)size);
+    if (mode == GS_ONESHOT)
+    {
+        queue->pool[1] = gs_ucab_alias(pool1);
+        queue->pool_max[1] = (void *)((uintptr_t)queue->pool[1] + (uintptr_t)size);
+    }
+    queue->dma_tag = queue->pool[0];
+    queue->pool_cur = (void *)((uintptr_t)queue->pool[0] + 16u);
+    queue->last_tag = queue->pool_cur;
+    queue->last_type = GIF_RESERVED;
+    queue->mode = (u8)mode;
+    queue->dbuf = 0;
+}
+
+static GSGLOBAL *ps2_gskit_init_static(void)
+{
+    static const s8 dither_matrix[16] = {4, 2, 5, 3, 0, 6, 1, 7, 5, 3, 4, 2, 1, 7, 0, 6};
+    GSGLOBAL *g = &sGsGlobalStorage;
+
+    memset(g, 0, sizeof(*g));
+    memset(&sGsBgColor, 0, sizeof(sGsBgColor));
+    memset(&sGsTest, 0, sizeof(sGsTest));
+    memset(&sGsClamp, 0, sizeof(sGsClamp));
+
+    ps2_gskit_queue_init_static(&sGsOsQueue, sGsOsPool0, sGsOsPool1,
+                                 PS2_GSKIT_BOOT_OS_QUEUE_BYTES, GS_ONESHOT);
+    ps2_gskit_queue_init_static(&sGsPerQueue, sGsPerPool, NULL,
+                                 PS2_GSKIT_BOOT_PER_QUEUE_BYTES, GS_PERSISTENT);
+
+    g->BGColor = &sGsBgColor;
+    g->Test = &sGsTest;
+    g->Clamp = &sGsClamp;
+    g->Os_Queue = &sGsOsQueue;
+    g->Per_Queue = &sGsPerQueue;
+    g->CurQueue = &sGsOsQueue;
+    g->Os_AllocSize = PS2_GSKIT_BOOT_OS_QUEUE_BYTES;
+    g->Per_AllocSize = PS2_GSKIT_BOOT_PER_QUEUE_BYTES;
+    g->dma_misc = gs_ucab_alias(sGsDmaMisc);
+
+    g->Aspect = GS_ASPECT_4_3;
+    g->PSM = GS_PSM_CT24;
+    g->PSMZ = GS_PSMZ_32;
+    g->Dithering = GS_SETTING_OFF;
+    g->DoubleBuffering = GS_SETTING_ON;
+    g->ZBuffering = GS_SETTING_ON;
+    g->Mode = GS_MODE_NTSC;
+    g->Interlace = GS_INTERLACED;
+    g->Field = GS_FIELD;
+    g->Width = 640;
+    g->Height = 448;
+    g->CurrentPointer = 0;
+    g->DrawOrder = GS_PER_OS;
+    g->EvenOrOdd = 0;
+    g->OffsetX = 2048 << 4;
+    g->OffsetY = 2048 << 4;
+    g->ActiveBuffer = 1;
+    g->LockBuffer = GS_SETTING_OFF;
+    g->PrimFogEnable = GS_SETTING_OFF;
+    g->PrimAAEnable = GS_SETTING_OFF;
+    g->PrimAlphaEnable = GS_SETTING_OFF;
+    g->PrimAlpha = GS_BLEND_BACK2FRONT;
+    g->PrimContext = 0;
+    g->FirstFrame = GS_SETTING_ON;
+    memcpy(g->DitherMatrix, dither_matrix, sizeof(dither_matrix));
+
+    sGsBgColor.Red = 0;
+    sGsBgColor.Green = 0;
+    sGsBgColor.Blue = 0;
+
+    sGsTest.ATE = GS_SETTING_OFF;
+    sGsTest.ATST = GS_SETTING_ON;
+    sGsTest.AREF = 0x80;
+    sGsTest.AFAIL = 0;
+    sGsTest.DATE = GS_SETTING_OFF;
+    sGsTest.DATM = 0;
+    sGsTest.ZTE = GS_SETTING_ON;
+    sGsTest.ZTST = 2;
+
+    sGsClamp.WMS = GS_CMODE_CLAMP;
+    sGsClamp.WMT = GS_CMODE_CLAMP;
+
+    return g;
+}
+
 void ps2_gs_init(void)
 {
-    /* Keep these solid-colour checkpoints visible until the renderer is
-     * fully usable. Real hardware can expose memory/launcher state that
-     * PCSX2's host: boot path never sees.
-     *
-     * Do NOT use gsKit_init_global() here: its default queues consume about
-     * 2.25 MiB of EE heap (two 1 MiB one-shot pools + one 256 KiB persistent
-     * pool), even though this port has its own GIF packet buffers. On a large
-     * static ELF that can make gsKit_alloc_ucab() hit a failed memalign(), and
-     * upstream gsKit does not NULL-check that result before SyncDCache().
-     */
-    ps2_boot_stage("GS: minimal global alloc", 0xFFFFFF);
-    sGsGlobal = gsKit_init_global_custom(PS2_GSKIT_BOOT_OS_QUEUE_BYTES,
-                                         PS2_GSKIT_BOOT_PER_QUEUE_BYTES);
-    if (sGsGlobal == NULL)
-    {
-        ps2_boot_stage("GS: global alloc failed", 0x800000);
-        for (;;)
-        {
-            SleepThread();
-        }
-    }
-    ps2_boot_stage("GS: global ready", 0x000080);
+    /* Avoid gsKit_init_global[_custom]() entirely on hardware.  Besides
+     * heap allocations it queries OSD/ROM configuration that this port does
+     * not need because the video mode is selected explicitly below. */
+    ps2_boot_stage("GS: static state begin", 0xFFFFFF);
+    sGsGlobal = ps2_gskit_init_static();
+    ps2_boot_stage("GS: static state ready", 0x00FF00);
 
     sGsGlobal->Mode = GS_MODE_NTSC;
     if (ps2_video_progressive())
