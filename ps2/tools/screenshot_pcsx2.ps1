@@ -23,7 +23,7 @@ if (-not $proc) { Write-Error "PCSX2 game window not found"; exit 1 }
 [Pcsx2Win]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
 Start-Sleep -Milliseconds 400
 [System.Windows.Forms.SendKeys]::SendWait("{F8}")
-for ($i = 0; $i -lt 20; $i++) {
+for ($i = 0; $i -lt 60; $i++) {   # up to 15 s: PCSX2 can be slow to encode
     Start-Sleep -Milliseconds 250
     $shot = Get-ChildItem $snaps -Filter *.png -Recurse -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTime -ge $before } | Sort-Object LastWriteTime -Descending | Select-Object -First 1

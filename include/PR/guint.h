@@ -17,12 +17,24 @@ typedef union
 {
 	struct
 	{
+#ifdef PLATFORM_PS2 // little-endian: the high word of a double is the second one
+		unsigned int lo;
+		unsigned int hi;
+#else
 		unsigned int hi;
 		unsigned int lo;
+#endif
 	} word;
 
 	double d;
 } du;
+
+/* Initialiser for a du constant from its high and low words. */
+#ifdef PLATFORM_PS2
+#define DU(hi, lo) {{ (lo), (hi) }}
+#else
+#define DU(hi, lo) {{ (hi), (lo) }}
+#endif
 
 typedef union
 {
