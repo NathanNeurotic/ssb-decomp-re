@@ -31,6 +31,19 @@ extern void ps2_overlay_state_init(void);
 
 #define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port"
 
+/* Raw GS display registers used only for hardware boot diagnostics.  These
+ * markers deliberately bypass ps2_log(), ps2_boot_stage() and gsKit. */
+#define PS2_BOOT_PMODE   (*(volatile uint64_t *)0x12000000)
+#define PS2_BOOT_BGCOLOR (*(volatile uint64_t *)0x120000E0)
+#define PS2_BOOT_PMODE_BG_ONLY ((uint64_t)(1u << 2))
+
+static void ps2_boot_raw_color(uint8_t r, uint8_t g, uint8_t b)
+{
+    PS2_BOOT_PMODE = PS2_BOOT_PMODE_BG_ONLY;
+    PS2_BOOT_BGCOLOR = (uint64_t)r | ((uint64_t)g << 8) | ((uint64_t)b << 16);
+    __asm__ volatile("sync.p" ::: "memory");
+}
+
 /* USB (and MMCE) storage appears asynchronously after its drivers load;
  * wait until a file next to the ELF can be opened (up to ~6 s). */
 static void wait_for_boot_file(const char *name)
@@ -98,6 +111,17 @@ int ps2_main(int argc, char *argv[])
      * run across that transition is unnecessary and can expose launcher/
      * hardware state that PCSX2's host: path does not reproduce. */
     ps2_boot_stage("GS video init", 0x008080);
+
+    /* Hardware call-boundary probe.  Hold white long enough to be visible,
+     * then leave red immediately before entering ps2_gs_init().  If a test
+     * build still shows only the previous cyan marker, it is not executing
+     * this ELF/code path.  If it freezes red, the call itself/fuction entry
+     * is the failing boundary. */
+    ps2_boot_raw_color(0xFF, 0xFF, 0xFF);
+    DelayThread(500000);
+    ps2_boot_raw_color(0xFF, 0x00, 0x00);
+    DelayThread(250000);
+
     ps2_gs_init();
     ps2_vblank_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
