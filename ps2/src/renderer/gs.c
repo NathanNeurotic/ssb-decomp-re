@@ -561,7 +561,20 @@ void ps2_gs_show_panic(const char *msg)
 
 void ps2_gs_init(void)
 {
+    /* Keep these solid-colour checkpoints visible until the renderer is
+     * fully usable.  Real hardware can expose stale launcher GS/DMAC state
+     * that PCSX2's host: boot path never sees. */
     sGsGlobal = gsKit_init_global();
+    if (sGsGlobal == NULL)
+    {
+        ps2_boot_stage("GS: global alloc failed", 0x800000);
+        for (;;)
+        {
+            SleepThread();
+        }
+    }
+    ps2_boot_stage("GS: global ready", 0x0000A0);
+
     sGsGlobal->Mode = GS_MODE_NTSC;
     if (ps2_video_progressive())
     {
@@ -586,13 +599,22 @@ void ps2_gs_init(void)
     sGsGlobal->PrimAlphaEnable = GS_SETTING_ON;
     sGsGlobal->Dithering = GS_SETTING_ON;
 
-    dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8,
-                1 << DMA_CHANNEL_GIF);
-    dmaKit_chan_init(DMA_CHANNEL_GIF);
+    if (dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8,
+                    1 << DMA_CHANNEL_GIF) < 0 ||
+        dmaKit_chan_init(DMA_CHANNEL_GIF) < 0)
+    {
+        ps2_boot_stage("GS: DMAC init failed", 0x800000);
+        for (;;)
+        {
+            SleepThread();
+        }
+    }
+    ps2_boot_stage("GS: DMAC ready", 0x808000);
 
     /* gsKit programs SMODE/SYNC/DISPLAY for the mode; from here on the
      * renderer owns VRAM layout, FRAME/ZBUF and the display circuit. */
     gsKit_init_screen(sGsGlobal);
+    ps2_boot_stage("GS: screen ready", 0x008000);
 
     ps2_mem_reclassify_static(PS2_MEM_GFX_STAGING, sizeof(sPktBuf));
 
@@ -601,6 +623,7 @@ void ps2_gs_init(void)
     pkt_open(0);
     upload_font();
     ps2_gs_clear(0, 0, 1);
+    ps2_boot_stage("GS: first GIF finish", 0x800040);
     ps2_pkt_finish();
 
     *PGS_BGCOLOR = 0;
