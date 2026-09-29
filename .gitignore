@@ -40,3 +40,4 @@ src/relocData/**/*.bin
 # PS2 port
 ps2/build/
 .wsl_*_tmp.sh
+tools/splat
