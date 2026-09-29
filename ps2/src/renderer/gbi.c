@@ -1195,6 +1195,7 @@ static void tri(int i0, int i1, int i2)
     tri_pass(&R.vtx[i0], &R.vtx[i1], &R.vtx[i2], &sMode);
 }
 
+#if PS2_DEBUG
 /* ------------------------------------------------------------------ */
 /* Row-coverage capture (hardware diagnostic, Select + R1)              */
 /* ------------------------------------------------------------------ */
@@ -1378,13 +1379,20 @@ static void diag_finish_frame(void)
     sDiagOverflow = 0;
     if (--gPS2DiagCaptureFrames == 0)
     {
-        extern uint32_t gPS2FbDrawDisplayed, gPS2FbDrawPending, gPS2FbRetireWaits;
+        extern uint32_t gPS2FbDrawDisplayed, gPS2FbDrawPending;
 
-        ps2_log("diag: capture done; vsync: drew into on-screen fb %u, into queued fb %u, retire waits %u",
-                (unsigned)gPS2FbDrawDisplayed, (unsigned)gPS2FbDrawPending, (unsigned)gPS2FbRetireWaits);
+        ps2_log("diag: capture done; vsync: drew into on-screen fb %u, into queued fb %u",
+                (unsigned)gPS2FbDrawDisplayed, (unsigned)gPS2FbDrawPending);
         ps2_log_save();
     }
 }
+
+#else /* !PS2_DEBUG: the capture is compiled out */
+
+#define diag_add(kind, x0, y0, x1, y1, zonly) ((void)0)
+#define diag_finish_frame() ((void)0)
+
+#endif /* PS2_DEBUG */
 
 static void tri_pass(const GbiVtx *a, const GbiVtx *b, const GbiVtx *c, const DrawMode *dm)
 {
@@ -1420,6 +1428,7 @@ static void tri_pass(const GbiVtx *a, const GbiVtx *b, const GbiVtx *c, const Dr
         emit_vertex(q + stride, &poly[i], dm);
         emit_vertex(q + stride * 2, &poly[i + 1], dm);
         q += stride * 3;
+#if PS2_DEBUG
         if (gPS2DiagCaptureFrames > 0)
         {
             const OutVtx *t3[3] = { &poly[0], &poly[i], &poly[i + 1] };
@@ -1440,6 +1449,7 @@ static void tri_pass(const GbiVtx *a, const GbiVtx *b, const GbiVtx *c, const Dr
             }
             diag_add(DIAG_TRI, xmin, ymin, xmax, ymax, R.cimg_is_z);
         }
+#endif
     }
     gPS2Pkt.ptr = q;
     gPS2RenderStats.triangles += (uint32_t)(n - 2);

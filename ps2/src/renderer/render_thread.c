@@ -80,6 +80,7 @@ static void render_one(const RenderJob *job)
 
         (void)gPS2GbiTrace; /* debug: set > 0 to log the next N GBI commands */
     }
+#if PS2_DEBUG
     if (ps2_input_clear_toggle_pressed())
     {
         /* off -> magenta -> black -> off (the magenta sets bit 31 so a
@@ -100,6 +101,7 @@ static void render_one(const RenderJob *job)
         gPS2DiagCaptureFrames = 3;
         ps2_log("diag: capturing row coverage for 3 frames");
     }
+#endif
     ps2_gbi_run(job->dl);
 
     if (ps2_input_overlay_toggle_pressed())
@@ -124,12 +126,14 @@ static void render_one(const RenderJob *job)
                 (unsigned)gPS2RenderStats.dl_commands, (unsigned)gPS2RenderStats.triangles,
                 (unsigned)gPS2RenderStats.rects, (unsigned)gPS2RenderStats.tex_uploads,
                 (unsigned)gPS2RenderStats.unknown_cmds, (unsigned)gPS2RenderStats.gfx_us);
+#if PS2_DEBUG
         {
-            extern uint32_t gPS2FbDrawDisplayed, gPS2FbDrawPending, gPS2FbRetireWaits;
+            extern uint32_t gPS2FbDrawDisplayed, gPS2FbDrawPending;
 
-            ps2_log("vsync: drew into on-screen fb %u, into queued fb %u, retire waits %u",
-                    (unsigned)gPS2FbDrawDisplayed, (unsigned)gPS2FbDrawPending, (unsigned)gPS2FbRetireWaits);
+            ps2_log("vsync: drew into on-screen fb %u, into queued fb %u", (unsigned)gPS2FbDrawDisplayed,
+                    (unsigned)gPS2FbDrawPending);
         }
+#endif
         if (sTasksDone > 3)
         {
             const PS2MemStats *ms = ps2_mem_stats();

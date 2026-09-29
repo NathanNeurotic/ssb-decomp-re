@@ -77,14 +77,11 @@ extern uint16_t gSYFramebufferSets[PS2_FB_COUNT][N64_FB_ROWS * PS2_SCREEN_W];
 extern uint16_t gSYZBuffer[PS2_SCREEN_W * PS2_SCREEN_H] __attribute__((weak));
 
 static volatile int sDisplayedFb = -1;
-static volatile int sPrevDisplayedFb = -1;       /* on screen until the last switch */
-static volatile uint32_t sDisplaySwitchVblank;   /* VBlank count at that switch */
-static volatile int sPendingFb = -1;             /* requested by osViSwapBuffer */
+static volatile int sPendingFb = -1; /* requested by osViSwapBuffer */
 
-/* Scan-out race counters (logged with the periodic gfx stats). */
+/* Scan-out race counters (PS2_DEBUG: logged with the periodic gfx stats). */
 uint32_t gPS2FbDrawDisplayed; /* frames drawn into the buffer on screen */
 uint32_t gPS2FbDrawPending;   /* ... into the buffer queued for display */
-uint32_t gPS2FbRetireWaits;   /* VBlanks waited for a just-retired buffer */
 static volatile int sBlackout = 1;
 
 /* ------------------------------------------------------------------ */
@@ -320,11 +317,6 @@ static void display_fb(int index)
     }
     dispfb = PGS_DISPFB_VAL(PS2_FB_PAGE(index), PS2_FBW, PS2_FB_PSM);
     *PGS_DISPFB2 = dispfb;
-    if (index != sDisplayedFb)
-    {
-        sPrevDisplayedFb = sDisplayedFb;
-        sDisplaySwitchVblank = ps2_vblank_count();
-    }
     sDisplayedFb = index;
     if (sPendingFb == index)
     {
@@ -362,15 +354,13 @@ void ps2_gs_queue_display_framebuffer(void *n64_fb)
 }
 
 /* Render thread, before the first draw into framebuffer `fb` in a frame.
- * Counts draws into a buffer that is on screen or queued for it (the game's
- * VI bookkeeping should never allow either), and waits - at most two
- * VBlanks - before redrawing a buffer that left the screen less than two
- * VBlanks ago, in case the TV is still being fed from it. */
+ * Debug builds count draws into a buffer that is on screen or queued for
+ * it; the game's VI bookkeeping should never allow either (it happened
+ * while game framebuffers were mapped by the wrong stride, see
+ * ps2_gs_fb_index_for). */
 void ps2_gs_before_draw_into(int fb)
 {
-    extern void ps2_delay_vblanks(int n);
-    int n;
-
+#if PS2_DEBUG
     if (fb < 0)
     {
         return;
@@ -383,13 +373,9 @@ void ps2_gs_before_draw_into(int fb)
     {
         gPS2FbDrawPending++;
     }
-    for (n = 0; n < 2 && fb == sPrevDisplayedFb && fb != sDisplayedFb &&
-                ps2_vblank_count() - sDisplaySwitchVblank < 2;
-         n++)
-    {
-        ps2_delay_vblanks(1);
-        gPS2FbRetireWaits++;
-    }
+#else
+    (void)fb;
+#endif
 }
 
 /* Interrupt context (VBlank): latch a new display framebuffer. */

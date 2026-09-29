@@ -35,6 +35,14 @@ ps2/tools/prepare_assets.sh          # once per ROM / asset change -> ps2/build/
 cd ps2 && ps2build build             # -> ps2/build/bin/ssb64.elf
 ```
 
+`ps2build build` makes the production ELF: the debugging aids are compiled
+out. For a debug build, add `- PS2_DEBUG=1` to the `defines` of the
+`ssb_platform` target in `ps2/ps2.yaml`. That enables the debug overlay
+(Select + R3), the hardware diagnostics (Select + L3 frame clear, Select + R1
+row-coverage capture), framebuffer scan-out counters in the log, and
+`SSB64.LOG` written at boot. Both builds write `SSB64.LOG` after a crash or
+fatal error.
+
 Copy `ssb64.elf` and `SSB64.DAT` to the same directory on any boot device
 (USB mass storage, memory card, MMCE, or `host:` in PCSX2) and run the ELF.
 The boot code finds the pack next to the ELF from `argv[0]`; no path is

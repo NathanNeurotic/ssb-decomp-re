@@ -108,8 +108,11 @@ int ps2_main(int argc, char *argv[])
     wait_for_boot_file("SSB64.DAT");
     if (ps2_storage_boot_device() != PS2_BOOT_CDROM)
     {
+        /* crash/panic reports write SSB64.LOG from here on */
         ps2_log_enable_save(1);
+#if PS2_DEBUG
         ps2_log_save();
+#endif
     }
     ps2_ultra_threads_init();
     ps2_vi_init();
@@ -139,7 +142,9 @@ int ps2_main(int argc, char *argv[])
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
     ps2_log("boot: starting game");
+#if PS2_DEBUG
     ps2_log_save();
+#endif
     /* syMainLoop creates the idle thread (libultra priority 127), which in
      * turn starts the game's main thread; this boot thread then just parks
      * at the lowest priority. */

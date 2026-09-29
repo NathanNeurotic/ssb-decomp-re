@@ -16,9 +16,9 @@ real PS2 hardware yet.** See [PS2_PORT.md](PS2_PORT.md) for the design.
 | Audio (driver side) | SPU2 backend active: music and sound-effect voices start with the right samples and plausible pitches; the SPU2 reports sounding voices with advancing play addresses. **Not yet checked by ear** (see below) |
 | Rendering | textured/lit 3D, sprites, CI4/CI8/I/IA/RGBA16/RGBA32 textures, clipping, fog, alpha blend/test, depth |
 | Memory | 17.3 MB committed at boot and in the match (budget 24 MB), of which 4.1 MB is the PS-ADPCM sample set; scene arena 1.5 of 6 MB used in the 1P match; peak equals steady state so far. SPU RAM: ~1 of 1.9 MB sample cache used in a match, no evictions yet |
-| Debug overlay | Select + R3 |
-| Frame-clear diagnostic | Select + L3 cycles off → magenta → black: clears each framebuffer before the game draws into it, so rows the game leaves undrawn show in that colour (for the flickering line seen on hardware) |
-| Row-coverage capture | Select + R1: for 3 frames, records every primitive drawn and logs the framebuffer rows none of them covers (GS rule), with the neighbouring primitives, then saves SSB64.LOG |
+| Debug overlay | Select + R3 (debug builds: `PS2_DEBUG=1`) |
+| Frame-clear diagnostic | debug builds: Select + L3 cycles off → magenta → black: clears each framebuffer before the game draws into it, so rows the game leaves undrawn show in that colour (for the flickering line seen on hardware) |
+| Row-coverage capture | debug builds: Select + R1: for 3 frames, records every primitive drawn and logs the framebuffer rows none of them covers (GS rule), with the neighbouring primitives, then saves SSB64.LOG |
 
 ## Measured performance (PCSX2, 1P match on Hyrule)
 
