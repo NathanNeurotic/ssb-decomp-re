@@ -793,7 +793,7 @@ static void bind_texture(int tile_index, TexInfo *ti)
 static uint64_t gs_scissor(void)
 {
     int x0 = R.scissor[0] >> 2, y0 = R.scissor[1] >> 2;
-    int x1 = (R.scissor[2] >> 2) - 1, y1 = (R.scissor[3] >> 2) - 1;
+    int x1 = ((R.scissor[2] + 3) >> 2) - 1, y1 = ((R.scissor[3] + 3) >> 2) - 1;
 
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
@@ -1260,6 +1260,9 @@ static void fill_rect(int ulx, int uly, int lrx, int lry)
         x1 += 1.0f;
         y1 += 1.0f;
     }
+    /* partly covered first row/column: see snap_leading_edge() */
+    x0 = floorf(x0);
+    y0 = floorf(y0);
 
     if (cyc == G_CYC_FILL)
     {
@@ -1348,11 +1351,35 @@ static void clip_negative_texcoord(float *p0, float *p1, float *t0, float *t1)
     {
         *p0 += (*p1 - *p0) * (-*t0 / (*t1 - *t0));
         *t0 = 0.0f;
+        /* keep the partly covered first row/column, like the RDP does (see
+         * snap_leading_edge); it samples the clamped first texel */
+        *p0 = floorf(*p0);
     }
     else
     {
         *p1 -= (*p1 - *p0) * (-*t1 / (*t0 - *t1));
         *t1 = 0.0f;
+    }
+}
+
+/* Coverage of a rectangle's leading (top/left) edge.  The RDP walks
+ * quarter-scanlines, so a rectangle whose top edge is at y = 10.25 still
+ * draws row 10; the GS draws only pixels whose integer coordinate lies
+ * inside the primitive, so it starts at row 11.  Where the game places a
+ * background element at a fractional position that row is then left
+ * undrawn and shows whatever an earlier frame put in that one of the three
+ * rotating framebuffers: a flickering line on hardware (PCSX2's hardware
+ * renderer rounds differently and hides it).  Move the edge down to the
+ * pixel boundary, extending the texel coordinate t along with it.  Trailing
+ * edges already agree: both cover up to ceil(p1) - 1. */
+static void snap_leading_edge(float *p0, float p1, float *t0, float t1)
+{
+    float frac = *p0 - floorf(*p0);
+
+    if (frac > 0.0f && p1 > *p0)
+    {
+        *t0 -= frac * (t1 - *t0) / (p1 - *p0);
+        *p0 -= frac;
     }
 }
 
@@ -1415,6 +1442,16 @@ static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int fli
         v0 = t;
         u1 = s + (y1 - y0) * dsdx;
         v1 = t + (x1 - x0) * dtdy;
+    }
+    if (!flip)
+    {
+        snap_leading_edge(&x0, x1, &u0, u1);
+        snap_leading_edge(&y0, y1, &v0, v1);
+    }
+    else
+    {
+        snap_leading_edge(&x0, x1, &v0, v1);
+        snap_leading_edge(&y0, y1, &u0, u1);
     }
     /* Repeat-wrapped axes are fine: 1024 texels is a multiple of every
      * (power-of-two) GS texture size, so the 14-bit wrap lands on the same
