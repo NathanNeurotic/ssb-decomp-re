@@ -1211,6 +1211,7 @@ typedef struct DiagPrim
 {
     int32_t x0, y0, x1, y1; /* 1/16 px, primitive bounds */
     int16_t sy0, sy1;       /* scissor rows, inclusive */
+    int16_t sx0, sx1;       /* scissor columns, inclusive */
     uint8_t kind, fb;
     uint32_t cmd;           /* display-list command index */
 } DiagPrim;
@@ -1241,6 +1242,8 @@ static void diag_add(int kind, float x0, float y0, float x1, float y1, int zonly
     d->y1 = (int32_t)(y1 * 16.0f);
     d->sy0 = (int16_t)((sc >> 32) & 0x7FF);
     d->sy1 = (int16_t)((sc >> 48) & 0x7FF);
+    d->sx0 = (int16_t)(sc & 0x7FF);
+    d->sx1 = (int16_t)((sc >> 16) & 0x7FF);
     d->kind = (uint8_t)kind;
     d->fb = (uint8_t)R.color_target;
     d->cmd = gPS2RenderStats.dl_commands;
@@ -1269,10 +1272,25 @@ static void diag_log_prim(const char *tag, const DiagPrim *d)
             d->sy0, d->sy1);
 }
 
+static void diag_cols(const DiagPrim *d, int *first, int *last)
+{
+    int f = (d->x0 + 15) >> 4;
+    int l = ((d->x1 + 15) >> 4) - 1;
+
+    if (f < d->sx0) f = d->sx0;
+    if (l > d->sx1) l = d->sx1;
+    if (f < 0) f = 0;
+    if (l > PS2_SCREEN_W - 1) l = PS2_SCREEN_W - 1;
+    *first = f;
+    *last = l;
+}
+
 static void diag_finish_frame(void)
 {
-    static uint8_t cov[PS2_SCREEN_H];
-    int i, r, fb = sLastColorTarget, gaps = 0, lo = PS2_SCREEN_H, hi = -1;
+    /* per-pixel coverage map of the target framebuffer, by the GS rule */
+    static uint32_t cov[PS2_SCREEN_H][PS2_SCREEN_W / 32];
+    static uint16_t cnt[PS2_SCREEN_H];
+    int i, r, c, fb = sLastColorTarget, reported = 0, lo = PS2_SCREEN_H, hi = -1, best = 0;
 
     if (gPS2DiagCaptureFrames <= 0)
         return;
@@ -1280,47 +1298,82 @@ static void diag_finish_frame(void)
     for (i = 0; i < sDiagCount; i++)
     {
         const DiagPrim *d = &sDiag[i];
-        int f, l;
+        int f, l, cf, cl;
 
         if (d->fb != fb)
             continue;
         diag_rows(d, &f, &l);
+        diag_cols(d, &cf, &cl);
+        if (f < 0) f = 0;
+        if (l > PS2_SCREEN_H - 1) l = PS2_SCREEN_H - 1;
+        if (f > l || cf > cl)
+            continue;
         if (f < lo) lo = f;
         if (l > hi) hi = l;
-        for (r = (f < 0 ? 0 : f); r <= l && r < PS2_SCREEN_H; r++)
-            cov[r] = 1;
+        for (r = f; r <= l; r++)
+            for (c = cf; c <= cl; c++)
+                cov[r][c >> 5] |= 1u << (c & 31);
     }
-    ps2_log("diag: frame fb%d, %d prims%s, drawn rows %d..%d", fb, sDiagCount, sDiagOverflow ? " (overflow)" : "",
-            lo, hi);
-    for (r = (lo < 0 ? 0 : lo); r <= hi && r < PS2_SCREEN_H; r++)
+    for (r = 0; r < PS2_SCREEN_H; r++)
     {
-        int e, n = 0;
+        int n = 0;
 
-        if (cov[r])
+        for (c = 0; c < PS2_SCREEN_W / 32; c++)
+            n += __builtin_popcount(cov[r][c]);
+        cnt[r] = (uint16_t)n;
+        if (r >= lo && r <= hi && n > best)
+            best = n;
+    }
+    ps2_log("diag: frame fb%d, %d prims%s, drawn rows %d..%d, widest row %d px", fb, sDiagCount,
+            sDiagOverflow ? " (overflow)" : "", lo, hi, best);
+
+    /* rows inside the drawn area with fewer pixels than the widest row */
+    for (r = (lo < 0 ? 0 : lo); r <= hi; r++)
+    {
+        int e, n = 0, gx0 = -1, gx1 = -1;
+
+        if (cnt[r] >= best)
             continue;
-        for (e = r; e + 1 <= hi && e + 1 < PS2_SCREEN_H && !cov[e + 1]; e++)
+        for (e = r; e + 1 <= hi && cnt[e + 1] == cnt[r] && memcmp(cov[e + 1], cov[r], sizeof(cov[r])) == 0; e++)
             ;
-        ps2_log("diag: UNCOVERED rows %d..%d", r, e);
-        for (i = 0; i < sDiagCount && n < 8; i++)
+        /* first hole in the row, relative to the widest row's span */
+        for (c = 0; c < PS2_SCREEN_W; c++)
+        {
+            int set = (cov[r][c >> 5] >> (c & 31)) & 1;
+
+            if (!set && gx0 < 0 && c >= 10 && c < PS2_SCREEN_W - 10)
+                gx0 = c;
+            if (gx0 >= 0 && set)
+            {
+                gx1 = c - 1;
+                break;
+            }
+        }
+        ps2_log("diag: HOLE rows %d..%d: %d of %d px covered, first gap x %d..%d", r, e, cnt[r], best, gx0,
+                gx1 < 0 ? PS2_SCREEN_W - 1 : gx1);
+        for (i = 0; i < sDiagCount && n < 10; i++)
         {
             const DiagPrim *d = &sDiag[i];
-            int f, l;
+            int f, l, cf, cl;
 
             if (d->fb != fb)
                 continue;
             diag_rows(d, &f, &l);
-            if (l == r - 1 || f == e + 1 || (d->y0 < (e + 1) * 16 && d->y1 > r * 16))
+            diag_cols(d, &cf, &cl);
+            if (gx0 >= 0 && (cl < gx0 || cf > gx0))
+                continue; /* not in the gap's column */
+            if (l == r - 1 || f == e + 1)
             {
-                diag_log_prim(l == r - 1 ? "above" : f == e + 1 ? "below" : "spans", d);
+                diag_log_prim(l == r - 1 ? "above" : "below", d);
                 n++;
             }
         }
-        if (++gaps >= 6)
+        if (++reported >= 6)
             break;
         r = e;
     }
-    if (gaps == 0)
-        ps2_log("diag: every row %d..%d is covered by some primitive", lo, hi);
+    if (reported == 0)
+        ps2_log("diag: every pixel of rows %d..%d is covered", lo, hi);
     sDiagCount = 0;
     sDiagOverflow = 0;
     if (--gPS2DiagCaptureFrames == 0)
