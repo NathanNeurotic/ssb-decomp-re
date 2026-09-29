@@ -8,6 +8,7 @@
  */
 #include <ps2/platform.h>
 
+#include <delaythread.h>
 #include <fcntl.h>
 #include <kernel.h>
 #include <stdio.h>
