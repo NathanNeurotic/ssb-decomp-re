@@ -224,6 +224,44 @@ def read_rom_reloc_table(rom, base, count):
     return entries
 
 
+INC_BLOCK_RE = re.compile(r"^\s*(u16|s16)\s+(\w+)\s*\[[^\]]*\]\s*=\s*\{\s*#include\s*<[^>]*\.palette\.inc\.c>", re.M)
+SCRIPT_CAST_RE = re.compile(r"\(\s*AObjEvent32\s*\*\s*\)\s*&?\s*(\w+)")
+
+
+def fix_mistyped_scripts(files, stats):
+    """u16 blocks included as ".palette" data but used as AObjEvent32 scripts.
+
+    On the N64 a u16 array and a u32 script are the same bytes; compiled
+    natively the two halfwords of every script word end up swapped. Only
+    blocks whose *include* says palette while the source uses them as an
+    AObjEvent32 pointer are touched (genuine u16 figatree data, which is
+    also cast to AObjEvent32*, comes from inline macros, not palette
+    includes)."""
+    palettes = {}
+    texts = {}
+    for rf in files:
+        try:
+            with open(rf.master, encoding="utf-8", errors="replace") as f:
+                texts[rf.fid] = f.read()
+        except OSError:
+            continue
+        for m in INC_BLOCK_RE.finditer(texts[rf.fid]):
+            palettes[m.group(2)] = rf
+    used = set()
+    for text in texts.values():
+        for m in SCRIPT_CAST_RE.finditer(text):
+            if m.group(1) in palettes:
+                used.add(m.group(1))
+    for name in sorted(used):
+        rf = palettes[name]
+        for start, size, sym in rf.sym_list:
+            if sym == name:
+                for o in range(start, start + size - 3, 4):
+                    rf.blob[o:o + 4] = rf.blob[o + 2:o + 4] + rf.blob[o:o + 2]
+                stats["mistyped_scripts"] += 1
+                break
+
+
 def load_reloc(fid, master, obj):
     e = Elf(obj)
     rf = RelocFile()
@@ -346,6 +384,23 @@ def normalise_palettes(files, relocs_by_fid, stats):
                 op = w0 >> 24
                 if op == 0xFD:
                     timg = slots.get(o + 4)
+                elif op in (0xF3, 0xF4) and timg is not None:
+                    # Texel load: texture data must stay in the original N64
+                    # byte order. Blocks the decomp typed as u16/u32 were
+                    # compiled natively and need their elements swapped back.
+                    _, _, tfid, toff = timg
+                    ttype = target_type(tfid, toff)
+                    if ttype in ("u16", "s16", "u32", "s32"):
+                        trf = by_fid[tfid]
+                        hit = symbol_at(trf, toff)
+                        key = ("tex", tfid, hit[1] if hit else toff)
+                        if hit is not None and key not in done:
+                            done.add(key)
+                            sz = next(z for st, z, nm in trf.sym_list if st == hit[1] and nm == hit[0])
+                            w = 2 if ttype in ("u16", "s16") else 4
+                            for q in range(hit[1], hit[1] + sz - (w - 1), w):
+                                trf.blob[q:q + w] = trf.blob[q:q + w][::-1]
+                            stats["texels_restored"] += 1
                 elif op == 0xF0 and timg is not None:
                     count = ((w1 >> 14) & 0x3FF) + 1
                     _, _, tfid, toff = timg
@@ -539,7 +594,8 @@ def main():
         log("WARNING: %d relocData files differ in size from the ROM" % size_mismatch)
 
     relocs_by_fid = {rf.fid: resolve_relocs(rf, index) for rf in files}
-    stats = {"tlut_swapped": 0, "sprite_luts_swapped": 0}
+    stats = {"tlut_swapped": 0, "sprite_luts_swapped": 0, "mistyped_scripts": 0, "texels_restored": 0}
+    fix_mistyped_scripts(files, stats)
     normalise_palettes(files, relocs_by_fid, stats)
 
     # Encode chains + table

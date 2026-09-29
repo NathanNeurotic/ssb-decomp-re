@@ -77,10 +77,7 @@ static void render_one(const RenderJob *job)
     {
         extern int gPS2GbiTrace;
 
-        if (sTasksDone == 120)
-        {
-            gPS2GbiTrace = 80;
-        }
+        (void)gPS2GbiTrace; /* debug: set > 0 to log the next N GBI commands */
     }
     ps2_gbi_run(job->dl);
 

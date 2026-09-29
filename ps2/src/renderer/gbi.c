@@ -686,11 +686,17 @@ static void bind_texture(int tile_index, TexInfo *ti)
     }
     memset(&key, 0, sizeof(key));
 
+    /* The RDP clamps to the tile extent first, then wraps with the mask.
+     * When the mask period is smaller than the extent the result is the
+     * mask-sized texture repeated (or mirrored) across the region, so that
+     * is what gets uploaded; clamping only matters when the extent fits. */
     w = ((t->lrs - t->uls) >> 2) + 1;
     h = ((t->lrt - t->ult) >> 2) + 1;
-    if (t->masks && !(t->cms & G_TX_CLAMP))
+    ti->wrap_s_repeat = t->masks && (!(t->cms & G_TX_CLAMP) || w > (1 << t->masks));
+    ti->wrap_t_repeat = t->maskt && (!(t->cmt & G_TX_CLAMP) || h > (1 << t->maskt));
+    if (ti->wrap_s_repeat)
         w = 1 << t->masks;
-    if (t->maskt && !(t->cmt & G_TX_CLAMP))
+    if (ti->wrap_t_repeat)
         h = 1 << t->maskt;
     if (w <= 0 || h <= 0 || w > 1024 || h > 1024)
     {
@@ -708,8 +714,8 @@ static void bind_texture(int tile_index, TexInfo *ti)
         /* LoadTile rows keep the DRAM image pitch. */
         key.line_bytes = (uint16_t)R.loads[li].pitch;
     }
-    key.mirror_s = (t->cms & G_TX_MIRROR) && t->masks && !(t->cms & G_TX_CLAMP);
-    key.mirror_t = (t->cmt & G_TX_MIRROR) && t->maskt && !(t->cmt & G_TX_CLAMP);
+    key.mirror_s = (t->cms & G_TX_MIRROR) && ti->wrap_s_repeat;
+    key.mirror_t = (t->cmt & G_TX_MIRROR) && ti->wrap_t_repeat;
     key.odd_swap = R.loads[li].odd_swap;
 
     if (t->fmt == G_IM_FMT_CI)
@@ -726,16 +732,26 @@ static void bind_texture(int tile_index, TexInfo *ti)
         key.pal_index = t->palette;
     }
 
-    if (!ps2_texcache_bind(&key, &ti->bind))
     {
-        return;
+        extern int gPS2TexJustConverted;
+
+        gPS2TexJustConverted = 0;
+        if (!ps2_texcache_bind(&key, &ti->bind))
+        {
+            return;
+        }
+        if (gPS2TexJustConverted)
+        {
+            ps2_log(" tile%d fmt%d siz%d line%d tmem%d ms%d mt%d sh%d/%d cm%d/%d ul%d,%d lr%d,%d load:tmem%d pitch%u siz%d",
+                    tile_index & 7, t->fmt, t->siz, t->line, t->tmem, t->masks, t->maskt, t->shifts, t->shiftt, t->cms,
+                    t->cmt, t->uls, t->ult, t->lrs, t->lrt, R.loads[li].tmem, (unsigned)R.loads[li].pitch,
+                    R.loads[li].siz);
+        }
     }
     tile_shift_mul(t->shifts, &ti->shift_s);
     tile_shift_mul(t->shiftt, &ti->shift_t);
     ti->off_s = (float)t->uls * 0.25f;
     ti->off_t = (float)t->ult * 0.25f;
-    ti->wrap_s_repeat = (t->masks && !(t->cms & G_TX_CLAMP));
-    ti->wrap_t_repeat = (t->maskt && !(t->cmt & G_TX_CLAMP));
     ti->valid = 1;
 }
 

@@ -58,6 +58,8 @@ static int16_t sHash[HASH_SLOTS]; /* entry index or -1 */
 static int sFreeHead;
 static uint32_t sFrame;
 static PS2TexStats sStats;
+int gPS2TexTrace; /* debug: set > 0 to log the next N texture conversions */
+int gPS2TexJustConverted; /* debug: log the first N texture conversions */
 
 /* Staging ring for converted texel + CLUT data awaiting DMA. */
 static uint8_t *sStaging;
@@ -489,6 +491,13 @@ static int make_resident(TexEntry *e, int16_t idx)
                       (psm == GSPSM_T4 || psm == GSPSM_T8) ? 1 : 0);
     e->resident = 1;
     gPS2RenderStats.tex_converts++;
+    if (gPS2TexTrace > 0)
+    {
+        gPS2TexTrace--;
+        gPS2TexJustConverted = 1;
+        ps2_log("tex %p fmt%d siz%d %dx%d line%d mir%d%d swz%d tlut %p/%d", k->addr, k->fmt, k->siz, k->width,
+                k->height, k->line_bytes, k->mirror_s, k->mirror_t, k->odd_swap, k->tlut, k->tlut_type);
+    }
     return 1;
 }
 
