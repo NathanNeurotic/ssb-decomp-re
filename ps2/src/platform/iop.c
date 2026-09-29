@@ -132,8 +132,14 @@ void ps2_iop_init(void)
         goto module_failure;
     }
 
-    /* All RPC services are stable again.  Console output is safe from here. */
-    if (sIopWasReset)
+    /* Keep printf mirroring disabled after a real-hardware IOP reboot.
+     * Even with fileXio restored, stdout may still reference launcher/RPC
+     * state that existed before the reset.  PCSX2's normal host: path never
+     * reboots the IOP, so leave console logging enabled there only.
+     *
+     * ps2_log() still records every line in EE RAM, and hardware can save
+     * that history to SSB64.LOG once the boot device is mounted. */
+    if (!sIopWasReset)
     {
         ps2_log_console(1);
     }
