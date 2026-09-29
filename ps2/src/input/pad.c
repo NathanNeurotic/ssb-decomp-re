@@ -319,6 +319,17 @@ int ps2_input_overlay_toggle_pressed(void)
     return fire;
 }
 
+/* Select + L3: cycle the frame-clear diagnostic (render_thread.c). */
+int ps2_input_clear_toggle_pressed(void)
+{
+    static int sLatched;
+    int now = ps2_input_raw_combo(0, PS2B_SELECT | PS2B_L3);
+    int fire = now && !sLatched;
+
+    sLatched = now;
+    return fire;
+}
+
 int ps2_input_has_rumble(int player)
 {
     return (player >= 0 && player < PS2_INPUT_MAX_PLAYERS) && sSlots[player].open && sSlots[player].has_actuator;

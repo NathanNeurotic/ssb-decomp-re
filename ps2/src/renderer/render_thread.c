@@ -80,6 +80,18 @@ static void render_one(const RenderJob *job)
 
         (void)gPS2GbiTrace; /* debug: set > 0 to log the next N GBI commands */
     }
+    if (ps2_input_clear_toggle_pressed())
+    {
+        /* off -> magenta -> black -> off (the magenta sets bit 31 so a
+         * black clear is still "on") */
+        extern uint32_t gPS2FrameClearColor;
+
+        gPS2FrameClearColor = (gPS2FrameClearColor == 0)            ? 0x80FF00FFu
+                              : (gPS2FrameClearColor == 0x80FF00FFu) ? 0x80000000u
+                                                                     : 0;
+        ps2_log("diag: frame clear %s", gPS2FrameClearColor == 0 ? "off"
+                                        : (gPS2FrameClearColor & 0xFFFFFF) ? "magenta" : "black");
+    }
     ps2_gbi_run(job->dl);
 
     if (ps2_input_overlay_toggle_pressed())

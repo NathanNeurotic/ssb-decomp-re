@@ -17,6 +17,7 @@ real PS2 hardware yet.** See [PS2_PORT.md](PS2_PORT.md) for the design.
 | Rendering | textured/lit 3D, sprites, CI4/CI8/I/IA/RGBA16/RGBA32 textures, clipping, fog, alpha blend/test, depth |
 | Memory | 17.3 MB committed at boot and in the match (budget 24 MB), of which 4.1 MB is the PS-ADPCM sample set; scene arena 1.5 of 6 MB used in the 1P match; peak equals steady state so far. SPU RAM: ~1 of 1.9 MB sample cache used in a match, no evictions yet |
 | Debug overlay | Select + R3 |
+| Frame-clear diagnostic | Select + L3 cycles off → magenta → black: clears each framebuffer before the game draws into it, so rows the game leaves undrawn show in that colour (for the flickering line seen on hardware) |
 
 ## Measured performance (PCSX2, 1P match on Hyrule)
 

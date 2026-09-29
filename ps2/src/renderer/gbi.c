@@ -1469,6 +1469,14 @@ static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int fli
 /* Display list interpreter                                             */
 /* ------------------------------------------------------------------ */
 
+/* Hardware diagnostic (toggled with Select + L3, see render_thread.c):
+ * 0 = off, otherwise the RGB colour each framebuffer is cleared to before
+ * the game's first draw into it in a frame.  Rows the game leaves undrawn
+ * then show in that colour instead of whatever an earlier frame left in
+ * that one of the three buffers. */
+uint32_t gPS2FrameClearColor;
+static int sFrameCleared;
+
 static void set_color_image(const void *addr)
 {
     int fb = ps2_gs_fb_index_for(addr);
@@ -1479,6 +1487,11 @@ static void set_color_image(const void *addr)
     {
         R.color_target = fb;
         sLastColorTarget = fb;
+        if (gPS2FrameClearColor != 0 && !sFrameCleared)
+        {
+            sFrameCleared = 1;
+            ps2_gs_clear(fb, gPS2FrameClearColor & 0xFFFFFF, 0);
+        }
         ps2_gs_frame_setup(fb);
         sCurValid = 0;
     }
@@ -1538,6 +1551,7 @@ void ps2_gbi_run(const void *dl_start)
 
     reset_state();
     sLastColorTarget = -1;
+    sFrameCleared = 0;
 
     while (dl != NULL)
     {

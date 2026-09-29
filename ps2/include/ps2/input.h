@@ -38,6 +38,7 @@ void ps2_input_poll(void);
 const PS2InputState *ps2_input_state(int player);
 int ps2_input_raw_combo(int player, uint16_t ps2_combo);
 int ps2_input_overlay_toggle_pressed(void);
+int ps2_input_clear_toggle_pressed(void);
 int ps2_input_has_rumble(int player);
 void ps2_input_set_rumble(int player, int on);
 
