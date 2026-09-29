@@ -617,16 +617,28 @@ void ps2_gs_init(void)
     sGsGlobal->PrimAlphaEnable = GS_SETTING_ON;
     sGsGlobal->Dithering = GS_SETTING_ON;
 
-    if (dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8,
-                    1 << DMA_CHANNEL_GIF) < 0 ||
-        dmaKit_chan_init(DMA_CHANNEL_GIF) < 0)
+    /* Do not call dmaKit_init() here on hardware.  By this point SIF RPC
+     * has already been used extensively to reboot the IOP and load modules.
+     * dmaKit_init() resets the global EE DMAC CTRL/PCR/SQWC/RBSR/RBOR
+     * registers, which can destroy live SIF DMA state on a real console.
+     * PCSX2 is much more forgiving of that reset.
+     *
+     * The DMAC is already enabled (SIF RPC could not have worked otherwise).
+     * We only own the GIF channel, so reset that channel alone and preserve
+     * every other channel's global DMAC state.  dmaKit_wait_fast() uses the
+     * CPCOND mask in PCR, therefore OR the GIF bit into the existing mask
+     * instead of replacing PCR wholesale. */
+    ps2_boot_stage("GS: GIF channel init", 0x804000);
+    if (dmaKit_chan_init(DMA_CHANNEL_GIF) < 0)
     {
-        ps2_boot_stage("GS: DMAC init failed", 0x800000);
+        ps2_boot_stage("GS: GIF channel failed", 0x800000);
         for (;;)
         {
             SleepThread();
         }
     }
+    *DMA_REG_PCR |= (1u << DMA_CHANNEL_GIF);
+    __asm__ volatile("sync.p" ::: "memory");
     ps2_boot_stage("GS: DMAC ready", 0x808000);
 
     /* gsKit programs SMODE/SYNC/DISPLAY for the mode; from here on the
