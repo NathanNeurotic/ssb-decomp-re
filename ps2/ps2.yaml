@@ -1,0 +1,82 @@
+# Super Smash Bros. 64 - native PlayStation 2 port.
+#
+#   ./ps2/tools/prepare_assets.sh /path/to/baserom.us.z64   (once; builds SSB64.DAT)
+#   cd ps2 && ps2build build
+#
+# Output: ps2/build/bin/ssb64.elf  (copy SSB64.DAT next to it)
+#
+# Targets:
+#   ssb_platform  PS2 platform layer: boot/IOP, libultra replacement, GS
+#                 renderer + GBI translator, input, storage, saves, audio.
+#   ssb64         the bootable ELF.
+
+project: ssb64
+
+targets:
+  - name: ssb_platform
+    type: ee_lib
+    sources:
+      - src/platform/*.c
+      - src/memory/*.c
+      - src/memory/*.S
+      - src/storage/*.c
+      - src/input/*.c
+      - src/audio/*.c
+      - src/renderer/*.c
+      - src/ultra/*.c
+    include_dirs:
+      - include
+      - src/renderer
+    headers:
+      - gskit
+      - dmakit
+      - pad
+      - mtap
+      - mc
+      - filexio
+      - patches
+    defines:
+      - PLATFORM_PS2
+      - REGION_US
+      - F3DEX_GBI_2
+      - _MIPS_SZLONG=32
+    cflags:
+      # Game headers (PR/*.h etc.) come last so newlib's own headers win.
+      - -idirafter
+      - ../../include
+      - -idirafter
+      - ../../src
+      - -fno-strict-aliasing
+      - -Wall
+
+  - name: ssb64
+    type: ee
+    sources:
+      - src/boot/main.c
+    include_dirs:
+      - include
+    libs:
+      - ssb_platform
+      - gskit
+      - dmakit
+      - pad
+      - mtap
+      - mc
+      - filexio
+      - patches
+      - m
+    embed_irx:
+      - iomanx
+      - filexio
+      - sio2man
+      - mtapman
+      - padman
+      - mcman
+      - mcserv
+      - libsd
+      - sdr
+      - bdm
+      - bdmfs_fatfs
+      - usbd_mini
+      - usbmass_bd_mini
+      - mmceman

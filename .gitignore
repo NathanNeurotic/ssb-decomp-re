@@ -37,3 +37,6 @@ symbols/reloc_data_symbols.*
 # .manifest / .spritelist files ARE committed (they describe asset structure).
 src/relocData/**/*.inc.c
 src/relocData/**/*.bin
+# PS2 port
+ps2/build/
+.wsl_*_tmp.sh
