@@ -66,8 +66,8 @@ int ps2_main(int argc, char *argv[])
     ps2_crash_init();
     ps2_storage_set_boot_path((argc > 0) ? argv[0] : NULL);
     /* Stage colours (troubleshooting on hardware, see PS2_PORT.md):
-     * dark blue = started, purple = IOP modules, cyan = video init,
-     * after that the boot screen with the log is shown. */
+     * dark blue = started, purple = IOP modules, cyan/blue/yellow/green
+     * = progressively later GS init stages, then the boot log screen. */
     ps2_boot_stage("started", 0x000080);
     ps2_mem_init();
 
@@ -93,9 +93,13 @@ int ps2_main(int argc, char *argv[])
 
     ps2_boot_stage("IOP reset + modules", 0x800080);
     ps2_iop_init();
-    ps2_boot_stage("vblank + video init", 0x008080);
-    ps2_vblank_init();
+    /* Bring the GS/DMAC up before installing our VBlank ISR.  gsKit resets
+     * and reprograms the GS during init; letting a game-side VBlank handler
+     * run across that transition is unnecessary and can expose launcher/
+     * hardware state that PCSX2's host: path does not reproduce. */
+    ps2_boot_stage("GS video init", 0x008080);
     ps2_gs_init();
+    ps2_vblank_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
     ps2_iop_load_boot_device_drivers(ps2_storage_boot_device());
