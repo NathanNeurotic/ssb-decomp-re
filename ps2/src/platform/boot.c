@@ -8,7 +8,6 @@
  */
 #include <ps2/platform.h>
 
-#include <delaythread.h>
 #include <fcntl.h>
 #include <kernel.h>
 #include <stdio.h>
@@ -31,19 +30,6 @@ extern void ps2_arena_init(void);
 extern void ps2_overlay_state_init(void);
 
 #define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port"
-
-/* Raw GS display registers used only for hardware boot diagnostics.  These
- * markers deliberately bypass ps2_log(), ps2_boot_stage() and gsKit. */
-#define PS2_BOOT_PMODE   (*(volatile uint64_t *)0x12000000)
-#define PS2_BOOT_BGCOLOR (*(volatile uint64_t *)0x120000E0)
-#define PS2_BOOT_PMODE_BG_ONLY ((uint64_t)(1u << 2))
-
-static void ps2_boot_raw_color(uint8_t r, uint8_t g, uint8_t b)
-{
-    PS2_BOOT_PMODE = PS2_BOOT_PMODE_BG_ONLY;
-    PS2_BOOT_BGCOLOR = (uint64_t)r | ((uint64_t)g << 8) | ((uint64_t)b << 16);
-    __asm__ volatile("sync.p" ::: "memory");
-}
 
 /* USB (and MMCE) storage appears asynchronously after its drivers load;
  * wait until a file next to the ELF can be opened (up to ~6 s). */
@@ -79,9 +65,10 @@ int ps2_main(int argc, char *argv[])
     ps2_log_init();
     ps2_crash_init();
     ps2_storage_set_boot_path((argc > 0) ? argv[0] : NULL);
-    /* Stage colours (troubleshooting on hardware, see PS2_PORT.md):
-     * dark blue = started, purple = IOP modules, cyan/blue/yellow/green
-     * = progressively later GS init stages, then the boot log screen. */
+    /* Stage colours (troubleshooting on hardware, see PS2_PORT.md): navy =
+     * started, half-intensity colours = IOP reset and one per IOP module,
+     * blue = GS video init, full-intensity colours = GS init steps, then the
+     * boot log screen, which shows every later stage as text. */
     ps2_boot_stage("started", 0x000080);
     ps2_mem_init();
 
@@ -111,18 +98,7 @@ int ps2_main(int argc, char *argv[])
      * and reprograms the GS during init; letting a game-side VBlank handler
      * run across that transition is unnecessary and can expose launcher/
      * hardware state that PCSX2's host: path does not reproduce. */
-    ps2_boot_stage("GS video init", 0x008080);
-
-    /* Hardware call-boundary probe.  Hold white long enough to be visible,
-     * then leave red immediately before entering ps2_gs_init().  If a test
-     * build still shows only the previous cyan marker, it is not executing
-     * this ELF/code path.  If it freezes red, the call itself/fuction entry
-     * is the failing boundary. */
-    ps2_boot_raw_color(0xFF, 0xFF, 0xFF);
-    DelayThread(500000);
-    ps2_boot_raw_color(0xFF, 0x00, 0x00);
-    DelayThread(250000);
-
+    ps2_boot_stage("GS video init", 0x0000FF); /* bright blue */
     ps2_gs_init();
     ps2_vblank_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
@@ -148,7 +124,13 @@ int ps2_main(int argc, char *argv[])
                   ps2_storage_boot_dir());
     }
     ps2_save_init();
-    ps2_audio_init();
+    /* libsd + sdrdrv are loaded here rather than with the base modules so a
+     * problem with them shows up as a log line on screen, not as a solid
+     * colour; without them the game runs silent. */
+    if (ps2_iop_load_audio_drivers() == 0)
+    {
+        ps2_audio_init();
+    }
     ps2_render_thread_init();
 
     mem = ps2_mem_stats();

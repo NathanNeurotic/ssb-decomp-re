@@ -8,6 +8,7 @@
  *   always:   iomanX + fileXio      (file access through one API)
  *             sio2man + mtapman + padman   (controllers, multitap)
  *             mcman + mcserv        (memory card saves)
+ *   later:    libsd + sdr           (audio, loaded once the GS is up)
  *   mass:     bdm + bdmfs_fatfs + usbd_mini + usbmass_bd_mini
  *   hdd:      ps2dev9 + ps2atad + ps2hdd + ps2fs (+ pfs0: mount)
  *   mmce:     mmceman
@@ -25,6 +26,7 @@
 #include <iopheap.h>
 #include <loadfile.h>
 #include <sbv_patches.h>
+#include <malloc.h>
 #include <sifrpc.h>
 #include <string.h>
 
@@ -56,7 +58,33 @@ static int sIopWasReset;
 static int load_irx(const char *name, void *buf, unsigned int size, const char *args, int args_len)
 {
     int result = 0;
-    int id = SifExecModuleBuffer(buf, size, (u32)args_len, args, &result);
+    int id;
+    void *src = buf;
+    void *bounce = NULL;
+
+    /* SifExecModuleBuffer() sends the image with a SIF DMA REF tag, and the
+     * DMAC only addresses whole quadwords.  A blob that the embedding step
+     * did not place on a 16-byte boundary reaches the IOP shifted (or not
+     * at all) on hardware, while PCSX2 tolerates it.  Copy such a blob to an
+     * aligned buffer first. */
+    if (((uintptr_t)buf & 15) != 0)
+    {
+        bounce = memalign(64, (size + 63) & ~63u);
+        if (bounce == NULL)
+        {
+            ps2_log("IOP: %s misaligned (%p) and no memory to realign it", name, buf);
+            return -1;
+        }
+        memcpy(bounce, buf, size);
+        src = bounce;
+        ps2_log("IOP: %s realigned from %p", name, buf);
+    }
+
+    id = SifExecModuleBuffer(src, size, (u32)args_len, args, &result);
+    if (bounce != NULL)
+    {
+        free(bounce);
+    }
 
     if (id < 0 || result < 0 || result == 1 /* NO_RESIDENT_END means unloaded */)
     {
@@ -71,7 +99,12 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
     return 0;
 }
 
-#define LOAD_IRX(name) load_irx(#name, name##_irx, size_##name##_irx, NULL, 0)
+/* Every module gets its own boot-stage colour, shown before the load
+ * starts, so a hang inside one SifExecModuleBuffer() call names the module
+ * on the TV even while the GS is not set up yet (see PS2_PORT.md,
+ * "Troubleshooting on hardware"). */
+#define LOAD_IRX(name, rgb) \
+    (ps2_boot_stage("IOP: loading " #name, (rgb)), load_irx(#name, name##_irx, size_##name##_irx, NULL, 0))
 
 void ps2_iop_init(void)
 {
@@ -113,24 +146,28 @@ void ps2_iop_init(void)
     sbv_patch_enable_lmb();
     sbv_patch_disable_prefix_check();
 
-    ps2_boot_stage("IOP: file services", 0x408000);           /* yellow-green */
-    if (LOAD_IRX(iomanx) < 0 || LOAD_IRX(filexio) < 0 || fileXioInit() < 0)
+    if (LOAD_IRX(iomanx, 0x406000) < 0 ||   /* olive */
+        LOAD_IRX(filexio, 0x408000) < 0)    /* yellow-green */
+    {
+        goto module_failure;
+    }
+    ps2_boot_stage("IOP: fileXio RPC", 0x60A000); /* lime */
+    if (fileXioInit() < 0)
     {
         goto module_failure;
     }
 
-    ps2_boot_stage("IOP: pad + memory card", 0x008000);       /* green */
-    if (LOAD_IRX(sio2man) < 0 || LOAD_IRX(mtapman) < 0 || LOAD_IRX(padman) < 0 ||
-        LOAD_IRX(mcman) < 0 || LOAD_IRX(mcserv) < 0)
+    if (LOAD_IRX(sio2man, 0x008000) < 0 ||  /* green */
+        LOAD_IRX(mtapman, 0x006020) < 0 ||  /* dark green */
+        LOAD_IRX(padman, 0x404040) < 0 ||   /* grey */
+        LOAD_IRX(mcman, 0x804040) < 0 ||    /* pink */
+        LOAD_IRX(mcserv, 0x402000) < 0)     /* brown */
     {
         goto module_failure;
     }
 
-    ps2_boot_stage("IOP: audio services", 0x008060);          /* blue-green */
-    if (LOAD_IRX(libsd) < 0 || LOAD_IRX(sdr) < 0)
-    {
-        goto module_failure;
-    }
+    /* The sound drivers (libsd + sdrdrv) are loaded later, once the GS is up
+     * and the boot log is on screen: see ps2_iop_load_audio_drivers(). */
 
     /* Keep printf mirroring disabled after a real-hardware IOP reboot.
      * Even with fileXio restored, stdout may still reference launcher/RPC
@@ -158,6 +195,18 @@ module_failure:
     }
 }
 
+int ps2_iop_load_audio_drivers(void)
+{
+    /* Audio is optional: a failure here leaves the game silent instead of
+     * stopping the boot. */
+    if (LOAD_IRX(libsd, 0x008060) < 0 || LOAD_IRX(sdr, 0x006080) < 0)
+    {
+        ps2_log("IOP: sound drivers unavailable; audio stays silent");
+        return -1;
+    }
+    return 0;
+}
+
 void ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
 {
     switch (dev)
@@ -166,14 +215,14 @@ void ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
     case PS2_BOOT_UNKNOWN: /* unrecognised launcher path: USB is the best guess */
         /* USB mass storage enumerates asynchronously; boot.c waits for the
          * asset pack to become visible. */
-        LOAD_IRX(bdm);
-        LOAD_IRX(bdmfs_fatfs);
-        LOAD_IRX(usbd_mini);
-        LOAD_IRX(usbmass_bd_mini);
+        LOAD_IRX(bdm, 0x200060);
+        LOAD_IRX(bdmfs_fatfs, 0x400060);
+        LOAD_IRX(usbd_mini, 0x600060);
+        LOAD_IRX(usbmass_bd_mini, 0x800060);
         break;
 
     case PS2_BOOT_MMCE:
-        LOAD_IRX(mmceman);
+        LOAD_IRX(mmceman, 0x600060);
         break;
 
     case PS2_BOOT_HDD:

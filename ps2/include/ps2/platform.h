@@ -142,6 +142,7 @@ void ps2_file_close(int fd);
 
 void ps2_iop_init(void);                 /* reset IOP + load base modules */
 void ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
+int  ps2_iop_load_audio_drivers(void);    /* libsd + sdr; 0 on success */
 int  ps2_iop_module_loaded(const char *name);
 int  ps2_iop_module_count(void);
 const char *ps2_iop_module_name(int i);

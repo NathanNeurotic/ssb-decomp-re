@@ -149,11 +149,42 @@ the newest valid slot wins at boot, so a torn write never loses the previous
 save. Without a formatted card, saves stay in RAM.
 
 ### Boot (`ps2/src/platform/boot.c`, `iop.c`)
-Order: log → memory → boot path from `argv[0]` → IOP modules (embedded IRX:
-iomanX, fileXio, sio2man, padman, mtapman, mcman/mcserv, libsd, sdr, bdm +
-FAT, USB mass storage, mmceman) → VBlank/GS → threads/VI → scene arena →
-overlay state → input → assets → saves → audio → render thread → the game's
-own `syMainLoop`.
+Order: log → memory → boot path from `argv[0]` → IOP reset (except `host:`)
++ base modules (embedded IRX: iomanX, fileXio, sio2man, mtapman, padman,
+mcman/mcserv) → GS → VBlank → boot-device drivers (bdm + FAT + USB mass
+storage, or mmceman) → threads/VI → scene arena → overlay state → input →
+assets → saves → sound drivers (libsd, sdr) → audio → render thread → the
+game's own `syMainLoop`. The sound drivers are optional: if they fail to
+load, the game runs silent.
+
+#### Troubleshooting on hardware
+
+Until the GS is initialised, every boot stage paints the whole screen in its
+own colour (GS `BGCOLOR`, no printf or IOP involved). A hang leaves the
+colour of the stage that did not finish:
+
+| colour | stage |
+|---|---|
+| navy `000080` | started (before the IOP reset) |
+| magenta `800080` | IOP reset request |
+| orange `804000` | IOP reset synced |
+| yellow `808000` | SIF RPC, loader, IOP heap, sbv patches |
+| olive `406000` | loading iomanX |
+| yellow-green `408000` | loading fileXio |
+| lime `60A000` | fileXio RPC init |
+| green `008000` | loading sio2man |
+| dark green `006020` | loading mtapman |
+| grey `404040` | loading padman |
+| pink `804040` | loading mcman |
+| brown `402000` | loading mcserv |
+| dark red `800000` | an IOP base module failed to load (stopped on purpose) |
+| bright blue `0000FF` | GS video init entered |
+| white `FFFFFF` … violet `8000FF` | GS init steps (white, bright green, bright orange, bright yellow, bright magenta, violet; bright red = GIF channel init failed) |
+
+After GS init, the screen shows the boot log as text instead, and every
+later stage (boot-device drivers, sound drivers, assets) is added as a line
+as it starts, so a hang shows as the last line. Once the boot device is
+mounted, the log is also written to `SSB64.LOG` next to the ELF.
 
 ### Game-source changes
 - `include/PR/rcp.h`: register reads/writes go through the platform layer.

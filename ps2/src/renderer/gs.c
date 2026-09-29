@@ -500,6 +500,7 @@ void ps2_gs_rect(int x0, int y0, int x1, int y1, uint32_t rgba)
 /* ------------------------------------------------------------------ */
 
 static int sGsReady;
+static const char *sBootTitle;
 
 void ps2_boot_stage(const char *name, uint32_t rgb)
 {
@@ -513,6 +514,12 @@ void ps2_boot_stage(const char *name, uint32_t rgb)
         __asm__ volatile("sync.p" ::: "memory");
     }
     ps2_log("boot: %s", name);
+    if (sGsReady && sBootTitle != NULL)
+    {
+        /* Past GS init the boot log is on screen: redraw it so a stage that
+         * hangs is the last line the TV shows. */
+        ps2_gs_boot_screen(sBootTitle);
+    }
 }
 
 void ps2_gs_boot_screen(const char *title)
@@ -524,6 +531,7 @@ void ps2_gs_boot_screen(const char *title)
     {
         return;
     }
+    sBootTitle = title;
     ps2_gs_clear(fb, 0x302010, 0);
     ps2_gs_text(8, 8, 0x40C0FF, title);
     n = ps2_log_line_count();
@@ -675,9 +683,9 @@ void ps2_gs_init(void)
     /* Avoid gsKit_init_global[_custom]() entirely on hardware.  Besides
      * heap allocations it queries OSD/ROM configuration that this port does
      * not need because the video mode is selected explicitly below. */
-    ps2_boot_stage("GS: static state begin", 0xFFFFFF);
+    ps2_boot_stage("GS: static state begin", 0xFFFFFF); /* white */
     sGsGlobal = ps2_gskit_init_static();
-    ps2_boot_stage("GS: static state ready", 0x00FF00);
+    ps2_boot_stage("GS: static state ready", 0x00FF00); /* bright green */
 
     sGsGlobal->Mode = GS_MODE_NTSC;
     if (ps2_video_progressive())
@@ -714,10 +722,10 @@ void ps2_gs_init(void)
      * every other channel's global DMAC state.  dmaKit_wait_fast() uses the
      * CPCOND mask in PCR, therefore OR the GIF bit into the existing mask
      * instead of replacing PCR wholesale. */
-    ps2_boot_stage("GS: GIF channel init", 0x804000);
+    ps2_boot_stage("GS: GIF channel init", 0xFF8000); /* bright orange */
     if (dmaKit_chan_init(DMA_CHANNEL_GIF) < 0)
     {
-        ps2_boot_stage("GS: GIF channel failed", 0x800000);
+        ps2_boot_stage("GS: GIF channel failed", 0xFF0000); /* bright red */
         for (;;)
         {
             SleepThread();
@@ -725,12 +733,12 @@ void ps2_gs_init(void)
     }
     *DMA_REG_PCR |= (1u << DMA_CHANNEL_GIF);
     __asm__ volatile("sync.p" ::: "memory");
-    ps2_boot_stage("GS: DMAC ready", 0x808000);
+    ps2_boot_stage("GS: DMAC ready", 0xFFFF00); /* bright yellow */
 
     /* gsKit programs SMODE/SYNC/DISPLAY for the mode; from here on the
      * renderer owns VRAM layout, FRAME/ZBUF and the display circuit. */
     gsKit_init_screen(sGsGlobal);
-    ps2_boot_stage("GS: screen ready", 0x008000);
+    ps2_boot_stage("GS: screen ready", 0xFF00FF); /* bright magenta */
 
     ps2_mem_reclassify_static(PS2_MEM_GFX_STAGING, sizeof(sPktBuf));
 
@@ -739,7 +747,7 @@ void ps2_gs_init(void)
     pkt_open(0);
     upload_font();
     ps2_gs_clear(0, 0, 1);
-    ps2_boot_stage("GS: first GIF finish", 0x800040);
+    ps2_boot_stage("GS: first GIF finish", 0x8000FF); /* violet */
     ps2_pkt_finish();
 
     *PGS_BGCOLOR = 0;
