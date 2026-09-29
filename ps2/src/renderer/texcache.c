@@ -60,6 +60,7 @@ static uint32_t sFrame;
 static PS2TexStats sStats;
 int gPS2TexTrace; /* debug: set > 0 to log the next N texture conversions */
 int gPS2TexJustConverted; /* debug: log the first N texture conversions */
+int gPS2TexFlush; /* debug: set to drop all cached textures at the next frame */
 
 /* Staging ring for converted texel + CLUT data awaiting DMA. */
 static uint8_t *sStaging;
@@ -644,6 +645,12 @@ void ps2_texcache_frame_begin(void)
 {
     sFrame++;
     sStagingPos = 0; /* previous frame's DMA has completed */
+    if (gPS2TexFlush)
+    {
+        /* debug: reconvert everything (with gPS2TexTrace to log it) */
+        gPS2TexFlush = 0;
+        ps2_texcache_invalidate_all();
+    }
 }
 
 const PS2TexStats *ps2_texcache_stats(void)

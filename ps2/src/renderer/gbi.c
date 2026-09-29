@@ -62,6 +62,7 @@ typedef struct TmemLoad
     uint8_t siz;
     uint8_t is_tlut;
     uint8_t odd_swap; /* LoadBlock with dxt 0: RAM holds TMEM's odd-row word swap */
+    const void *cmd;  /* debug: the load command */
 } TmemLoad;
 
 static struct
@@ -121,6 +122,9 @@ static struct
 
 static int sLastColorTarget = -1;
 int gPS2GbiTrace; /* debug: log this many upcoming commands */
+int gPS2CombTrace; /* debug: log distinct textured combiner setups */
+int gPS2TlutTrace; /* debug: log this many CI texture binds with their TLUT load */
+static const void *sCurCmd; /* debug: command being executed */
 
 /* ------------------------------------------------------------------ */
 /* GS state tracking and batching                                       */
@@ -487,6 +491,13 @@ static int map_a_c(int v)
     return t[v & 7];
 }
 
+/* Value that texel-alpha color inputs (TEXEL0_ALPHA as the C of an RGB
+ * cycle) evaluate to. The GS cannot scale texel color by texel alpha inside
+ * one primitive, so lerps of the form (TEXEL0 - X) * TEXEL0_ALPHA + X (decal
+ * textures over shade, e.g. fighter faces) are drawn in two passes: X with
+ * this set to 0, then the texel part with 1, blended by texel alpha. */
+static float sTexAlphaIn = 1.0f;
+
 /* Input value for channel ch (0..2 = rgb, 3 = alpha). */
 static Lin input(int in, int ch, const GbiVtx *v, const CombineOut *prev)
 {
@@ -507,10 +518,8 @@ static Lin input(int in, int ch, const GbiVtx *v, const CombineOut *prev)
     case IN_COMBINED_A: r = prev->a; break;
     case IN_TEXEL0_A:
     case IN_TEXEL1_A:
-        /* texel alpha inside a color channel: the GS cannot multiply texel
-         * color by texel alpha, so treat it as opaque (alpha still gates
-         * visibility through the alpha channel). */
-        if (ch == 3) r.k = 1.0f; else r.c = 1.0f;
+        /* texel alpha inside a color channel: see sTexAlphaIn */
+        if (ch == 3) r.k = 1.0f; else r.c = sTexAlphaIn;
         break;
     case IN_PRIM_A: r.c = R.prim[3] * s; break;
     case IN_SHADE_A: r.c = ((R.geom & G_FOG) ? 255 : v->a) * s; break;
@@ -566,6 +575,16 @@ static void eval_combiner(const GbiVtx *v, CombineOut *out)
         prev = cur;
     }
     *out = prev;
+}
+
+/* Does an RGB cycle use texel alpha as its interpolation factor? */
+static int combiner_color_lerps_by_texel_alpha(void)
+{
+    int cycles = ((R.om_h & (3u << 20)) == G_CYC_2CYCLE) ? 2 : 1;
+    int c0 = (int)((R.cc_w0 >> 15) & 0x1F), c1 = (int)(R.cc_w0 & 0x1F);
+
+    return (c0 == G_CCMUX_TEXEL0_ALPHA || c0 == G_CCMUX_TEXEL1_ALPHA) ||
+           (cycles == 2 && (c1 == G_CCMUX_TEXEL0_ALPHA || c1 == G_CCMUX_TEXEL1_ALPHA));
 }
 
 /* Does the current combiner reference a texel input at all? */
@@ -649,6 +668,7 @@ static void record_load(uint16_t tmem, uint16_t words, const uint8_t *src, uint3
     l->siz = siz;
     l->is_tlut = is_tlut;
     l->odd_swap = odd_swap;
+    l->cmd = sCurCmd;
 }
 
 typedef struct TexInfo
@@ -733,6 +753,12 @@ static void bind_texture(int tile_index, TexInfo *ti)
             return;
         }
         key.tlut = R.loads[pl].src + (uint32_t)(pal_tmem - R.loads[pl].tmem) * 2u;
+        if (gPS2TlutTrace > 0)
+        {
+            gPS2TlutTrace--;
+            ps2_log("ci bind tex %p tlut %p (tlut load cmd %p tmem %u+%u) tex load cmd %p at cmd %p", key.addr,
+                    key.tlut, R.loads[pl].cmd, R.loads[pl].tmem, R.loads[pl].words, R.loads[li].cmd, sCurCmd);
+        }
         key.tlut_type = (uint8_t)((tlut_type == 3) ? 3 : 2);
         key.pal_index = t->palette;
     }
@@ -784,6 +810,8 @@ typedef struct DrawMode
     int textured;
     int fog_blend;  /* use GS fog with vertex fog factor */
     int prim_depth; /* G_ZS_PRIM */
+    int decal;      /* two passes: untextured base, then texel-alpha blended texels */
+    GsState decal_gs;
     TexInfo tex;
 } DrawMode;
 
@@ -931,6 +959,46 @@ static void build_mode(DrawMode *dm, int for_rect)
     }
     dm->gs.prim = GSV_PRIM(for_rect ? GSPRIM_SPRITE : GSPRIM_TRI, (R.geom & G_SHADING_SMOOTH) ? 1 : 0,
                           dm->textured, dm->fog_blend, abe, 0, for_rect ? 1 : 0, 0, 0);
+
+    if (gPS2CombTrace && dm->textured)
+    {
+        /* debug: log each distinct textured combiner setup once */
+        static uint32_t seen[64][3];
+        static int nseen;
+        const GbiTile *t = &R.tiles[R.tex_tile & 7];
+        uint32_t key2 = R.om_h ^ (R.om_l << 1) ^ ((uint32_t)t->fmt << 28) ^ ((uint32_t)t->siz << 26);
+        int i;
+
+        for (i = 0; i < nseen; i++)
+            if (seen[i][0] == R.cc_w0 && seen[i][1] == R.cc_w1 && seen[i][2] == key2)
+                break;
+        if (i == nseen && nseen < 64)
+        {
+            seen[nseen][0] = R.cc_w0;
+            seen[nseen][1] = R.cc_w1;
+            seen[nseen][2] = key2;
+            nseen++;
+            ps2_log("comb %08x %08x omh %08x oml %08x fmt%d siz%d abe%d prim %02x%02x%02x%02x env %02x%02x%02x%02x",
+                    (unsigned)R.cc_w0, (unsigned)R.cc_w1, (unsigned)R.om_h, (unsigned)R.om_l, t->fmt, t->siz, abe,
+                    R.prim[0], R.prim[1], R.prim[2], R.prim[3], R.env[0], R.env[1], R.env[2], R.env[3]);
+        }
+    }
+
+    /* Opaque surfaces whose color is lerped by texel alpha: see sTexAlphaIn.
+     * The second pass draws on the depth the first one wrote. */
+    dm->decal = dm->textured && !abe && !for_rect && combiner_color_lerps_by_texel_alpha();
+    if (dm->decal)
+    {
+        dm->decal_gs = dm->gs;
+        dm->decal_gs.test = GSV_TEST(1, GSATST_GREATER, 0, GSAFAIL_KEEP, 0, 0, 1,
+                                     z_cmp ? GSZTST_GEQUAL : GSZTST_ALWAYS);
+        dm->decal_gs.zbuf = GSV_ZBUF(PS2_Z_PAGE, PS2_Z_PSM, 1);
+        dm->decal_gs.alpha = GSV_ALPHA(GSBL_CS, GSBL_CD, GSBL_AS, GSBL_CD, 0);
+        dm->decal_gs.prim = GSV_PRIM(GSPRIM_TRI, (R.geom & G_SHADING_SMOOTH) ? 1 : 0, 1, dm->fog_blend, 1, 0, 0, 0, 0);
+        /* base pass: same state without the texture */
+        dm->gs.prim = GSV_PRIM(GSPRIM_TRI, (R.geom & G_SHADING_SMOOTH) ? 1 : 0, 0, dm->fog_blend, 0, 0, 0, 0, 0);
+        dm->gs.nreg = 2;
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1100,14 +1168,10 @@ static int cull(const OutVtx *v0, const OutVtx *v1, const OutVtx *v2)
 static DrawMode sMode;
 static int sModeDirty = 1;
 
+static void tri_pass(const GbiVtx *a, const GbiVtx *b, const GbiVtx *c, const DrawMode *dm);
+
 static void tri(int i0, int i1, int i2)
 {
-    const GbiVtx *a = &R.vtx[i0], *b = &R.vtx[i1], *c = &R.vtx[i2];
-    OutVtx poly[12], tmp[12];
-    uint8_t clip_or = a->clip | b->clip | c->clip;
-    int n = 3, i, planes = 0;
-    uint64_t *q;
-
     if (i0 >= MAX_VTX || i1 >= MAX_VTX || i2 >= MAX_VTX)
         return;
     if (sModeDirty)
@@ -1115,9 +1179,32 @@ static void tri(int i0, int i1, int i2)
         build_mode(&sMode, 0);
         sModeDirty = 0;
     }
-    make_outvtx(a, &sMode, &poly[0]);
-    make_outvtx(b, &sMode, &poly[1]);
-    make_outvtx(c, &sMode, &poly[2]);
+    if (sMode.decal)
+    {
+        DrawMode tex_pass = sMode;
+
+        sMode.textured = 0;
+        sTexAlphaIn = 0.0f;
+        tri_pass(&R.vtx[i0], &R.vtx[i1], &R.vtx[i2], &sMode);
+        sMode.textured = 1;
+        tex_pass.gs = tex_pass.decal_gs;
+        sTexAlphaIn = 1.0f;
+        tri_pass(&R.vtx[i0], &R.vtx[i1], &R.vtx[i2], &tex_pass);
+        return;
+    }
+    tri_pass(&R.vtx[i0], &R.vtx[i1], &R.vtx[i2], &sMode);
+}
+
+static void tri_pass(const GbiVtx *a, const GbiVtx *b, const GbiVtx *c, const DrawMode *dm)
+{
+    OutVtx poly[12], tmp[12];
+    uint8_t clip_or = a->clip | b->clip | c->clip;
+    int n = 3, i, planes = 0;
+    uint64_t *q;
+
+    make_outvtx(a, dm, &poly[0]);
+    make_outvtx(b, dm, &poly[1]);
+    make_outvtx(c, dm, &poly[2]);
 
     if (clip_or)
     {
@@ -1133,14 +1220,14 @@ static void tri(int i0, int i1, int i2)
         return;
 
     /* Fan-triangulate the (possibly clipped) polygon. */
-    q = batch_reserve(&sMode.gs, (uint32_t)(n - 2) * 3);
+    q = batch_reserve(&dm->gs, (uint32_t)(n - 2) * 3);
     for (i = 1; i + 1 < n; i++)
     {
-        int stride = sMode.gs.nreg * 2;
+        int stride = dm->gs.nreg * 2;
 
-        emit_vertex(q, &poly[0], &sMode);
-        emit_vertex(q + stride, &poly[i], &sMode);
-        emit_vertex(q + stride * 2, &poly[i + 1], &sMode);
+        emit_vertex(q, &poly[0], dm);
+        emit_vertex(q + stride, &poly[i], dm);
+        emit_vertex(q + stride * 2, &poly[i + 1], dm);
         q += stride * 3;
     }
     gPS2Pkt.ptr = q;
@@ -1412,6 +1499,7 @@ void ps2_gbi_run(const void *dl_start)
         uint32_t w1 = dl->words.w1;
         uint8_t op = (uint8_t)(w0 >> 24);
 
+        sCurCmd = dl;
         dl++;
         gPS2RenderStats.dl_commands++;
         if (gPS2GbiTrace > 0)

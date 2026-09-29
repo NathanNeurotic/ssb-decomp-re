@@ -415,12 +415,19 @@ def normalise_palettes(files, relocs_by_fid, stats):
             if rf.types.get(name) != "Gfx":
                 continue
             timg = None
+            timg_maybe_replaced = False
             for o in range(start, start + size - 7, 8):
                 w0, w1 = struct.unpack_from("<II", rf.blob, o)
                 op = w0 >> 24
                 if op == 0xFD:
                     timg = slots.get(o + 4)
-                elif op in (0xF3, 0xF4) and timg is not None:
+                    timg_maybe_replaced = False
+                elif op == 0xDE and (o + 4) not in slots:
+                    # A DL in a segment is built at runtime (MObj lists) and
+                    # usually sets the texel image itself: a following texel
+                    # load is not known to read the image set above.
+                    timg_maybe_replaced = True
+                elif op in (0xF3, 0xF4) and timg is not None and not timg_maybe_replaced:
                     # Texel load: texture data must stay in the original N64
                     # byte order. Blocks the decomp typed as u16/u32 were
                     # compiled natively and need their elements swapped back.
