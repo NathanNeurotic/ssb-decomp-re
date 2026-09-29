@@ -120,20 +120,13 @@ void ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
     switch (dev)
     {
     case PS2_BOOT_MASS:
+    case PS2_BOOT_UNKNOWN: /* unrecognised launcher path: USB is the best guess */
+        /* USB mass storage enumerates asynchronously; boot.c waits for the
+         * asset pack to become visible. */
         LOAD_IRX(bdm);
         LOAD_IRX(bdmfs_fatfs);
         LOAD_IRX(usbd_mini);
         LOAD_IRX(usbmass_bd_mini);
-        /* USB mass storage enumerates asynchronously. */
-        {
-            int i;
-
-            for (i = 0; i < 60; i++) /* up to ~1 second */
-            {
-                extern void ps2_delay_vblanks(int n);
-                ps2_delay_vblanks(1);
-            }
-        }
         break;
 
     case PS2_BOOT_MMCE:

@@ -19,6 +19,7 @@
 
 #include <ps2/platform.h>
 
+#include <debug.h>
 #include <dmaKit.h>
 #include <gsKit.h>
 #include <kernel.h>
@@ -484,6 +485,18 @@ void ps2_gs_rect(int x0, int y0, int x1, int y1, uint32_t rgba)
 
 static int sGsReady;
 
+void ps2_boot_stage(const char *name, uint32_t rgb)
+{
+    ps2_log("boot: %s", name);
+    if (!sGsReady)
+    {
+        /* Both display circuits off: the whole screen shows BGCOLOR in the
+         * video mode the launcher left. */
+        *PGS_PMODE = PGS_PMODE_VAL(0, 0, 1, 0);
+        *PGS_BGCOLOR = ((rgb >> 16) & 0xFF) | (rgb & 0xFF00) | ((uint64_t)(rgb & 0xFF) << 16);
+    }
+}
+
 void ps2_gs_boot_screen(const char *title)
 {
     int i, n, first, y;
@@ -513,6 +526,11 @@ void ps2_gs_show_panic(const char *msg)
 
     if (!sGsReady)
     {
+        /* before our GS setup: use ps2sdk's self-contained text screen */
+        init_scr();
+        scr_setbgcolor(0x600000);
+        scr_clear();
+        scr_printf("\n  SSB64 PS2 - FATAL ERROR\n\n  %s\n", msg);
         return;
     }
     sPktInFlight = 0; /* the pipeline state is unknown; start over */
@@ -545,8 +563,20 @@ void ps2_gs_init(void)
 {
     sGsGlobal = gsKit_init_global();
     sGsGlobal->Mode = GS_MODE_NTSC;
-    sGsGlobal->Interlace = GS_NONINTERLACED;
-    sGsGlobal->Field = GS_FRAME;
+    if (ps2_video_progressive())
+    {
+        /* 240p: sharpest on CRTs, but many TVs / HDMI adapters show no
+         * picture for it. */
+        sGsGlobal->Interlace = GS_NONINTERLACED;
+        sGsGlobal->Field = GS_FRAME;
+    }
+    else
+    {
+        /* 480i field mode: every field scans the same 240-line buffer, so
+         * the picture matches 240p but is a standard TV signal. */
+        sGsGlobal->Interlace = GS_INTERLACED;
+        sGsGlobal->Field = GS_FIELD;
+    }
     sGsGlobal->Width = PS2_SCREEN_W;
     sGsGlobal->Height = PS2_SCREEN_H;
     sGsGlobal->PSM = PS2_FB_PSM;
@@ -579,6 +609,7 @@ void ps2_gs_init(void)
     apply_blackout();
     sGsReady = 1;
 
-    ps2_log("GS: NTSC 240p %dx%d CT16S x%d + Z16S, tex pool %u KiB", PS2_SCREEN_W, PS2_SCREEN_H, PS2_FB_COUNT,
-            (unsigned)(PS2_TEX_POOL_BLOCKS / 4));
+    ps2_log("GS: NTSC %s %dx%d CT16S x%d + Z16S, tex pool %u KiB (MAGV %d DH %d)",
+            ps2_video_progressive() ? "240p" : "480i", PS2_SCREEN_W, PS2_SCREEN_H, PS2_FB_COUNT,
+            (unsigned)(PS2_TEX_POOL_BLOCKS / 4), sGsGlobal->MagV, sGsGlobal->DH);
 }

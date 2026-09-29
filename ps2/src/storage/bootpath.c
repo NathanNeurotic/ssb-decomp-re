@@ -20,6 +20,7 @@
 
 static PS2BootDevice sDevice = PS2_BOOT_UNKNOWN;
 static char sBootDir[BOOT_DIR_MAX] = "host:";
+static int sProgressive;
 
 static int starts_with(const char *s, const char *prefix)
 {
@@ -39,9 +40,24 @@ void ps2_storage_set_boot_path(const char *argv0)
         return;
     }
 
+    /* "..._240p.elf" (any case) selects 240p output; the default is 480i,
+     * which every TV accepts. The ELF name is the only setting that is
+     * known before any storage driver is up. */
+    {
+        const char *p;
+
+        for (p = argv0; p[0] != '\0'; p++)
+        {
+            if (p[0] == '2' && p[1] == '4' && p[2] == '0' && (p[3] == 'p' || p[3] == 'P'))
+            {
+                sProgressive = 1;
+            }
+        }
+    }
+
     if (starts_with(argv0, "host"))
         sDevice = PS2_BOOT_HOST;
-    else if (starts_with(argv0, "mass"))
+    else if (starts_with(argv0, "mass") || starts_with(argv0, "usb") || starts_with(argv0, "bdm"))
         sDevice = PS2_BOOT_MASS;
     else if (starts_with(argv0, "mc"))
         sDevice = PS2_BOOT_MC;
@@ -68,6 +84,13 @@ void ps2_storage_set_boot_path(const char *argv0)
         {
             strcpy(sBootDir, "pfs0:/");
         }
+    }
+    else if (sDevice == PS2_BOOT_MASS && !starts_with(argv0, "mass"))
+    {
+        /* other launchers' names for USB storage -> our bdmfs "mass:" */
+        const char *colon = strchr(argv0, ':');
+
+        snprintf(sBootDir, sizeof(sBootDir), "mass:%s", colon ? colon + 1 : "/");
     }
     else
     {
@@ -98,6 +121,11 @@ void ps2_storage_set_boot_path(const char *argv0)
 PS2BootDevice ps2_storage_boot_device(void)
 {
     return sDevice;
+}
+
+int ps2_video_progressive(void)
+{
+    return sProgressive;
 }
 
 const char *ps2_storage_boot_dir(void)

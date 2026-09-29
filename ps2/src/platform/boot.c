@@ -8,8 +8,10 @@
  */
 #include <ps2/platform.h>
 
+#include <fcntl.h>
 #include <kernel.h>
 #include <stdio.h>
+#include <unistd.h>
 
 /* Game side (src/sys/main.c): the N64 boot thread's code. */
 extern void syMainLoop(void);
@@ -29,13 +31,45 @@ extern void ps2_overlay_state_init(void);
 
 #define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port"
 
+/* USB (and MMCE) storage appears asynchronously after its drivers load;
+ * wait until a file next to the ELF can be opened (up to ~6 s). */
+static void wait_for_boot_file(const char *name)
+{
+    extern void ps2_delay_vblanks(int n);
+    char path[288];
+    int i, fd = -1;
+
+    ps2_storage_path(path, sizeof(path), name);
+    for (i = 0; i < 60; i++)
+    {
+        fd = open(path, O_RDONLY);
+        if (fd >= 0)
+        {
+            close(fd);
+            ps2_log("boot: %s found after %d ms", path, i * 100);
+            return;
+        }
+        if (ps2_storage_boot_device() == PS2_BOOT_HOST)
+        {
+            break; /* host: is there or not */
+        }
+        ps2_delay_vblanks(6);
+    }
+    ps2_log("boot: %s not found", path);
+}
+
 int ps2_main(int argc, char *argv[])
 {
     const PS2MemStats *mem;
 
     ps2_log_init();
-    ps2_mem_init();
+    ps2_crash_init();
     ps2_storage_set_boot_path((argc > 0) ? argv[0] : NULL);
+    /* Stage colours (troubleshooting on hardware, see PS2_PORT.md):
+     * dark blue = started, purple = IOP modules, cyan = video init,
+     * after that the boot screen with the log is shown. */
+    ps2_boot_stage("started", 0x000080);
+    ps2_mem_init();
 
     /* Boot with a high priority so init is not preempted by game threads
      * that get created along the way. */
@@ -57,12 +91,21 @@ int ps2_main(int argc, char *argv[])
         }
     }
 
+    ps2_boot_stage("IOP reset + modules", 0x800080);
     ps2_iop_init();
+    ps2_boot_stage("vblank + video init", 0x008080);
     ps2_vblank_init();
     ps2_gs_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
     ps2_iop_load_boot_device_drivers(ps2_storage_boot_device());
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
+    wait_for_boot_file("SSB64.DAT");
+    if (ps2_storage_boot_device() != PS2_BOOT_CDROM)
+    {
+        ps2_log_enable_save(1);
+        ps2_log_save();
+    }
     ps2_ultra_threads_init();
     ps2_vi_init();
     ps2_arena_init();
@@ -85,6 +128,7 @@ int ps2_main(int argc, char *argv[])
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
     ps2_log("boot: starting game");
+    ps2_log_save();
     /* syMainLoop creates the idle thread (libultra priority 127), which in
      * turn starts the game's main thread; this boot thread then just parks
      * at the lowest priority. */

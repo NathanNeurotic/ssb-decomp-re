@@ -17,6 +17,7 @@ targets:
     type: ee_lib
     sources:
       - src/platform/*.c
+      - src/platform/*.S
       - src/memory/*.c
       - src/memory/*.S
       - src/storage/*.c
@@ -36,6 +37,7 @@ targets:
       - filexio
       - patches
       - sdr
+      - debug
     defines:
       - PLATFORM_PS2
       - REGION_US
@@ -212,6 +214,7 @@ targets:
       - filexio
       - patches
       - sdr
+      - debug
       - m
     embed_irx:
       - iomanx

@@ -141,6 +141,11 @@ static void render_thread(void *arg)
 
         render_one(&job);
         ps2_render_task_done(job.cookie);
+        {
+            extern void ps2_crash_test_poll(void);
+
+            ps2_crash_test_poll();
+        }
     }
 }
 

@@ -108,6 +108,22 @@ typedef enum PS2BootDevice
 
 void ps2_storage_set_boot_path(const char *argv0);
 PS2BootDevice ps2_storage_boot_device(void);
+int ps2_video_progressive(void);         /* 1 = 240p (ELF name contains "240p"), 0 = 480i */
+
+/* Boot-stage marker: shows a solid background colour (GS BGCOLOR with both
+ * display circuits off) so a hang before any graphics identifies the stage.
+ * Also mirrored into the log. See PS2_PORT.md "Troubleshooting". */
+void ps2_boot_stage(const char *name, uint32_t rgb);
+
+/* Installs the EE exception handlers that turn a crash into a register dump
+ * on screen (and into the log file when possible). */
+void ps2_crash_init(void);
+
+/* Writes the in-memory log to <boot dir>SSB64.LOG (boot device drivers
+ * must be loaded). Safe to call repeatedly; each call rewrites the file. */
+void ps2_log_save(void);
+void ps2_log_enable_save(int enable);    /* once the boot device is usable */
+void ps2_log_console(int enable);        /* printf mirroring (off in the crash handler) */
 const char *ps2_storage_boot_dir(void);   /* e.g. "mass0:/SSB64/" */
 const char *ps2_storage_device_name(PS2BootDevice dev);
 /* Build "<boot dir><name>" into out. */
