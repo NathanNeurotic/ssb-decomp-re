@@ -485,6 +485,13 @@ void ps2_gs_rect(int x0, int y0, int x1, int y1, uint32_t rgba)
 
 static int sGsReady;
 
+/* We only use gsKit's queues during gsKit_init_screen()'s one bootstrap
+ * clear.  The actual port renderer uses sPktBuf above, so the stock gsKit
+ * 1 MiB/256 KiB queue sizes waste more than 2 MiB of EE heap at boot.
+ * Keep just enough queue space for gsKit's bootstrap frame. */
+#define PS2_GSKIT_BOOT_OS_QUEUE_BYTES  (16 * 1024)
+#define PS2_GSKIT_BOOT_PER_QUEUE_BYTES (4 * 1024)
+
 void ps2_boot_stage(const char *name, uint32_t rgb)
 {
     ps2_log("boot: %s", name);
@@ -562,9 +569,18 @@ void ps2_gs_show_panic(const char *msg)
 void ps2_gs_init(void)
 {
     /* Keep these solid-colour checkpoints visible until the renderer is
-     * fully usable.  Real hardware can expose stale launcher GS/DMAC state
-     * that PCSX2's host: boot path never sees. */
-    sGsGlobal = gsKit_init_global();
+     * fully usable. Real hardware can expose memory/launcher state that
+     * PCSX2's host: boot path never sees.
+     *
+     * Do NOT use gsKit_init_global() here: its default queues consume about
+     * 2.25 MiB of EE heap (two 1 MiB one-shot pools + one 256 KiB persistent
+     * pool), even though this port has its own GIF packet buffers. On a large
+     * static ELF that can make gsKit_alloc_ucab() hit a failed memalign(), and
+     * upstream gsKit does not NULL-check that result before SyncDCache().
+     */
+    ps2_boot_stage("GS: minimal global alloc", 0xFFFFFF);
+    sGsGlobal = gsKit_init_global_custom(PS2_GSKIT_BOOT_OS_QUEUE_BYTES,
+                                         PS2_GSKIT_BOOT_PER_QUEUE_BYTES);
     if (sGsGlobal == NULL)
     {
         ps2_boot_stage("GS: global alloc failed", 0x800000);
@@ -573,7 +589,7 @@ void ps2_gs_init(void)
             SleepThread();
         }
     }
-    ps2_boot_stage("GS: global ready", 0x0000A0);
+    ps2_boot_stage("GS: global ready", 0x000080);
 
     sGsGlobal->Mode = GS_MODE_NTSC;
     if (ps2_video_progressive())
