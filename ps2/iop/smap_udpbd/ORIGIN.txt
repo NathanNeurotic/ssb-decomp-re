@@ -45,3 +45,7 @@ LOCAL CHANGE vs upstream: security-audit hardening (re-apply after re-vendoring)
   - src/smap.c: fix SMAP capability-test operator precedence.
   - src/udpbd.c: clear caller DMA state when a READ request cannot be transmitted so a late/spoofed
     reply cannot write into a buffer after the operation has already failed.
+
+  - src/udpbd.c: bind post-discovery READ/WRITE traffic to the IP/UDP port that supplied the accepted
+    INFO_REPLY and ignore matching-command packets from other LAN peers; requests become unicast once
+    connected. Discovery itself remains the legacy unauthenticated SUDPBDv2 broadcast handshake.
