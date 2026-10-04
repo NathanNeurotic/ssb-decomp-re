@@ -37,6 +37,7 @@ thsemap_IMPORTS_start
 I_CreateSema
 I_SignalSema
 I_WaitSema
+I_DeleteSema
 thsemap_IMPORTS_end
 
 dev9_IMPORTS_start
