@@ -88,7 +88,7 @@ static int _request(const void *req, uint32_t req_size, void *reply, uint32_t re
  */
 static int _recv_with_result(udprdma_socket_t *socket, const void *req, uint32_t req_size, void *buffer, uint32_t size, uint32_t timeout_ms)
 {
-    udpfs_msg_result_reply_t result __attribute__((aligned(4)));
+    udpfs_msg_result_reply_t result __attribute__((aligned(4))) = {0};
     int ret;
 
     udprdma_set_rx_app_header(socket, &result, sizeof(result));
@@ -113,6 +113,11 @@ static int _recv_with_result(udprdma_socket_t *socket, const void *req, uint32_t
 
     if (result.result <= 0)
         return result.result; /* 0 = EOF, negative = error */
+
+    if ((uint32_t)result.result > size || result.result > ret) {
+        M_DEBUG("udpfs: bad result %d (size=%u recv=%d)\n", result.result, size, ret);
+        return -EIO;
+    }
 
     return result.result; /* logical bytes read (not DMA-padded count) */
 }
