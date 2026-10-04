@@ -114,11 +114,16 @@ int ps2_main(int argc, char *argv[])
         }
     }
 
-    ps2_boot_stage("IOP reset + modules", 0x800080);
-    ps2_iop_init();
-    ps2_boot_stage("vblank + video init", 0x008080);
+    /* Bring the GS up before any inherited IOP/RPC binding. Hardware boot
+     * failures are then visible as log text instead of an ambiguous solid
+     * color, and video initialization cannot be taken down by a launcher IOP. */
     ps2_vblank_init();
     ps2_gs_init();
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
+
+    ps2_log("boot: initializing IOP/RPC handoff");
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
+    ps2_iop_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
     if (bad_data_arg)
