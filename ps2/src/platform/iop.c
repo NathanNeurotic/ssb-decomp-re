@@ -24,6 +24,7 @@
 #include <fileXio_rpc.h>
 #include <iopcontrol.h>
 #include <iopheap.h>
+#include <io_common.h>
 #include <kernel.h>
 #include <loadfile.h>
 #include <sbv_patches.h>
@@ -197,7 +198,8 @@ void ps2_iop_init(void)
 
     sbv_patch_enable_lmb();
     sbv_patch_disable_prefix_check();
-    sbv_patch_fileio();
+    if (sIopWasReset)
+        sbv_patch_fileio();
 
     LOAD_IRX(iomanx);
     if (LOAD_IRX(filexio) == 0)
