@@ -257,15 +257,10 @@ void ps2_iop_init(void)
         if (module_present_any("IOX/File_Manager_Rpc", NULL, NULL))
             fileXioInit();
 
-        LOAD_IRX_IF_ABSENT(sio2man, "sio2man", "sio2man_logger", NULL);
-        LOAD_IRX_IF_ABSENT(padman, "padman", NULL, NULL);
-        LOAD_IRX_IF_ABSENT(mtapman, "multitap_manager", NULL, NULL);
-        LOAD_IRX_IF_ABSENT(mcman, "mcman_cex", "mcman_dex", "mcman");
-        LOAD_IRX_IF_ABSENT(mcserv, "mcserv", "xfrmserv", NULL);
-        LOAD_IRX_IF_ABSENT(libsd, "freesd", "libsd", "LIBSD");
-        LOAD_IRX_IF_ABSENT(sdr, "sdr_driver", NULL, NULL);
-
-        ps2_log("IOP: inherited sidecar stack kept; %d missing runtime module(s) added", sLoadedCount);
+        /* Do not touch controller/card/audio services yet. First prove that
+         * the inherited sidecar filesystem can actually open SSB64.DAT, then
+         * add only any missing runtime services with the GS log visible. */
+        ps2_log("IOP: inherited sidecar filesystem kept");
         return;
     }
 
@@ -303,6 +298,34 @@ void ps2_iop_init(void)
     LOAD_IRX(sdr);
 
     ps2_log("IOP: reset/rebuilt, %d base modules", sLoadedCount);
+}
+
+
+int ps2_iop_prepare_runtime_services(void)
+{
+    int failed = 0;
+
+    if (!ps2_storage_requires_iop_preserve())
+        return 0; /* clean-reset path loaded the full base stack already */
+
+    if (LOAD_IRX_IF_ABSENT(sio2man, "sio2man", "sio2man_logger", NULL) < 0)
+        failed = 1;
+    if (LOAD_IRX_IF_ABSENT(padman, "padman", NULL, NULL) < 0)
+        failed = 1;
+
+    /* Multitap support is optional. pad.c will simply use the two native
+     * controller ports if mtapman could not be provided. */
+    LOAD_IRX_IF_ABSENT(mtapman, "multitap_manager", NULL, NULL);
+
+    /* Saves and audio degrade gracefully if these services cannot be added;
+     * their consumers verify the module before binding RPC. */
+    LOAD_IRX_IF_ABSENT(mcman, "mcman_cex", "mcman_dex", "mcman");
+    LOAD_IRX_IF_ABSENT(mcserv, "mcserv", "xfrmserv", NULL);
+    LOAD_IRX_IF_ABSENT(libsd, "freesd", "libsd", "LIBSD");
+    LOAD_IRX_IF_ABSENT(sdr, "sdr_driver", NULL, NULL);
+
+    ps2_log("IOP: inherited runtime services prepared (%d module(s) added)", sLoadedCount);
+    return failed ? -1 : 0;
 }
 
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
