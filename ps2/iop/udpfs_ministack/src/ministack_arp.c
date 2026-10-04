@@ -13,6 +13,7 @@ typedef struct
 } arp_entry_t;
 #define MS_ARP_ENTRIES 8
 arp_entry_t arp_table[MS_ARP_ENTRIES];
+static int arp_replace_next;
 
 
 int arp_add_entry(uint32_t ip, const uint8_t mac[6])
@@ -46,7 +47,17 @@ int arp_add_entry(uint32_t ip, const uint8_t mac[6])
         }
     }
 
-    return -1;
+    /* Full cache: replace entries in round-robin order instead of becoming
+     * permanently unable to learn a new peer. */
+    i = arp_replace_next++ % MS_ARP_ENTRIES;
+    arp_table[i].ip = ip;
+    arp_table[i].mac[0] = mac[0];
+    arp_table[i].mac[1] = mac[1];
+    arp_table[i].mac[2] = mac[2];
+    arp_table[i].mac[3] = mac[3];
+    arp_table[i].mac[4] = mac[4];
+    arp_table[i].mac[5] = mac[5];
+    return 0;
 }
 
 int arp_lookup(uint32_t ip, uint8_t mac[6])
@@ -116,9 +127,17 @@ int handle_rx_arp(const uint8_t *hdr)
     const arp_packet_t *req = (const arp_packet_t *)hdr;
     static arp_packet_t reply;
 
-    // Learn sender's MAC/IP from any ARP packet
-    if (ntohl(req->arp.sender_ip) != 0)
-        arp_add_entry(ntohl(req->arp.sender_ip), req->arp.sender_mac);
+    {
+        uint16_t oper = ntohs(req->arp.oper);
+        uint32_t sender_ip = ntohl(req->arp.sender_ip);
+        uint32_t target_ip = ntohl(req->arp.target_ip);
+
+        /* Learn only ARP traffic addressed to us: requests for our address and
+         * replies to requests originating from us. Unrelated LAN chatter must
+         * not evict the server entry. */
+        if (sender_ip != 0 && target_ip == ms_ip_get_ip() && (oper == 1 || oper == 2))
+            arp_add_entry(sender_ip, req->arp.sender_mac);
+    }
 
     if (ntohs(req->arp.oper) == 1 && ntohl(req->arp.target_ip) == ms_ip_get_ip()) {
         reply.eth.addr_dst[0] = req->arp.sender_mac[0];
