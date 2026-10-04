@@ -82,6 +82,16 @@ jobs:
           test -s include/reloc_data.us.h
           test -s symbols/reloc_data_symbols.us.txt
 
+      - name: Generate staff roll data
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONUTF8=1
+          python3 tools/creditsTextConverter.py src/credits/staff.credits.us.txt -titleFont --out-dir src/credits
+          python3 tools/creditsTextConverter.py src/credits/titles.credits.us.txt -titleFont --out-dir src/credits
+          python3 tools/creditsTextConverter.py src/credits/info.credits.us.txt -paragraphFont -multiline --out-dir src/credits
+          python3 tools/creditsTextConverter.py src/credits/companies.credits.us.txt -paragraphFont --out-dir src/credits
+
       - name: Build native PS2 port
         shell: bash
         working-directory: ps2
