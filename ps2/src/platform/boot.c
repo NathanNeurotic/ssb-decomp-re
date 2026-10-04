@@ -40,9 +40,14 @@ static void wait_for_boot_file(const char *name)
     char path[288];
     int i, fd = -1;
 
-    ps2_storage_path(path, sizeof(path), name);
     for (i = 0; i < 200; i++)
     {
+        /* Typed BDM paths (usb:/ata:/mx4sio:/ilink:/udpbd:) name the
+         * transport, not necessarily the mounted filesystem. Resolve them
+         * after the driver stack is resident, using this file as proof that
+         * we selected the right massN: volume. */
+        ps2_storage_resolve_data_root(name);
+        ps2_storage_path(path, sizeof(path), name);
         fd = ps2_file_open_read(path);
         if (fd >= 0)
         {
