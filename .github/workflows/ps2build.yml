@@ -140,13 +140,10 @@ jobs:
           retention-days: 7
 
   release:
-    name: Publish rolling nightly release
+    name: Publish nightly release
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
-    concurrency:
-      group: ssb64-nightly
-      cancel-in-progress: true
     permissions:
       contents: write
 
@@ -162,28 +159,15 @@ jobs:
           name: ssb64-ps2-${{ github.sha }}
           path: artifacts
 
-      - name: Publish rolling nightly release
+      - name: Publish nightly release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
-          latest_main="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
-          if [ "$GITHUB_SHA" != "$latest_main" ]; then
-            echo "Skipping stale nightly build $GITHUB_SHA; main is now $latest_main"
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # Keep one stable rolling tag/release. Every successful build of
-          # main moves "nightly" to that commit and replaces the release assets.
-          git tag -f nightly "$GITHUB_SHA"
-          git push origin refs/tags/nightly --force
-
           short_sha="${GITHUB_SHA::7}"
+          nightly_tag="nightly-$short_sha"
           built_at="$(date -u +'%Y-%m-%d %H:%M UTC')"
 
           {
@@ -197,17 +181,22 @@ jobs:
             echo 'it beside `SSB64.ELF` or supply `--data=<directory>`.'
           } > nightly-notes.md
 
-          if gh release view nightly >/dev/null 2>&1; then
-            gh release edit nightly \
-              --title "Nightly" \
+          # Remove the superseded rolling-nightly experiment if it still exists.
+          # Per-commit tags avoid force-moving a tag through workflow-changing
+          # commits, which GitHub correctly blocks for the Actions app token.
+          gh release delete nightly --cleanup-tag --yes >/dev/null 2>&1 || true
+
+          if gh release view "$nightly_tag" >/dev/null 2>&1; then
+            gh release edit "$nightly_tag" \
+              --title "Nightly $short_sha" \
               --prerelease \
               --notes-file nightly-notes.md
           else
-            gh release create nightly \
+            gh release create "$nightly_tag" \
               --target "$GITHUB_SHA" \
-              --title "Nightly" \
+              --title "Nightly $short_sha" \
               --prerelease \
               --notes-file nightly-notes.md
           fi
 
-          gh release upload nightly artifacts/* --clobber
+          gh release upload "$nightly_tag" artifacts/* --clobber
