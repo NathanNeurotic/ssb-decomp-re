@@ -460,11 +460,10 @@ void ps2_iop_init(void)
     LOAD_IRX(sio2man);
     LOAD_IRX(mtapman);
     LOAD_IRX(padman);
-    LOAD_IRX(mcman);
-    LOAD_IRX(mcserv);
-    LOAD_IRX(libsd);
-    LOAD_IRX(sdr);
 
+    /* Memory-card and sound services are intentionally deferred until after
+     * SSB64.DAT and controller input are proven. This keeps optional service
+     * failures from taking storage or boot down with them. */
     ps2_log("IOP: reset/rebuilt, %d base modules", sLoadedCount);
 }
 
@@ -663,6 +662,72 @@ int ps2_iop_prepare_runtime_services(void)
     return 0;
 }
 
+static int load_rom_service(const char *label, const char *path)
+{
+    const uint32_t loadfile_rpc = 0x80000006u;
+    int id;
+
+    if (!ps2_iop_rpc_available(loadfile_rpc))
+    {
+        ps2_log("IOP: cannot load ROM %s; LOADFILE RPC unavailable", label);
+        return -1;
+    }
+
+    /* Prefer Sony's ROM modules on real hardware. This is the same mechanism
+     * used by the PS2SDK reference samples and avoids replacing low-level
+     * hardware services with a second implementation when the BIOS already
+     * supplies the canonical one. */
+    id = SifLoadModule(path, 0, NULL);
+    ps2_log("IOP: ROM %s load returned %d", label, id);
+    return id;
+}
+
+int ps2_iop_prepare_save_services(void)
+{
+    const uint32_t mcserv_rpc = 0x80000400u;
+
+    if (ps2_iop_rpc_available(mcserv_rpc))
+    {
+        ps2_log("IOP: inherited memory-card RPC ready");
+        return 1;
+    }
+
+    if (!pad_rpc_ready())
+    {
+        ps2_log("IOP: memory-card recovery skipped; SIO2/pad stack not ready");
+        return 0;
+    }
+
+    /* PS2SDK's mcman/mcserv embedded modules are the modern XMC variants and
+     * the bundled sio2man exposes the compatibility exports they need. First
+     * prefer the console ROM's XMCMAN/XMCSERV; if unavailable (or an unusual
+     * BIOS omits them), fall back to the embedded open-source pair. Crucially
+     * we never load or replace SIO2MAN here, so MX4SIO/MMCE ownership is left
+     * intact. */
+    ps2_log("IOP: memory-card RPC absent; loading XMCMAN/XMCSERV");
+    load_rom_service("XMCMAN", "rom0:XMCMAN");
+    load_rom_service("XMCSERV", "rom0:XMCSERV");
+
+    if (ps2_iop_rpc_available(mcserv_rpc))
+    {
+        ps2_log("IOP: memory-card RPC ready from ROM services");
+        return 1;
+    }
+
+    ps2_log("IOP: ROM memory-card services unavailable; trying embedded XMC pair");
+    recovery_load_irx("mcman", mcman_irx, size_mcman_irx);
+    recovery_load_irx("mcserv", mcserv_irx, size_mcserv_irx);
+
+    if (!ps2_iop_rpc_available(mcserv_rpc))
+    {
+        ps2_log("IOP: memory-card RPC still unavailable; persistence disabled");
+        return 0;
+    }
+
+    ps2_log("IOP: memory-card RPC ready from embedded services");
+    return 1;
+}
+
 int ps2_iop_prepare_audio_services(void)
 {
     const uint32_t sdr_rpc = 0x80000701u;
@@ -673,13 +738,24 @@ int ps2_iop_prepare_audio_services(void)
         return 1;
     }
 
-    if (!ps2_storage_requires_iop_preserve())
-        return 0;
+    /* The standard hardware path is the BIOS LIBSD followed by SDRDRV. This
+     * is what native PS2 software expects and avoids the real-console stall
+     * observed while starting the embedded FreeSD implementation after a
+     * launcher-side IOP reset. */
+    ps2_log("IOP: SDR RPC absent; loading ROM LIBSD + SDRDRV");
+    load_rom_service("LIBSD", "rom0:LIBSD");
+    load_rom_service("SDRDRV", "rom0:SDRDRV");
 
-    /* Audio is optional, but a keep-IOP launcher commonly omits the sound
-     * driver. Supply only libsd/sdr after storage and controllers are proven;
-     * neither module owns the filesystem transport. */
-    ps2_log("IOP: SDR RPC absent; lazy-loading libsd + sdr");
+    if (ps2_iop_rpc_available(sdr_rpc))
+    {
+        ps2_log("IOP: SDR audio RPC ready from ROM services");
+        return 1;
+    }
+
+    /* Some early BIOS revisions do not contain LIBSD/SDRDRV. Keep the
+     * embedded open-source implementation as a fallback, but only after the
+     * canonical ROM path has definitively failed. */
+    ps2_log("IOP: ROM sound services unavailable; trying embedded libsd + sdr");
     recovery_load_irx("libsd", libsd_irx, size_libsd_irx);
     recovery_load_irx("sdr", sdr_irx, size_sdr_irx);
 
@@ -689,7 +765,7 @@ int ps2_iop_prepare_audio_services(void)
         return 0;
     }
 
-    ps2_log("IOP: SDR audio RPC ready");
+    ps2_log("IOP: SDR audio RPC ready from embedded services");
     return 1;
 }
 

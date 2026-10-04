@@ -41,6 +41,7 @@ static volatile uint32_t sDirtyVBlank;
 static uint32_t sSequence;
 static int sNextSlot;
 static int sCardOk;
+static int sPersistenceReady;
 static int sLock = -1;
 static int sThreadId = -1;
 static uint8_t sThreadStack[16 * 1024] __attribute__((aligned(64)));
@@ -120,6 +121,10 @@ static void flush_now(void)
     sDirty = 0;
     SignalSema(sLock);
 
+    if (!sPersistenceReady)
+    {
+        return;
+    }
     if (!sCardOk && !(sCardOk = card_present()))
     {
         return;
@@ -181,15 +186,16 @@ void ps2_save_init(void)
 
     /* libmc waits forever for 0x80000400 when mcserv is absent.
      * Probe first so saving can degrade cleanly on minimal launcher stacks. */
+    sPersistenceReady = 0;
     if (!ps2_iop_rpc_available(0x80000400u))
     {
-        ps2_log("save: memory-card RPC unavailable, saving disabled");
+        ps2_log("save: memory-card RPC unavailable, persistence disabled");
     }
     else if (mcInit(MC_TYPE_XMC) < 0)
     {
-        ps2_log("save: mcInit failed, saving disabled");
+        ps2_log("save: mcInit failed, persistence disabled");
     }
-    else if ((sCardOk = card_present()))
+    else if ((sPersistenceReady = 1, sCardOk = card_present()))
     {
         seq_a = load_slot(0, tmp);
         if (seq_a >= 0)
@@ -205,9 +211,9 @@ void ps2_save_init(void)
         sNextSlot = (seq_a > seq_b) ? 1 : 0;
         ps2_log("save: memory card 1 ready (slot A %d, slot B %d)", (int)seq_a, (int)seq_b);
     }
-    else
+    else if (sPersistenceReady)
     {
-        ps2_log("save: no formatted memory card in slot 1; saves stay in RAM");
+        ps2_log("save: no formatted memory card in slot 1; saves stay in RAM until one is available");
     }
     ps2_mem_reclassify_static(PS2_MEM_SCRATCH, sizeof(sWriteBuf) + sizeof(tmp));
 

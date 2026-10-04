@@ -182,7 +182,10 @@ int ps2_iop_promote_filesystem_client(void);
  * massN: ELF. Adds one BDM transport family per call, without another reset. */
 int ps2_iop_recover_generic_bdm_next(void);
 int ps2_iop_prepare_runtime_services(void);
-/* Lazily supply libsd/sdr after storage and controllers are proven. */
+/* Restore XMCMAN/XMCSERV after storage/controllers are proven, without
+ * replacing the active SIO2 transport. */
+int ps2_iop_prepare_save_services(void);
+/* Restore the SDR sound service after storage/controllers are proven. */
 int ps2_iop_prepare_audio_services(void);
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 int  ps2_iop_module_loaded(const char *name);

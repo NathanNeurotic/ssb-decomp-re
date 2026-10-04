@@ -290,3 +290,23 @@ globals can be poked from the PCSX2 debugger (addresses via `nm` on
 | `gPS2TexTrace = N` + `gPS2TexFlush = 1` | re-convert all textures and log N conversions with tile state |
 | `gPS2CombTrace = 1` | log each distinct textured combiner setup once |
 | `gPS2TlutTrace = N` | log N CI texture binds with the commands that loaded texel/TLUT data |
+
+
+### Late runtime services
+
+After the real `SSB64.DAT` and controller stack are proven, the port restores
+optional runtime services without resetting the IOP or replacing storage.
+
+- Memory-card persistence first reuses an inherited MCSERV RPC. If it is absent,
+  SSB64 loads `rom0:XMCMAN` + `rom0:XMCSERV` on the already-working SIO2
+  manager, then falls back to the embedded PS2SDK XMC modules. The save thread
+  is hard-gated unless `mcInit()` succeeds, so a missing card service can
+  never turn into a later background RPC hang.
+- Audio first reuses an inherited SDR RPC. If absent, real hardware uses the
+  canonical BIOS `rom0:LIBSD` + `rom0:SDRDRV` sequence used by native PS2
+  software. The embedded FreeSD/SDR pair is retained only as a fallback for
+  BIOS revisions that do not provide those modules.
+
+Both services degrade independently: save failure leaves SRAM in RAM and audio
+failure leaves the game silent; neither is allowed to break the proven game
+storage path.
