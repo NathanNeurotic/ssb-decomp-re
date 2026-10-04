@@ -297,4 +297,7 @@ targets:
       - fs-osd:ps2fs
       - secrsif
 
+      # Optical filesystem for cdrom0: asset-pack launches.
+      - cdfs:cdvd
+
       - mmceman
