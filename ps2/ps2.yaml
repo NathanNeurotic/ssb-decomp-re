@@ -226,8 +226,27 @@ targets:
       - mcserv
       - libsd
       - sdr
+      # Common BDM + physical transports.
       - bdm
       - bdmfs_fatfs
       - usbd_mini
       - usbmass_bd_mini
+      - dev9:ps2dev9
+      - ata_bd:ps2atad
+      - mx4sio_bd_mini:mx4sio_bd
+      - iLinkman
+      - IEEE1394_bd_mini:IEEE1394_bd
+
+      # Network storage. UDPBD is a BDM transport; UDPFS is an iomanX
+      # filesystem and therefore uses its own SMAP/ministack chain.
+      - smap_udpbd
+      - udpfs_smap
+      - udpfs_ministack
+      - udpfs_ioman
+
+      # APA/PFS HDD.
+      - ps2hdd_osd:ps2hdd
+      - fs-osd:ps2fs
+      - secrsif
+
       - mmceman
