@@ -132,6 +132,11 @@ int ps2_main(int argc, char *argv[])
 
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
     wait_for_boot_file("SSB64.DAT");
+
+    if (ps2_iop_prepare_runtime_services() < 0)
+        ps2_panic("required controller IOP services are unavailable");
+
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
     if (ps2_storage_data_device() != PS2_BOOT_CDROM)
     {
         ps2_log_enable_save(1);
