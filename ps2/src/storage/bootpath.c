@@ -387,26 +387,89 @@ int ps2_storage_requires_iop_preserve(void)
     return sDataNeedsExistingIop;
 }
 
-static int bdm_driver_matches(PS2BootDevice dev, const char *driver)
+static PS2BootDevice bdm_device_for_driver(const char *driver)
 {
     if (driver == NULL || driver[0] == '\0')
+        return PS2_BOOT_UNKNOWN;
+    if (strcmp(driver, "usb") == 0)
+        return PS2_BOOT_USB;
+    if (strcmp(driver, "ata") == 0)
+        return PS2_BOOT_ATA;
+    if (strcmp(driver, "sdc") == 0 || strcmp(driver, "mx4sio") == 0)
+        return PS2_BOOT_MX4SIO;
+    if (strcmp(driver, "sd") == 0 || strcmp(driver, "ilink") == 0)
+        return PS2_BOOT_ILINK;
+    if (strcmp(driver, "udp") == 0)
+        return PS2_BOOT_UDPBD;
+    return PS2_BOOT_UNKNOWN;
+}
+
+static int bdm_driver_matches(PS2BootDevice dev, const char *driver)
+{
+    return bdm_device_for_driver(driver) == dev;
+}
+
+int ps2_storage_promote_inherited_bdm(void)
+{
+    char root[32];
+    char driver[32];
+    const char *colon;
+    PS2BootDevice typed;
+    size_t prefix_len;
+    int dfd, io;
+
+    if (sDataDevice != PS2_BOOT_BDM || !sDataNeedsExistingIop)
         return 0;
 
-    switch (dev)
+    /* sDataDir is already normalized from argv[0]/--data and therefore names
+     * the exact live massN: filesystem. Query that mount before any IOP reset;
+     * once reset, massN: alone no longer tells us which physical transport
+     * (USB/MX4SIO/iLink/ATA/UDPBD) must be rebuilt. */
+    colon = strchr(sDataDir, ':');
+    if (colon == NULL)
+        return 0;
+    prefix_len = (size_t)(colon - sDataDir) + 1;
+    if (prefix_len + 1 >= sizeof(root))
+        return 0;
+
+    memcpy(root, sDataDir, prefix_len);
+    root[prefix_len] = '/';
+    root[prefix_len + 1] = '\0';
+
+    dfd = fileXioDopen(root);
+    if (dfd < 0)
     {
-    case PS2_BOOT_USB:
-        return strcmp(driver, "usb") == 0;
-    case PS2_BOOT_ATA:
-        return strcmp(driver, "ata") == 0;
-    case PS2_BOOT_MX4SIO:
-        return strcmp(driver, "sdc") == 0 || strcmp(driver, "mx4sio") == 0;
-    case PS2_BOOT_ILINK:
-        return strcmp(driver, "sd") == 0 || strcmp(driver, "ilink") == 0;
-    case PS2_BOOT_UDPBD:
-        return strcmp(driver, "udp") == 0;
-    default:
+        ps2_log("storage: cannot inspect inherited %s (%d)", root, dfd);
         return 0;
     }
+
+    memset(driver, 0, sizeof(driver));
+    io = fileXioIoctl2(dfd, USBMASS_IOCTL_GET_DRIVERNAME,
+                       NULL, 0, driver, sizeof(driver) - 1);
+    fileXioDclose(dfd);
+
+    if (io < 0 || driver[0] == '\0')
+    {
+        ps2_log("storage: %s has no BDM transport token (io=%d)", root, io);
+        return 0;
+    }
+
+    typed = bdm_device_for_driver(driver);
+    if (typed == PS2_BOOT_UNKNOWN)
+    {
+        ps2_log("storage: %s uses unsupported BDM driver '%s'", root, driver);
+        return 0;
+    }
+
+    /* Keep sDataDir unchanged for now so its relative directory survives the
+     * reset. After the typed driver stack is rebuilt, resolve_data_root()
+     * scans the new massN: mounts for SSB64.DAT and the same driver token. */
+    sDataDevice = typed;
+    sDataNeedsExistingIop = 0;
+    sDataNeedsBdmResolve = 1;
+    ps2_log("storage: promoted inherited %s (%s) to %s",
+            root, driver, ps2_storage_device_name(typed));
+    return 1;
 }
 
 int ps2_storage_resolve_data_root(const char *probe_name)
