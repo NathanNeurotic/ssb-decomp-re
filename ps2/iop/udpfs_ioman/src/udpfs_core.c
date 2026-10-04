@@ -97,6 +97,8 @@ static int _recv_with_result(udprdma_socket_t *socket, const void *req, uint32_t
     ret = udprdma_send(socket, req, req_size);
     if (ret != UDPRDMA_OK) {
         M_DEBUG("udpfs: send failed: %d\n", ret);
+        udprdma_set_rx_buffer(socket, NULL, 0);
+        udprdma_set_rx_app_header(socket, NULL, 0);
         return -EIO;
     }
 
