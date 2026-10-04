@@ -101,6 +101,37 @@ static int load_bdm_core(void)
     return 0;
 }
 
+static int is_ipv4_token(const char *s)
+{
+    int octets = 0;
+    int digits = 0;
+    int value = 0;
+
+    for (; *s != '\0'; s++)
+    {
+        if (*s >= '0' && *s <= '9')
+        {
+            if (++digits > 3)
+                return 0;
+            value = value * 10 + (*s - '0');
+            if (value > 255)
+                return 0;
+        }
+        else if (*s == '.' && digits != 0 && octets < 3)
+        {
+            octets++;
+            digits = 0;
+            value = 0;
+        }
+        else
+        {
+            return 0;
+        }
+    }
+
+    return octets == 3 && digits != 0;
+}
+
 static int read_ip_arg(char *out, size_t out_size)
 {
     static const char *paths[] = {
@@ -132,7 +163,7 @@ static int read_ip_arg(char *out, size_t out_size)
             end++;
         *end = '\0';
 
-        if (*p != '\0' && strlen(p) <= 15)
+        if (*p != '\0' && strlen(p) <= 15 && is_ipv4_token(p))
         {
             snprintf(out, out_size, "ip=%s", p);
             ps2_log("IOP: network IP from %s: %s", paths[i], p);
