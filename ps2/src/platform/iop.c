@@ -227,6 +227,7 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
     switch (dev)
     {
     case PS2_BOOT_HOST:
+    case PS2_BOOT_BDM:
     case PS2_BOOT_MC:
         return 0;
 
