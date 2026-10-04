@@ -24,6 +24,34 @@ Current state is tracked in [PS2_PORT_STATUS.md](PS2_PORT_STATUS.md).
   PS2Build, each under its own open-source licence (see the packages). `ps2/ps2_linkfile.ld` is derived from the
   ps2sdk default linkfile (AFL 2.0, credited in the file).
 
+## Sidecar boot contract
+
+The normal hardware contract is simple: `SSB64.DAT` lives in the same directory as
+`SSB64.ELF`. The port therefore keeps the launcher's live filesystem/IOP stack for
+ordinary launches instead of rebooting the IOP and trying to rediscover the device.
+
+Examples:
+
+```text
+mass0:/APPS/SSB64/SSB64.ELF
+mass0:/APPS/SSB64/SSB64.DAT
+
+mmce0:/APPS/SSB64/SSB64.ELF
+mmce0:/APPS/SSB64/SSB64.DAT
+
+udpfs:/APPS/SSB64/SSB64.ELF
+udpfs:/APPS/SSB64/SSB64.DAT
+```
+
+This intentionally follows the keep-IOP model used by sidecar-driven PS2 homebrew:
+if the launcher was able to load the ELF from that filesystem, the child keeps that
+same mounted filesystem alive for its adjacent DAT. Controller/card/audio services
+are added only when their IOP modules are genuinely absent; storage drivers are never
+blindly duplicated in sidecar mode.
+
+`--data=<directory>` remains an advanced override. Using it opts out of the normal
+sidecar contract and allows the port to rebuild a separate typed data-device stack.
+
 ## Building
 
 Requirements: the PS2Build SDK (`ps2build` on PATH), Python 3, and for asset preparation the decomp's own
