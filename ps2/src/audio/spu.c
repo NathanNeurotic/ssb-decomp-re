@@ -18,7 +18,6 @@
 
 #include <iopheap.h>
 #include <kernel.h>
-#include <loadfile.h>
 #include <libsdr.h>
 #include <sifrpc.h>
 #include <string.h>
@@ -252,9 +251,12 @@ int ps2_spu_init(void)
     for (i = 0; i < sCount; i++)
         sResidentOf[i] = -1;
 
-    if (SifSearchModuleByName("sdr_driver") < 0)
+    /* libsdr's init loop is unbounded when the service is absent.
+     * Sidecar launches keep the launcher IOP, so treat audio as optional
+     * rather than mutating that IOP to add a driver. */
+    if (!ps2_iop_rpc_available(0x80000701u))
     {
-        ps2_log("audio: sdrdrv unavailable; audio stays silent");
+        ps2_log("audio: sdr RPC unavailable; audio stays silent");
         return -1;
     }
 
