@@ -49,14 +49,20 @@ resolved to the actual `massN:` filesystem containing `SSB64.DAT`.
 The asset pack can also live on a different device from the ELF:
 
 ```text
-ssb64.elf --data=mass0:/SSB64/
+ssb64.elf --data=usb0:/SSB64/
 ssb64.elf --data=mmce0:/SSB64/
 ssb64.elf --data=hdd0:+OPL:pfs:/SSB64/
 ssb64.elf --data=udpfs:/SSB64/
 ```
 
 This is particularly useful when the launcher lives on a memory card, since
-`SSB64.DAT` is much larger than a standard 8 MiB card. Network modes inherit
+`SSB64.DAT` is much larger than a standard 8 MiB card. For cross-device
+`--data=` use, prefer a typed transport such as `usb0:`, `ata0:`,
+`mx4sio0:` or `ilink0:`. A generic `massN:` data path is only usable when
+the launcher has already mounted that exact BDM filesystem; `massN:` does not
+encode which transport driver would be needed to recreate it.
+
+Network modes inherit
 the PS2's address from `mc0:/SYS-CONF/IPCONFIG.DAT` or
 `mc1:/SYS-CONF/IPCONFIG.DAT`. A bare `bdm:` path is rejected because it does
 not identify a transport or an existing filesystem mount.
