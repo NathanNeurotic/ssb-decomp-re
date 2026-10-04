@@ -98,16 +98,39 @@ void ps2_vblank_set_event(struct OSMesgQueue_s *mq, void *msg, uint32_t retrace_
 typedef enum PS2BootDevice
 {
     PS2_BOOT_UNKNOWN,
-    PS2_BOOT_HOST,   /* host: (ps2link / PCSX2 host fs) */
-    PS2_BOOT_MASS,   /* mass0:/mass1: (USB or other BDM) */
-    PS2_BOOT_MC,     /* mc0:/mc1: */
-    PS2_BOOT_HDD,    /* hdd0:/pfs: */
-    PS2_BOOT_MMCE,   /* mmce0:/mmce1: */
-    PS2_BOOT_CDROM   /* cdrom0: */
+    PS2_BOOT_HOST,      /* host: (ps2link / PCSX2 host fs) */
+    PS2_BOOT_MC,        /* mc0:/mc1: */
+    PS2_BOOT_MMCE,      /* mmce0:/mmce1: */
+    PS2_BOOT_CDROM,     /* cdrom0: */
+    PS2_BOOT_BDM,       /* massN:/ - transport must be identified/restored */
+    PS2_BOOT_USB,       /* usbN: launch identity -> massN: filesystem */
+    PS2_BOOT_MX4SIO,    /* mx4:/mx4sio:/sd:/sdc: -> massN: */
+    PS2_BOOT_ILINK,     /* ilinkN: -> massN: */
+    PS2_BOOT_ATA,       /* ataN: internal exFAT HDD -> massN: */
+    PS2_BOOT_UDPBD,     /* udpbd:/udp: network block device -> massN: */
+    PS2_BOOT_UDPFS,     /* udpfs: network filesystem */
+    PS2_BOOT_HDD        /* hddN:<partition>:pfs:/ or preserved pfsN: */
 } PS2BootDevice;
+
+typedef enum PS2Filesystem
+{
+    PS2_FS_UNKNOWN,
+    PS2_FS_HOST,
+    PS2_FS_MC,
+    PS2_FS_MMCE,
+    PS2_FS_MASS,
+    PS2_FS_PFS,
+    PS2_FS_UDPFS,
+    PS2_FS_CDROM
+} PS2Filesystem;
 
 void ps2_storage_set_boot_path(const char *argv0);
 PS2BootDevice ps2_storage_boot_device(void);
+PS2Filesystem ps2_storage_filesystem(void);
+int ps2_storage_should_reset_iop(void);
+int ps2_storage_resolve_boot_path(void);
+const char *ps2_storage_original_path(void);
+const char *ps2_storage_hdd_partition(void);
 int ps2_video_progressive(void);         /* 1 = 240p (ELF name contains "240p"), 0 = 480i */
 
 /* Boot-stage marker: shows a solid background colour (GS BGCOLOR with both
@@ -140,8 +163,8 @@ void ps2_file_close(int fd);
 /* IOP modules (ps2/src/platform/iop.c)                                */
 /* ------------------------------------------------------------------ */
 
-void ps2_iop_init(void);                 /* reset IOP + load base modules */
-void ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
+void ps2_iop_init(void);                 /* reset/preserve IOP + load base modules */
+int  ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 int  ps2_iop_module_loaded(const char *name);
 int  ps2_iop_module_count(void);
 const char *ps2_iop_module_name(int i);
