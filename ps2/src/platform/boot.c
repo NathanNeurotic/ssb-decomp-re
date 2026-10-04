@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <kernel.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 /* Game side (src/sys/main.c): the N64 boot thread's code. */
@@ -49,7 +50,7 @@ static void wait_for_boot_file(const char *name)
             ps2_log("boot: %s found after %d ms", path, i * 100);
             return;
         }
-        if (ps2_storage_boot_device() == PS2_BOOT_HOST)
+        if (ps2_storage_data_device() == PS2_BOOT_HOST)
         {
             break; /* host: is there or not */
         }
@@ -61,10 +62,24 @@ static void wait_for_boot_file(const char *name)
 int ps2_main(int argc, char *argv[])
 {
     const PS2MemStats *mem;
+    int bad_data_arg = 0;
+    int i;
 
     ps2_log_init();
     ps2_crash_init();
     ps2_storage_set_boot_path((argc > 0) ? argv[0] : NULL);
+
+    /* Optional explicit asset/log directory. This is deliberately a directory
+     * rather than a device switch: e.g. an ELF may live on mc0: while the
+     * large SSB64.DAT lives on mass0:, udpfs:, MMCE or PFS. */
+    for (i = 1; i < argc; i++)
+    {
+        if (argv[i] != NULL && strncmp(argv[i], "--data=", 7) == 0)
+        {
+            if (!ps2_storage_set_data_path(argv[i] + 7))
+                bad_data_arg = 1;
+        }
+    }
     /* Stage colours (troubleshooting on hardware, see PS2_PORT.md):
      * dark blue = started, purple = IOP modules, cyan = video init,
      * after that the boot screen with the log is shown. */
@@ -76,7 +91,10 @@ int ps2_main(int argc, char *argv[])
     ChangeThreadPriority(GetThreadId(), 2);
 
     ps2_log("boot: argv0=%s", (argc > 0 && argv[0] != NULL) ? argv[0] : "(none)");
-    ps2_log("boot: device=%s dir=%s", ps2_storage_device_name(ps2_storage_boot_device()), ps2_storage_boot_dir());
+    ps2_log("boot: launch=%s data=%s dir=%s",
+            ps2_storage_device_name(ps2_storage_launch_device()),
+            ps2_storage_device_name(ps2_storage_data_device()),
+            ps2_storage_boot_dir());
 
     {
         /* Display lists address memory through RSP segments; a real EE
@@ -98,10 +116,18 @@ int ps2_main(int argc, char *argv[])
     ps2_gs_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
-    ps2_iop_load_boot_device_drivers(ps2_storage_boot_device());
+    if (bad_data_arg)
+        ps2_panic("invalid --data path; use a supported device directory (for example mass0:/SSB64/)");
+
+    if (ps2_storage_data_device() == PS2_BOOT_UNKNOWN)
+        ps2_panic("unsupported or ambiguous launch/data path: %s", ps2_storage_launch_path());
+
+    if (ps2_iop_load_boot_device_drivers(ps2_storage_data_device()) < 0)
+        ps2_panic("failed to initialize %s storage", ps2_storage_device_name(ps2_storage_data_device()));
+
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
     wait_for_boot_file("SSB64.DAT");
-    if (ps2_storage_boot_device() != PS2_BOOT_CDROM)
+    if (ps2_storage_data_device() != PS2_BOOT_CDROM)
     {
         ps2_log_enable_save(1);
         ps2_log_save();
