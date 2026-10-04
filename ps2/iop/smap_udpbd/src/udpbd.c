@@ -64,6 +64,8 @@ static uint8_t *g_buffer_act = NULL;
 static unsigned int g_read_size;
 static int32_t g_errno = 0;
 static udp_socket_t *udpbd_socket = NULL;
+static uint32_t g_server_ip = 0;
+static uint16_t g_server_port = 0;
 static int g_limit_dma_block_size = 0;
 static int g_reconnect_tid = 0; // reconnect watchdog thread id (0 = not started)
 
@@ -93,7 +95,9 @@ static int _udpbd_read(struct block_device *bd, uint64_t sector, void *buffer, u
     g_read_size = count * g_udpbd.sectorSize;
     g_read_cmdpkt = 1; // First reply packet should be cmdpkt==1
 
-    udp_packet_init((udp_packet_t *)&pkt, IP_ADDR(255, 255, 255, 255), UDPBD_SERVER_PORT);
+    udp_packet_init((udp_packet_t *)&pkt,
+                    g_server_ip ? g_server_ip : IP_ADDR(255, 255, 255, 255),
+                    g_server_port ? g_server_port : UDPBD_SERVER_PORT);
     pkt.rw.hdr.cmd = UDPBD_CMD_READ;
     pkt.rw.hdr.cmdid = g_cmdid;
     pkt.rw.hdr.cmdpkt = 0;
@@ -182,6 +186,8 @@ static int udpbd_read(struct block_device *bd, uint64_t sector, void *buffer, ui
             M_DEBUG("%s: too many errors, disconnecting\n", __func__);
             bdm_disconnect_bd(&g_udpbd);
             bdm_connected = 0;
+            g_server_ip = 0;
+            g_server_port = 0;
             return -EIO;
         }
 
@@ -213,7 +219,9 @@ static int udpbd_write(struct block_device *bd, uint64_t sector, const void *buf
     // Send write command
     {
         udpbd_pkt_rw_t pkt;
-        udp_packet_init((udp_packet_t *)&pkt, IP_ADDR(255, 255, 255, 255), UDPBD_SERVER_PORT);
+        udp_packet_init((udp_packet_t *)&pkt,
+                        g_server_ip ? g_server_ip : IP_ADDR(255, 255, 255, 255),
+                        g_server_port ? g_server_port : UDPBD_SERVER_PORT);
         pkt.rw.hdr.cmd = UDPBD_CMD_WRITE;
         pkt.rw.hdr.cmdid = g_cmdid;
         pkt.rw.hdr.cmdpkt = 0;
@@ -230,7 +238,9 @@ static int udpbd_write(struct block_device *bd, uint64_t sector, const void *buf
     {
         uint16_t count_left = count;
         udpbd_pkt_rdma_t pkt;
-        udp_packet_init((udp_packet_t *)&pkt, IP_ADDR(255, 255, 255, 255), UDPBD_SERVER_PORT);
+        udp_packet_init((udp_packet_t *)&pkt,
+                        g_server_ip ? g_server_ip : IP_ADDR(255, 255, 255, 255),
+                        g_server_port ? g_server_port : UDPBD_SERVER_PORT);
         pkt.hdr.cmd = UDPBD_CMD_WRITE_RDMA;
         pkt.hdr.cmdid = g_cmdid;
         pkt.hdr.cmdpkt = 0;
@@ -302,14 +312,19 @@ static int udpbd_stop(struct block_device *bd)
     return 0;
 }
 
-static inline void _cmd_info_reply(struct SUDPBDv2_Header *hdr)
+static inline void _cmd_info_reply(struct SUDPBDv2_Header *hdr, uint32_t src_ip, uint16_t src_port)
 {
     if (bdm_connected == 0) {
         USE_SMAP_REGS;
         g_udpbd.sectorSize = SMAP_REG32(SMAP_R_RXFIFO_DATA);
         g_udpbd.sectorCount = SMAP_REG32(SMAP_R_RXFIFO_DATA);
+        g_server_ip = src_ip;
+        g_server_port = src_port;
         bdm_connected = 1;
         bdm_connect_bd(&g_udpbd);
+        M_DEBUG("udpbd: bound server %d.%d.%d.%d:%u\n",
+                (src_ip >> 24) & 0xff, (src_ip >> 16) & 0xff,
+                (src_ip >> 8) & 0xff, src_ip & 0xff, src_port);
     }
 }
 
@@ -394,6 +409,13 @@ static int udpbd_isr(udp_socket_t *socket, uint16_t pointer, void *arg)
 {
     USE_SMAP_REGS;
     struct SUDPBDv2_Header_Padded32 hdr32;
+    uint32_t src_ip;
+    uint16_t src_port;
+
+    SMAP_REG16(SMAP_R_RXFIFO_RD_PTR) = pointer + 0x1A;
+    src_ip = ntohl(SMAP_REG32(SMAP_R_RXFIFO_DATA));
+    SMAP_REG16(SMAP_R_RXFIFO_RD_PTR) = pointer + 0x22;
+    src_port = ntohs(SMAP_REG16(SMAP_R_RXFIFO_DATA));
 
     SMAP_REG16(SMAP_R_RXFIFO_RD_PTR) = pointer + 0x28;
     hdr32.cmd32 = SMAP_REG32(SMAP_R_RXFIFO_DATA);
@@ -403,9 +425,15 @@ static int udpbd_isr(udp_socket_t *socket, uint16_t pointer, void *arg)
         return 0;
     }
 
+    if (bdm_connected && hdr32.hdr.cmd != UDPBD_CMD_INFO_REPLY &&
+        (src_ip != g_server_ip || src_port != g_server_port)) {
+        M_DEBUG("%s: packet from non-server peer ignored\n", __func__);
+        return 0;
+    }
+
     switch (hdr32.hdr.cmd) {
         case UDPBD_CMD_INFO_REPLY:
-            _cmd_info_reply(&hdr32.hdr);
+            _cmd_info_reply(&hdr32.hdr, src_ip, src_port);
             break;
         case UDPBD_CMD_READ_RDMA:
             _cmd_read_rdma(&hdr32.hdr);
