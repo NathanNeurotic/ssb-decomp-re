@@ -254,10 +254,23 @@ void ps2_iop_init(void)
     }
 
     /* host: and opaque inherited filesystems stay alive. Every transport that
-     * can be reconstructed starts from a known IOP state. */
+     * can be reconstructed starts from a known IOP state.
+     *
+     * IMPORTANT: detach inherited parent-launcher EE RPC/fileXio state before
+     * asking the IOP to reboot. RiptOPL does this on its initial boot for the
+     * same reason: launchers such as MMCE-capable OPL leave live SIF services
+     * behind, and entering SifIopReset() with those bindings still attached can
+     * park the EE in the reset handshake forever. That is exactly what the
+     * solid-red MMCE hardware test exposed. */
     if (!preserve_iop)
     {
-        ps2_boot_stage("IOP: resetting", 0x800000);
+        ps2_boot_stage("IOP: detach inherited RPC", 0x800000);
+        fileXioExit();
+        SifExitRpc();
+
+        /* Reinitialize only the reset-control RPC state, then reboot IOP. */
+        SifInitRpc(0);
+        ps2_boot_stage("IOP: resetting", 0x800040);
         while (!SifIopReset("", 0))
         {
         }
