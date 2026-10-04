@@ -100,8 +100,15 @@ static int _udpbd_read(struct block_device *bd, uint64_t sector, void *buffer, u
     pkt.rw.sector_count = count;
     pkt.rw.sector_nr = sector;
 
-    if (udp_packet_send(udpbd_socket, (udp_packet_t *)&pkt, sizeof(struct SUDPBDv2_RWRequest)) < 0)
+    if (udp_packet_send(udpbd_socket, (udp_packet_t *)&pkt, sizeof(struct SUDPBDv2_RWRequest)) < 0) {
+        /* No request is outstanding, so no later packet may retain authority
+         * to DMA into the caller's buffer. */
+        g_buffer = NULL;
+        g_buffer_act = NULL;
+        g_read_size = 0;
+        g_read_cmdpkt = 0;
         return -1;
+    }
 
     // Set alarm in case something hangs
     // 200ms + 2ms / sector
