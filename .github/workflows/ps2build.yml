@@ -138,3 +138,67 @@ jobs:
           path: artifacts/
           if-no-files-found: error
           retention-days: 7
+
+  release:
+    name: Publish rolling nightly release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download PS2 build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ssb64-ps2-${{ github.sha }}
+          path: artifacts
+
+      - name: Publish rolling nightly release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Keep one stable rolling tag/release. Every successful build of
+          # main moves "nightly" to that commit and replaces the release assets.
+          git tag -f nightly "$GITHUB_SHA"
+          git push origin refs/tags/nightly --force
+
+          short_sha="${GITHUB_SHA::7}"
+          built_at="$(date -u +'%Y-%m-%d %H:%M UTC')"
+
+          cat > nightly-notes.md <<EOF
+          Automated development build from `main`.
+
+          Commit: [`$short_sha`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})
+          Built: $built_at
+
+          `SSB64.DAT` is intentionally not included. Generate it locally from your own
+          Super Smash Bros. 64 US ROM with `ps2/tools/prepare_assets.sh`, then place
+          it beside `SSB64.ELF` or supply `--data=<directory>`.
+          EOF
+
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release edit nightly \
+              --title "Nightly" \
+              --prerelease \
+              --notes-file nightly-notes.md
+          else
+            gh release create nightly \
+              --target "$GITHUB_SHA" \
+              --title "Nightly" \
+              --prerelease \
+              --notes-file nightly-notes.md
+          fi
+
+          gh release upload nightly artifacts/* --clobber
