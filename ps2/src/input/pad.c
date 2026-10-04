@@ -143,8 +143,14 @@ void ps2_input_init(void)
     int i;
 
     if (SifSearchModuleByName("multitap_manager") >= 0)
-    {
         mtapInit();
+
+    /* padGetSlotMax() used by multitap detection is a libpad RPC, so padInit
+     * must be complete before detect_multitap() calls it. */
+    padInit(0);
+
+    if (SifSearchModuleByName("multitap_manager") >= 0)
+    {
         sMtap[0] = detect_multitap(0);
         sMtap[1] = detect_multitap(1);
     }
@@ -153,8 +159,6 @@ void ps2_input_init(void)
         sMtap[0] = sMtap[1] = 0;
         ps2_log("input: mtapman unavailable; using native controller ports");
     }
-
-    padInit(0);
     assign_slots();
 
     for (i = 0; i < PS2_INPUT_MAX_PLAYERS; i++)
