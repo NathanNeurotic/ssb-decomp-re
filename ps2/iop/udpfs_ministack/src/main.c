@@ -43,10 +43,14 @@ int _start(int argc, char *argv[])
 {
     int i;
 
-    /* Register RX callback with the smap driver, pre-reading 44 bytes (ETH+IP+UDP + app hdr) */
-    smap_register_rx_callback(handle_rx_eth, 44);
+    /* Duplicate loads must return before changing the live SMAP callback or
+     * installing the TTY device. */
+    if (RegisterLibraryEntries(&_exp_mstack) != 0) {
+        M_DEBUG("module already loaded\n");
+        return MODULE_NO_RESIDENT_END;
+    }
 
-    /* Parse command line IP address */
+    /* Parse command line IP address before any packet handling starts. */
     for (i = 1; i < argc; i++) {
         M_DEBUG("argv[%d] = %s\n", i, argv[i]);
         if (!strncmp(argv[i], "ip=", 3)) {
@@ -56,12 +60,10 @@ int _start(int argc, char *argv[])
         }
     }
 
+    /* Register RX callback with the smap driver, pre-reading 44 bytes
+     * (ETH+IP+UDP + app hdr), then install the debug TTY. */
+    smap_register_rx_callback(handle_rx_eth, 44);
     udptty_init();
-
-    if (RegisterLibraryEntries(&_exp_mstack) != 0) {
-        M_DEBUG("module already loaded\n");
-        return MODULE_NO_RESIDENT_END;
-    }
 
     return MODULE_RESIDENT_END;
 }
