@@ -20,6 +20,7 @@
 #include <ps2/platform.h>
 
 #include <ctype.h>
+#include <delaythread.h>
 #include <fcntl.h>
 #include <fileXio_rpc.h>
 #include <iopcontrol.h>
