@@ -64,8 +64,11 @@ encode which transport driver would be needed to recreate it.
 
 Network modes inherit
 the PS2's address from `mc0:/SYS-CONF/IPCONFIG.DAT` or
-`mc1:/SYS-CONF/IPCONFIG.DAT`. A bare `bdm:` path is rejected because it does
-not identify a transport or an existing filesystem mount.
+`mc1:/SYS-CONF/IPCONFIG.DAT`. UDPBD/UDPFS use their legacy unauthenticated
+LAN discovery protocols, so treat them as trusted-LAN transports rather than
+Internet-facing services; after discovery this port binds data replies to the
+selected peer. A bare `bdm:` path is rejected because it does not identify a
+transport or an existing filesystem mount.
 
 Testing in PCSX2 (Windows helpers, default Pad 1 keyboard bindings):
 
