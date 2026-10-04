@@ -752,10 +752,21 @@ int ps2_iop_prepare_audio_services(void)
         return 1;
     }
 
-    /* Some early BIOS revisions do not contain LIBSD/SDRDRV. Keep the
-     * embedded open-source implementation as a fallback, but only after the
-     * canonical ROM path has definitively failed. */
-    ps2_log("IOP: ROM sound services unavailable; trying embedded libsd + sdr");
+    /* Most BIOSes provide LIBSD even when SDRDRV is unavailable. Try the
+     * embedded RPC server against that canonical LIBSD first, so real
+     * hardware never starts FreeSD unnecessarily. */
+    ps2_log("IOP: ROM SDRDRV unavailable; trying embedded SDR server");
+    recovery_load_irx("sdr", sdr_irx, size_sdr_irx);
+
+    if (ps2_iop_rpc_available(sdr_rpc))
+    {
+        ps2_log("IOP: SDR audio RPC ready with ROM LIBSD + embedded SDR");
+        return 1;
+    }
+
+    /* Only very early BIOS revisions lack LIBSD itself. FreeSD is the final
+     * compatibility fallback for those machines. */
+    ps2_log("IOP: LIBSD unavailable; trying FreeSD + embedded SDR");
     recovery_load_irx("libsd", libsd_irx, size_libsd_irx);
     recovery_load_irx("sdr", sdr_irx, size_sdr_irx);
 
@@ -765,7 +776,7 @@ int ps2_iop_prepare_audio_services(void)
         return 0;
     }
 
-    ps2_log("IOP: SDR audio RPC ready from embedded services");
+    ps2_log("IOP: SDR audio RPC ready from FreeSD fallback");
     return 1;
 }
 
