@@ -1,9 +1,9 @@
 /*
  * IOP bring-up for real launch/data devices.
  *
- * The launch device and the data device are intentionally separate.  host:
- * keeps the ps2link/PCSX2 IOP alive; every other launch starts from a clean
- * IOP and reconstructs only the stack required by the selected data device.
+ * Normal launches keep the launcher's live IOP/filesystem because SSB64.DAT
+ * is a sidecar beside SSB64.ELF. An explicit --data override is the only path
+ * that rebuilds a separate data-device stack from a clean IOP.
  *
  * Base:      iomanX + fileXio + sio2man + mtapman + padman + mcman/mcserv
  *            + libsd/sdr
