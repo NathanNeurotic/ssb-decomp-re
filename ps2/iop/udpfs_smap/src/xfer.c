@@ -244,17 +244,12 @@ static int HandleTxReqs(struct SmapDriverData *SmapDrivPrivData, void *header, u
 
 int smap_transmit(void *header, uint16_t headersize, const void *data, uint16_t datasize)
 {
-    int i, r;
+    int r;
 
-    // Wait up to 2 seconds for autonegotiation to complete.
-    if (!SmapDriverData.SmapIsInitialized) {
-        for (i = 0; i < 2000 && !SmapDriverData.SmapIsInitialized; i++)
-            DelayThread(1000);
-        // Timed out: the link never came up. Fail instead of falling through into
-        // HandleTxReqs and potentially reporting success on an uninitialized driver.
-        if (!SmapDriverData.SmapIsInitialized)
-            return -1;
-    }
+    /* InitPHY can spend several seconds negotiating and may restart negotiation.
+     * Do not drop discovery/data just because a fixed wall-clock guess expired. */
+    while (!SmapDriverData.SmapIsInitialized)
+        DelayThread(1000);
 
     while (1) {
         WaitSema(tx_sema);
