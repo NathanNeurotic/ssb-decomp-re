@@ -106,13 +106,24 @@ static int _ist(udp_socket_t *udp_socket, void *arg, const uint8_t *hdr, uint16_
 {
     struct udprdma_socket *s = (struct udprdma_socket *)arg;
     const udprdma_pkt_disc_t *disc_pkt = (const udprdma_pkt_disc_t *)hdr;
-    udprdma_hdr_t base_hdr = disc_pkt->hdr; /* offset 42-43: within 44-byte pre-read */
+    udprdma_hdr_t base_hdr;
+    uint16_t udp_len;
+
+    if (hdr == NULL || hdr_len < 44)
+        return -1;
+
+    base_hdr = disc_pkt->hdr; /* offset 42-43: within 44-byte pre-read */
+    udp_len = ntohs(disc_pkt->udp.len);
+    if (udp_len < sizeof(udp_header_t) + sizeof(udprdma_hdr_t))
+        return -1;
 
     //M_DEBUG("_ist: type=%d seq=%d\n", base_hdr.packet_type, base_hdr.seq_nr);
 
     switch (base_hdr.packet_type) {
         case UDPRDMA_PT_DISCOVERY: {
             udprdma_hdr_disc_t disc;
+            if (udp_len < sizeof(udp_header_t) + sizeof(udprdma_hdr_t) + sizeof(udprdma_hdr_disc_t))
+                return -1;
             smap_fifo_read(0x2C, &disc, sizeof(udprdma_hdr_disc_t));
             uint16_t service_id = disc.service_id;
             M_DEBUG("_ist: DISCOVERY svc=0x%04X\n", service_id);
@@ -129,6 +140,8 @@ static int _ist(udp_socket_t *udp_socket, void *arg, const uint8_t *hdr, uint16_
 
         case UDPRDMA_PT_INFORM: {
             udprdma_hdr_disc_t disc;
+            if (udp_len < sizeof(udp_header_t) + sizeof(udprdma_hdr_t) + sizeof(udprdma_hdr_disc_t))
+                return -1;
             smap_fifo_read(0x2C, &disc, sizeof(udprdma_hdr_disc_t));
             uint16_t service_id = disc.service_id;
             M_DEBUG("_ist: INFORM svc=0x%04X\n", service_id);
@@ -175,6 +188,13 @@ static int _ist(udp_socket_t *udp_socket, void *arg, const uint8_t *hdr, uint16_
             {
                 uint32_t hdr_size = data_hdr.hdr_word_count * 4;
                 uint32_t payload_size = hdr_size + data_hdr.data_byte_count;
+                uint32_t wire_size = sizeof(udp_header_t) + sizeof(udprdma_hdr_t) +
+                                     sizeof(udprdma_hdr_data_t) + payload_size;
+
+                if (wire_size > udp_len) {
+                    M_DEBUG("_ist: truncated DATA packet (%u > %u)\n", wire_size, udp_len);
+                    return -1;
+                }
 
                 if (payload_size > 0 && s->rx_buffer != NULL) {
                     if (base_hdr.seq_nr == s->rx_seq_nr_expected) {
