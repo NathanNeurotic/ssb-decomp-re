@@ -50,6 +50,7 @@ int ps2_assets_init(void)
      * backslashes stripped, so for host: also try the host root, which
      * PCSX2 maps to the ELF's directory. */
     ps2_storage_path(path, sizeof(path), PACK_NAME);
+    ps2_log("assets: opening %s", path);
     sFd = ps2_file_open_read(path);
     if (sFd < 0 && ps2_storage_boot_device() == PS2_BOOT_HOST)
     {
@@ -62,6 +63,7 @@ int ps2_assets_init(void)
         ps2_log("assets: cannot open %s", path);
         return 0;
     }
+    ps2_log("assets: reading pack header");
     if (!read_exact(&sHeader, 0, sizeof(sHeader)) || memcmp(sHeader.magic, PS2PACK_MAGIC, 8) != 0 ||
         sHeader.version != PS2PACK_VERSION)
     {
@@ -70,8 +72,12 @@ int ps2_assets_init(void)
     }
 
     table_bytes = sHeader.region_count * sizeof(PS2PackRegion);
+    ps2_log("assets: header ok, %u regions, table %u bytes, resident %u KiB",
+            (unsigned)sHeader.region_count, (unsigned)table_bytes,
+            (unsigned)(sHeader.resident_bytes >> 10));
     sRegions = ps2_mem_alloc(PS2_MEM_GAME_HEAP, table_bytes, 64);
     sResidentPtr = ps2_mem_alloc(PS2_MEM_GAME_HEAP, sHeader.region_count * sizeof(uint8_t *), 64);
+    ps2_log("assets: reading region table");
     if (!read_exact(sRegions, sHeader.region_table_offset, table_bytes))
     {
         ps2_log("assets: region table read failed");
@@ -80,6 +86,9 @@ int ps2_assets_init(void)
 
     /* All resident regions are stored back to back: one read at boot. */
     sResidentBlob = ps2_mem_alloc(PS2_MEM_GAME_HEAP, sHeader.resident_bytes + 64, 64);
+    if (sHeader.resident_bytes != 0)
+        ps2_log("assets: reading %u KiB resident block in conservative chunks",
+                (unsigned)(sHeader.resident_bytes >> 10));
     if (sHeader.resident_bytes != 0 &&
         !read_exact(sResidentBlob, sHeader.resident_offset, sHeader.resident_bytes))
     {

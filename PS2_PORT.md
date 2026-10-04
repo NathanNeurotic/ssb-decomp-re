@@ -260,8 +260,11 @@ The embedded IOP stacks are:
 | `mcN:` | base mcman/mcserv stack |
 | `cdrom0:` | cdfs, with ISO9660 `;1` fallback for `SSB64.DAT` |
 
-Real-device files are read in bounded 64 KiB requests and the boot path allows
-up to roughly 20 seconds for asynchronous BDM/network media to become ready.
+Real-device BDM files are read in conservative 16 KiB requests. PS2SDK's USB
+mass driver documents a 64 KiB/128-sector ceiling because some drives freeze
+on larger transfers; staying well below that limit trades a few more RPCs for
+better hardware tolerance. The boot path allows up to roughly 20 seconds for
+asynchronous BDM/network media to become ready.
 
 ### Game-source changes
 - `include/PR/rcp.h`: register reads/writes go through the platform layer.

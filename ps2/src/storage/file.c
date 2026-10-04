@@ -47,16 +47,30 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
     /* Large reads are split so a single request never blocks too long. */
     while (done < size)
     {
-        /* Keep individual RPCs modest. 64 KiB avoids long/fragile 256 KiB
-         * transfers on real BDM/network stacks while remaining efficient. */
-        uint32_t chunk = ((size - done) > 0x10000u) ? 0x10000u : (size - done);
-        int n = (int)read(fd, out + done, chunk);
+        uint32_t max_chunk = 0x10000u;
+        PS2BootDevice dev = ps2_storage_data_device();
 
-        if (n <= 0)
+        /* PS2SDK's USB mass driver already caps SCSI requests at 128 sectors
+         * (64 KiB) because some real drives freeze above that range. Staying
+         * comfortably below the transport ceiling is more important than
+         * shaving a few RPCs from a 25 MiB asset pack, especially on USB 1.1.
+         * Use the same conservative size for physical BDM transports. */
+        if (dev == PS2_BOOT_BDM || dev == PS2_BOOT_USB ||
+            dev == PS2_BOOT_ATA || dev == PS2_BOOT_MX4SIO ||
+            dev == PS2_BOOT_ILINK || dev == PS2_BOOT_UDPBD)
+            max_chunk = 0x4000u; /* 16 KiB */
+
         {
-            return (done > 0) ? (int)done : n;
+            uint32_t chunk = ((size - done) > max_chunk) ? max_chunk : (size - done);
+            int n = (int)read(fd, out + done, chunk);
+
+            if (n <= 0)
+            {
+                return (done > 0) ? (int)done : n;
+            }
+            done += (uint32_t)n;
         }
-        done += (uint32_t)n;
+
     }
     return (int)done;
 }

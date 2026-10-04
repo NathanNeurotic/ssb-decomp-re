@@ -222,6 +222,7 @@ int ps2_main(int argc, char *argv[])
     ps2_arena_init();
     ps2_overlay_state_init();
     ps2_input_init();
+    ps2_log("boot: input ready; starting asset index/resident load");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
     if (!ps2_assets_init())
@@ -229,10 +230,28 @@ int ps2_main(int argc, char *argv[])
         ps2_panic("asset pack not found next to the ELF (%sSSB64.DAT). Run ps2/tools/prepare_assets.sh first.",
                   ps2_storage_boot_dir());
     }
+    ps2_log("boot: assets ready");
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
+
+    ps2_log("boot: initializing saves");
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
     ps2_save_init();
+    ps2_log("boot: saves initialized");
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
+
+    ps2_log("boot: preparing audio RPC");
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
     ps2_iop_prepare_audio_services();
+    ps2_log("boot: initializing SPU audio");
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
     ps2_audio_init();
+    ps2_log("boot: audio initialization returned");
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
+
+    ps2_log("boot: initializing renderer");
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
     ps2_render_thread_init();
+    ps2_log("boot: renderer initialized");
 
     mem = ps2_mem_stats();
     ps2_log("mem: %u KiB committed (code/static %u KiB), budget %u KiB", (unsigned)(mem->total_used >> 10),
