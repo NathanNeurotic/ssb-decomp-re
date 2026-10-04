@@ -35,6 +35,7 @@ int smap_register_rx_callback(int (*cb)(uint16_t len, const uint8_t *hdr, uint16
 void smap_fifo_read(uint16_t offset, void *dst, uint32_t bytes);
 
 void xfer_init(void);
+void xfer_deinit(void);
 int HandleRxIntr(struct SmapDriverData *SmapDrivPrivData);
 
 
