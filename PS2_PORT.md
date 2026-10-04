@@ -45,9 +45,10 @@ udpfs:/APPS/SSB64/SSB64.DAT
 
 This intentionally follows the keep-IOP model used by sidecar-driven PS2 homebrew:
 if the launcher was able to load the ELF from that filesystem, the child keeps that
-same mounted filesystem alive for its adjacent DAT. Controller/card/audio services
-are added only when their IOP modules are genuinely absent; storage drivers are never
-blindly duplicated in sidecar mode.
+same mounted filesystem alive for its adjacent DAT. The first storage authority is an
+actual open of SSB64.DAT through PS2SDK's basic FileIO RPC; fileXio is not injected just
+to reach the sidecar. Controller/card/audio services are considered only after the DAT
+has opened, and storage drivers are never blindly duplicated in sidecar mode.
 
 `--data=<directory>` remains an advanced override. Using it opts out of the normal
 sidecar contract and allows the port to rebuild a separate typed data-device stack.

@@ -1,10 +1,10 @@
 /*
  * Minimal blocking file API used by the asset manager.
  *
- * Uses the ps2sdk newlib port's POSIX calls: the port routes each path to
- * the right IOP service (fileXio/iomanX for mass:, mmce:, pfs: and friends;
- * the BIOS ioman for host: and cdrom0:), so the asset code stays
- * device-agnostic. fileXio is initialised during IOP bring-up.
+ * Uses the ps2sdk newlib port's POSIX calls. For basic open/read/seek/close,
+ * libcglue lazily binds the IOP FileIO RPC, so inherited sidecar launches do
+ * not require a fileXio RPC server merely to read SSB64.DAT. The registered
+ * IOP device (mass:, mmce:, pfs:, host:, etc.) remains owned by the launcher.
  */
 #include <ps2/platform.h>
 

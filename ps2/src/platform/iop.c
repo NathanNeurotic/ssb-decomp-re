@@ -138,35 +138,6 @@ static int lazy_load_bridge_irx(const char *label, void *buf, unsigned int size)
     return 0;
 }
 
-static int ensure_filexio_bridge(void)
-{
-    int loaded = 0;
-
-    if (!ps2_iop_rpc_available(FILEXIO_IRX))
-    {
-        ps2_log("IOP: fileXio RPC absent; lazy-loading bridge only");
-        loaded = lazy_load_bridge_irx("filexio", filexio_irx, size_filexio_irx);
-
-        /* A duplicate/racing load can report NO_RESIDENT even though the
-         * existing server becomes available immediately afterward, so the
-         * RPC probe is authoritative. */
-        if (!ps2_iop_rpc_available(FILEXIO_IRX))
-        {
-            ps2_log("IOP: fileXio RPC still unavailable after lazy load");
-            return -1;
-        }
-    }
-
-    if (fileXioInit() < 0)
-    {
-        ps2_log("IOP: fileXio EE bind failed");
-        return -1;
-    }
-
-    ps2_log("IOP: fileXio bridge ready%s", loaded == 0 ? "" : " (lazy)");
-    return 0;
-}
-
 static int load_bdm_core(void)
 {
     if (LOAD_IRX(bdm) < 0)
@@ -291,20 +262,12 @@ void ps2_iop_init(void)
     if (preserve_iop)
     {
         /* Sidecar contract: the launcher already proved this filesystem by
-         * loading SSB64.ELF from it. Do not initialize loadfile/iopheap, apply
-         * SBV patches, query the module table, reset the IOP, or inject any
-         * IRX here. Those operations were exactly what made otherwise-live
-         * MMCE/BDM launch stacks hang on hardware.
-         *
-         * The only EE-side binding we need before opening the adjacent DAT is
-         * fileXio. Probe its RPC service with a finite timeout first because
-         * fileXioInit() itself waits forever for a missing server. */
-        ps2_log("IOP: keeping launcher sidecar device stack");
-        if (ensure_filexio_bridge() < 0)
-        {
-            ps2_log("IOP: cannot expose inherited filesystem to EE");
-            return;
-        }
+         * loading SSB64.ELF from it. Keep that IOP untouched. Basic POSIX file
+         * calls in PS2SDK bind the inherited FileIO RPC lazily, so fileXio is
+         * not a prerequisite for opening the adjacent SSB64.DAT. In
+         * particular, do not initialize loadfile/iopheap, apply SBV patches,
+         * reset the IOP, query BDM slots, or inject storage/bridge IRXs here. */
+        ps2_log("IOP: keeping launcher sidecar device stack untouched");
         return;
     }
 
