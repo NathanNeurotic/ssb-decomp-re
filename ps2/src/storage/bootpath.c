@@ -60,7 +60,8 @@ static PS2BootDevice detect_device(const char *path)
         return PS2_BOOT_MC;
     if (starts_with_ci(path, "ata"))
         return PS2_BOOT_ATA;
-    if (starts_with_ci(path, "mx4sio"))
+    if (starts_with_ci(path, "mx4sio") || starts_with_ci(path, "mx4:") ||
+        starts_with_ci(path, "mx4/"))
         return PS2_BOOT_MX4SIO;
     if (starts_with_ci(path, "ilink"))
         return PS2_BOOT_ILINK;
@@ -130,7 +131,7 @@ static const char *find_pfs_token(const char *s)
 {
     const char *p;
 
-    for (p = s; *p != '\0'; p++)
+    for (p = s; p[0] != '\0' && p[1] != '\0' && p[2] != '\0'; p++)
     {
         if ((p[0] == 'p' || p[0] == 'P') &&
             (p[1] == 'f' || p[1] == 'F') &&
@@ -336,7 +337,8 @@ void ps2_storage_set_boot_path(const char *argv0)
 
     for (p = argv0; p[0] != '\0'; p++)
     {
-        if (p[0] == '2' && p[1] == '4' && p[2] == '0' && (p[3] == 'p' || p[3] == 'P'))
+        if (p[1] != '\0' && p[2] != '\0' && p[3] != '\0' &&
+            p[0] == '2' && p[1] == '4' && p[2] == '0' && (p[3] == 'p' || p[3] == 'P'))
             sProgressive = 1;
     }
 
