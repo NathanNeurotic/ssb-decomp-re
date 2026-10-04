@@ -52,6 +52,19 @@ jobs:
           "$PS2BUILD_HOME/ps2build" --version
           "$PS2BUILD_HOME/toolchain/ee/bin/mips64r5900el-ps2-elf-gcc" --version | head -1
 
+      - name: Show HDD/PFS package inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Installed package manifests/files matching HDD/PFS:"
+          find "$PS2BUILD_HOME/packages" -type f \
+            \( -iname '*hdd*' -o -iname '*pfs*' -o -iname '*ps2fs*' -o -iname '*apa*' \) \
+            -print | sort | head -200
+          echo
+          echo "Manifest references:"
+          grep -RniE 'ps2hdd|ps2fs|fs-osd|ps2hdd_osd' "$PS2BUILD_HOME/packages" \
+            --include='*.yaml' --include='*.yml' | head -200 || true
+
       - name: Generate ROM-independent linker symbols
         shell: bash
         run: |
