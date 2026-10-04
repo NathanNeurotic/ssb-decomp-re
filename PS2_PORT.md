@@ -78,9 +78,13 @@ The boot layer derives the launch/data device from `argv[0]` and supports
 `host:`, generic `massN:` BDM mounts, explicit USB, internal ATA/exFAT BDM,
 MX4SIO, iLink, MMCE, APA/PFS HDD, UDPBD, UDPFS, memory card and `cdrom0:`.
 
-For launchers that expose a BDM device only as `massN:`, the port deliberately
+For launchers that expose a BDM device only as `massN:`, the port first
 **keeps the inherited IOP/filesystem alive instead of guessing that `mass:`
-means USB**. Explicit transport identities such as `usb0:`, `ata0:`,
+means USB**. If the launcher reset the IOP after loading the ELF, the child
+detects that the sidecar mount is gone, rebuilds the BDM core without another
+IOP reset, adds USB/MX4SIO/iLink/ATA transports in stages, and rediscovers
+`SSB64.DAT` by its relative path across the new `massN:` mounts. The old
+slot number is never trusted after recovery. Explicit transport identities such as `usb0:`, `ata0:`,
 `mx4sio0:`, `ilink0:` and `udpbd:` are rebuilt from a clean IOP and then
 resolved to the actual `massN:` filesystem containing `SSB64.DAT`.
 
@@ -201,7 +205,10 @@ prepended) and the loop body is unrolled and resampled by a factor ~1 so it
 spans whole 28-sample blocks; the runtime multiplies the pitch by that
 factor. The 4.1 MiB set lives in EE RAM and samples are copied to SPU RAM
 (1.9 MiB cache, LRU) on first use. All register changes of a frame go to the
-IOP as one `sceSdProcBatch` via sdrdrv.
+IOP as one `sceSdProcBatch` via sdrdrv. Keep-IOP launches now lazily add
+`libsd` + `sdr` when the SDR RPC is absent, after storage and controller
+services have already been proven, so PCSX2 and minimalist launchers do not
+silently lose audio solely because they omitted the sound driver.
 
 ### Input (`ps2/src/input/pad.c`)
 libpad + libmtap, up to four players (multitap on port 1, or port 1 + a

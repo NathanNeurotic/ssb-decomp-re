@@ -131,6 +131,9 @@ int ps2_storage_requires_iop_preserve(void);
  * actual massN: filesystem that contains probe_name. Generic massN: paths
  * deliberately keep the inherited launcher IOP and are already usable. */
 int ps2_storage_resolve_data_root(const char *probe_name);
+/* For a generic massN: sidecar, probe the same relative file on every live
+ * mass slot and adopt the one that actually opens. */
+int ps2_storage_recover_mass_sidecar(const char *probe_name);
 /* Query the transport token for the already-proven inherited massN: mount.
  * This is intentionally unavailable before the real sidecar DAT has opened. */
 int ps2_storage_inherited_bdm_driver(char *out, size_t out_size);
@@ -175,7 +178,12 @@ int ps2_iop_prepare_filesystem_client(void);
  * requires it. Returns >0 when the client was promoted, 0 when not applicable,
  * and <0 when promotion was required but failed. */
 int ps2_iop_promote_filesystem_client(void);
+/* Recovery path for launchers that reset the IOP after loading a generic
+ * massN: ELF. Adds one BDM transport family per call, without another reset. */
+int ps2_iop_recover_generic_bdm_next(void);
 int ps2_iop_prepare_runtime_services(void);
+/* Lazily supply libsd/sdr after storage and controllers are proven. */
+int ps2_iop_prepare_audio_services(void);
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 int  ps2_iop_module_loaded(const char *name);
 int  ps2_iop_module_count(void);

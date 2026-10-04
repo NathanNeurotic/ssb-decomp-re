@@ -82,6 +82,8 @@ enum
 };
 
 static int sFsClient;
+static int sBdmRecoveryStage;
+static int sBdmRecoveryBaseReady;
 
 static int load_irx(const char *name, void *buf, unsigned int size, const char *args, int args_len)
 {
@@ -144,6 +146,39 @@ static int lazy_load_bridge_irx(const char *label, void *buf, unsigned int size)
     }
 
     ps2_log("IOP: lazy-loaded %s", label);
+    return 0;
+}
+
+/* Recovery-only loader. A launcher may have reset the IOP after loading the
+ * ELF, or may have left some of these modules resident already. The caller
+ * validates success by probing the resulting RPC/filesystem, so NO_RESIDENT
+ * from a duplicate module is not fatal here. */
+static int recovery_load_irx(const char *label, void *buf, unsigned int size)
+{
+    int result = 0;
+    int id;
+
+    SifLoadFileInit();
+    SifInitIopHeap();
+    sbv_patch_enable_lmb();
+    sbv_patch_disable_prefix_check();
+    sbv_patch_fileio();
+
+    id = SifExecModuleBuffer(buf, size, 0, NULL, &result);
+
+    SifExitIopHeap();
+    SifLoadFileExit();
+
+    if (id < 0 && result != 1)
+    {
+        ps2_log("IOP: recovery %s load returned id=%d res=%d", label, id, result);
+        return -1;
+    }
+
+    if (result == 1)
+        ps2_log("IOP: recovery %s already resident/unneeded", label);
+    else
+        ps2_log("IOP: recovery-loaded %s", label);
     return 0;
 }
 
@@ -377,6 +412,8 @@ void ps2_iop_init(void)
     sLoadedCount = 0;
     sIopWasReset = 0;
     sFsClient = PS2_FS_CLIENT_NONE;
+    sBdmRecoveryStage = 0;
+    sBdmRecoveryBaseReady = 0;
 
     /* Every child initializes its own EE-side SIF RPC client state. This does
      * not reset or alter the inherited IOP. */
@@ -429,6 +466,90 @@ void ps2_iop_init(void)
     LOAD_IRX(sdr);
 
     ps2_log("IOP: reset/rebuilt, %d base modules", sLoadedCount);
+}
+
+int ps2_iop_recover_generic_bdm_next(void)
+{
+    const uint32_t loadfile_rpc = 0x80000006u;
+    const uint32_t iopheap_rpc = 0x80000003u;
+
+    if (ps2_storage_data_device() != PS2_BOOT_BDM ||
+        !ps2_storage_requires_iop_preserve())
+        return 0;
+
+    if (!ps2_iop_rpc_available(loadfile_rpc) ||
+        !ps2_iop_rpc_available(iopheap_rpc))
+    {
+        ps2_log("IOP: generic BDM recovery unavailable (loader/heap RPC missing)");
+        return -1;
+    }
+
+    if (!sBdmRecoveryBaseReady)
+    {
+        ps2_log("IOP: inherited massN: is gone; rebuilding BDM core without IOP reset");
+
+        /* A reset launcher leaves legacy ioman/FileIO but removes the
+         * iomanX/BDM stack. Try fileXio first in case iomanX survived; if it
+         * did not, add iomanX and then the EE<->IOP bridge. */
+        if (!ps2_iop_rpc_available(FILEXIO_IRX))
+        {
+            recovery_load_irx("filexio", filexio_irx, size_filexio_irx);
+            if (!ps2_iop_rpc_available(FILEXIO_IRX))
+            {
+                recovery_load_irx("iomanx", iomanx_irx, size_iomanx_irx);
+                recovery_load_irx("filexio", filexio_irx, size_filexio_irx);
+            }
+        }
+
+        if (!ps2_iop_rpc_available(FILEXIO_IRX) ||
+            activate_filexio_client() < 0)
+        {
+            ps2_log("IOP: generic BDM recovery could not establish fileXio");
+            return -1;
+        }
+
+        /* Duplicate loads are tolerated here because the real proof is the
+         * sidecar DAT open, never module bookkeeping. */
+        recovery_load_irx("bdm", bdm_irx, size_bdm_irx);
+        recovery_load_irx("bdmfs_fatfs", bdmfs_fatfs_irx, size_bdmfs_fatfs_irx);
+        sBdmRecoveryBaseReady = 1;
+    }
+
+    /* Generic massN: does not encode its transport. Add one transport family
+     * at a time and let bootpath.c rediscover the real sidecar by relative
+     * path. massN numbering after recovery is deliberately ignored. */
+    switch (sBdmRecoveryStage++)
+    {
+    case 0:
+        ps2_log("IOP: generic BDM recovery stage USB");
+        recovery_load_irx("usbd_mini", usbd_mini_irx, size_usbd_mini_irx);
+        recovery_load_irx("usbmass_bd_mini", usbmass_bd_mini_irx, size_usbmass_bd_mini_irx);
+        return 1;
+
+    case 1:
+        ps2_log("IOP: generic BDM recovery stage MX4SIO");
+        /* MX4SIO hooks SIO2MAN when present. After a launcher-side IOP reset
+         * there is no live mass filesystem left to protect, so providing
+         * SIO2MAN here is safe and also prepares later controller use. */
+        recovery_load_irx("sio2man", sio2man_irx, size_sio2man_irx);
+        recovery_load_irx("mx4sio_bd", mx4sio_bd_irx, size_mx4sio_bd_irx);
+        return 1;
+
+    case 2:
+        ps2_log("IOP: generic BDM recovery stage iLink");
+        recovery_load_irx("iLinkman", iLinkman_irx, size_iLinkman_irx);
+        recovery_load_irx("IEEE1394_bd", IEEE1394_bd_irx, size_IEEE1394_bd_irx);
+        return 1;
+
+    case 3:
+        ps2_log("IOP: generic BDM recovery stage ATA");
+        recovery_load_irx("ps2dev9", ps2dev9_irx, size_ps2dev9_irx);
+        recovery_load_irx("ps2atad", ps2atad_irx, size_ps2atad_irx);
+        return 1;
+
+    default:
+        return 0;
+    }
 }
 
 static int pad_rpc_ready(void)
@@ -540,6 +661,36 @@ int ps2_iop_prepare_runtime_services(void)
     }
 
     return 0;
+}
+
+int ps2_iop_prepare_audio_services(void)
+{
+    const uint32_t sdr_rpc = 0x80000701u;
+
+    if (ps2_iop_rpc_available(sdr_rpc))
+    {
+        ps2_log("IOP: inherited SDR audio RPC ready");
+        return 1;
+    }
+
+    if (!ps2_storage_requires_iop_preserve())
+        return 0;
+
+    /* Audio is optional, but a keep-IOP launcher commonly omits the sound
+     * driver. Supply only libsd/sdr after storage and controllers are proven;
+     * neither module owns the filesystem transport. */
+    ps2_log("IOP: SDR RPC absent; lazy-loading libsd + sdr");
+    recovery_load_irx("libsd", libsd_irx, size_libsd_irx);
+    recovery_load_irx("sdr", sdr_irx, size_sdr_irx);
+
+    if (!ps2_iop_rpc_available(sdr_rpc))
+    {
+        ps2_log("IOP: SDR RPC still unavailable; audio stays silent");
+        return 0;
+    }
+
+    ps2_log("IOP: SDR audio RPC ready");
+    return 1;
 }
 
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)

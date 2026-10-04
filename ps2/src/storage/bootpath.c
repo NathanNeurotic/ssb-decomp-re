@@ -499,6 +499,52 @@ int ps2_storage_inherited_bdm_driver(char *out, size_t out_size)
 }
 
 
+int ps2_storage_recover_mass_sidecar(const char *probe_name)
+{
+    char relative[PATH_BUF_MAX];
+    const char *colon;
+    int slot;
+
+    if (sDataDevice != PS2_BOOT_BDM || probe_name == NULL || probe_name[0] == '\0')
+        return 0;
+
+    colon = strchr(sDataDir, ':');
+    if (colon == NULL)
+        return 0;
+
+    snprintf(relative, sizeof(relative), "%s", colon + 1);
+    if (relative[0] == '\0')
+        snprintf(relative, sizeof(relative), "/");
+
+    for (slot = 0; slot < 10; slot++)
+    {
+        char dir[PATH_BUF_MAX];
+        char probe[PATH_BUF_MAX + 64];
+        int fd;
+
+        if (relative[0] == '/' || relative[0] == '\\')
+            snprintf(dir, sizeof(dir), "mass%d:%s", slot, relative);
+        else
+            snprintf(dir, sizeof(dir), "mass%d:/%s", slot, relative);
+        ensure_directory_suffix(dir, sizeof(dir), PS2_BOOT_BDM);
+        snprintf(probe, sizeof(probe), "%s%s", dir, probe_name);
+
+        /* The real sidecar is the only authority. No transport ioctl is
+         * issued until after this exact file has opened successfully. */
+        fd = open(probe, O_RDONLY);
+        if (fd < 0)
+            continue;
+        close(fd);
+
+        snprintf(sDataDir, sizeof(sDataDir), "%s", dir);
+        ps2_log("storage: recovered generic BDM sidecar at %s", sDataDir);
+        return 1;
+    }
+
+    return 0;
+}
+
+
 int ps2_storage_resolve_data_root(const char *probe_name)
 {
     char relative[PATH_BUF_MAX];

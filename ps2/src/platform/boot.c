@@ -40,6 +40,8 @@ static int wait_for_boot_file(const char *name)
     char path[288];
     int i, fd = -1;
     int promotion_checked = 0;
+    int bdm_recovery_started = 0;
+    int next_bdm_stage_at = 10;
 
     for (i = 0; i < 200; i++)
     {
@@ -64,6 +66,22 @@ static int wait_for_boot_file(const char *name)
             return 1;
         }
 
+        /* massN: is only a mount slot, not a durable transport identity.
+         * Before rebuilding anything, look for the same relative DAT on any
+         * live mass slot. This also handles harmless slot renumbering. */
+        if (ps2_storage_data_device() == PS2_BOOT_BDM &&
+            ps2_storage_recover_mass_sidecar(name))
+        {
+            ps2_storage_path(path, sizeof(path), name);
+            fd = ps2_file_open_read(path);
+            if (fd >= 0)
+            {
+                ps2_file_close(fd);
+                ps2_log("boot: recovered %s after %d ms", path, i * 100);
+                return 1;
+            }
+        }
+
         /* A legacy FileIO client cannot see an iomanX-only BDM/PFS/MMCE
          * filesystem. On the first real DAT failure, promote the EE client to
          * the launcher's existing fileXio service (or add that bridge only)
@@ -79,10 +97,27 @@ static int wait_for_boot_file(const char *name)
             }
         }
 
+        if (ps2_storage_data_device() == PS2_BOOT_BDM && i >= next_bdm_stage_at)
+        {
+            int recovered = ps2_iop_recover_generic_bdm_next();
+
+            if (recovered > 0)
+            {
+                bdm_recovery_started = 1;
+                next_bdm_stage_at = i + 40; /* ~4 s for each transport to enumerate */
+                ps2_log("boot: waiting for recovered BDM transport");
+            }
+            else if (recovered == 0)
+            {
+                next_bdm_stage_at = 1000;
+            }
+        }
+
         if (ps2_storage_data_device() == PS2_BOOT_HOST)
         {
             break; /* host: is there or not */
         }
+        (void)bdm_recovery_started;
         ps2_delay_vblanks(6);
     }
     ps2_log("boot: %s not found", path);
@@ -195,6 +230,7 @@ int ps2_main(int argc, char *argv[])
                   ps2_storage_boot_dir());
     }
     ps2_save_init();
+    ps2_iop_prepare_audio_services();
     ps2_audio_init();
     ps2_render_thread_init();
 
