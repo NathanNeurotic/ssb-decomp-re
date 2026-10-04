@@ -13,6 +13,83 @@
 project: ssb64
 
 targets:
+  # BDM-enabled ATAD. The stock SDK ps2atad IRX does not register a BDM
+  # block device; internal exFAT support requires ATA_ENABLE_BDM.
+  - name: ata_bd
+    type: iop
+    sources: [iop/ata_bd/src/ps2atad.c]
+    include_dirs: [iop/ata_bd/src]
+    headers: [common, startup, stdio, loadcore, sysclib, threadman, dev9, bdm, atad]
+    defines: [ATA_USE_DEV9=1, ATA_GAMESTAR_WORKAROUND=1, ATA_ENABLE_BDM=1]
+    imports_lst: iop/ata_bd/src/imports.lst
+    exports_tab: iop/ata_bd/src/exports.tab
+
+  # launcHER's compact DEV9/ministack network stack. The submodule is pinned;
+  # PS2BUILD compiles these from source as normal IOP targets.
+  - name: udpfs_smap
+    type: iop
+    sources:
+      - vendor/launcHER/launcher/iop/udpfs/smap/src/main.c
+      - vendor/launcHER/launcher/iop/udpfs/smap/src/smap.c
+      - vendor/launcHER/launcher/iop/udpfs/smap/src/xfer.c
+    include_dirs:
+      - vendor/launcHER/launcher/iop/udpfs/smap/src
+      - vendor/launcHER/launcher/iop/udpfs/smap/include
+    headers: [common, startup, stdio, ioman, iomanx, intrman, loadcore, sysclib, threadman, timrman, dmacman, dev9]
+    cflags: [-mno-check-zero-division]
+    imports_lst: vendor/launcHER/launcher/iop/udpfs/smap/src/imports.lst
+    exports_tab: vendor/launcHER/launcher/iop/udpfs/smap/src/exports.tab
+
+  - name: udpfs_ministack
+    type: iop
+    sources:
+      - vendor/launcHER/launcher/iop/udpfs/ministack/src/main.c
+      - vendor/launcHER/launcher/iop/udpfs/ministack/src/ministack_eth.c
+      - vendor/launcHER/launcher/iop/udpfs/ministack/src/ministack_arp.c
+      - vendor/launcHER/launcher/iop/udpfs/ministack/src/ministack_ip.c
+      - vendor/launcHER/launcher/iop/udpfs/ministack/src/ministack_udp.c
+      - vendor/launcHER/launcher/iop/udpfs/ministack/src/udptty.c
+    include_dirs:
+      - vendor/launcHER/launcher/iop/udpfs/ministack/src
+      - vendor/launcHER/launcher/iop/udpfs/ministack/include
+      - vendor/launcHER/launcher/iop/udpfs/smap/include
+    headers: [common, startup, stdio, ioman, loadcore, sysclib, threadman]
+    cflags: [-mno-check-zero-division]
+    imports_lst: vendor/launcHER/launcher/iop/udpfs/ministack/src/imports.lst
+    exports_tab: vendor/launcHER/launcher/iop/udpfs/ministack/src/exports.tab
+
+  - name: udpfs_ioman
+    type: iop
+    sources:
+      - vendor/launcHER/launcher/iop/udpfs/udpfs/src/main.c
+      - vendor/launcHER/launcher/iop/udpfs/udpfs/src/udprdma.c
+      - vendor/launcHER/launcher/iop/udpfs/udpfs/src/udpfs_core.c
+      - vendor/launcHER/launcher/iop/udpfs/udpfs/src/udpfs_ioman.c
+    include_dirs:
+      - vendor/launcHER/launcher/iop/udpfs/udpfs/src
+      - vendor/launcHER/launcher/iop/udpfs/udpfs/include
+      - vendor/launcHER/launcher/iop/udpfs/smap/include
+      - vendor/launcHER/launcher/iop/udpfs/ministack/include
+    headers: [common, startup, stdio, ioman, loadcore, sysclib, threadman]
+    defines: [FEATURE_UDPFS_IOMAN, UDPRDMA_MAX_SOCKETS=1]
+    cflags: [-mno-check-zero-division]
+    imports_lst: vendor/launcHER/launcher/iop/udpfs/udpfs/src/imports.lst
+    exports_tab: vendor/launcHER/launcher/iop/udpfs/udpfs/src/exports.tab
+
+  - name: udpbd
+    type: iop
+    sources:
+      - vendor/launcHER/launcher/iop/udpfs/udpbd/src/main.c
+      - vendor/launcHER/launcher/iop/udpfs/udpbd/src/udpbd.c
+    include_dirs:
+      - vendor/launcHER/launcher/iop/udpfs/udpbd/src
+      - vendor/launcHER/launcher/iop/udpfs/udpbd/include
+      - vendor/launcHER/launcher/iop/udpfs/smap/include
+      - vendor/launcHER/launcher/iop/udpfs/ministack/include
+    headers: [common, startup, stdio, loadcore, sysclib, threadman, bdm]
+    cflags: [-mno-check-zero-division]
+    imports_lst: vendor/launcHER/launcher/iop/udpfs/udpbd/src/imports.lst
+
   - name: ssb_platform
     type: ee_lib
     sources:
@@ -230,4 +307,15 @@ targets:
       - bdmfs_fatfs
       - usbd_mini
       - usbmass_bd_mini
+      - mx4sio_bd_mini:mx4sio_bd
+      - iLinkman
+      - IEEE1394_bd_mini:IEEE1394_bd
+      - dev9:ps2dev9
+      - ata_bd:ps2atad
+      - hdd-osd:ps2hdd
+      - fs-osd:ps2fs
+      - udpfs_smap:smap
+      - udpfs_ministack:ministack
+      - udpfs_ioman
+      - udpbd
       - mmceman
