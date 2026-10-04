@@ -177,16 +177,16 @@ jobs:
           short_sha="${GITHUB_SHA::7}"
           built_at="$(date -u +'%Y-%m-%d %H:%M UTC')"
 
-          cat > nightly-notes.md <<EOF
-          Automated development build from `main`.
-
-          Commit: [`$short_sha`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})
-          Built: $built_at
-
-          `SSB64.DAT` is intentionally not included. Generate it locally from your own
-          Super Smash Bros. 64 US ROM with `ps2/tools/prepare_assets.sh`, then place
-          it beside `SSB64.ELF` or supply `--data=<directory>`.
-          EOF
+          {
+            echo 'Automated development build from `main`.'
+            echo
+            echo "Commit: [\`$short_sha\`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})"
+            echo "Built: $built_at"
+            echo
+            echo '`SSB64.DAT` is intentionally not included. Generate it locally from your own'
+            echo 'Super Smash Bros. 64 US ROM with `ps2/tools/prepare_assets.sh`, then place'
+            echo 'it beside `SSB64.ELF` or supply `--data=<directory>`.'
+          } > nightly-notes.md
 
           if gh release view nightly >/dev/null 2>&1; then
             gh release edit nightly \
