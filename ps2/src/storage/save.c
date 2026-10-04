@@ -17,7 +17,6 @@
 
 #include <kernel.h>
 #include <libmc.h>
-#include <loadfile.h>
 #include <string.h>
 
 #define SRAM_SIZE (32 * 1024)
@@ -180,7 +179,9 @@ void ps2_save_init(void)
     sLock = CreateSema(&sema);
     memset(sSram, 0, sizeof(sSram));
 
-    if (SifSearchModuleByName("mcserv") < 0 && SifSearchModuleByName("xfrmserv") < 0)
+    /* libmc waits forever for 0x80000400 when mcserv is absent.
+     * Probe first so saving can degrade cleanly on minimal launcher stacks. */
+    if (!ps2_iop_rpc_available(0x80000400u))
     {
         ps2_log("save: memory-card RPC unavailable, saving disabled");
     }
