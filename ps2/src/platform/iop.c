@@ -172,16 +172,16 @@ static int mount_hdd_partition(void)
 
 void ps2_iop_init(void)
 {
-    PS2BootDevice launch = ps2_storage_launch_device();
+    int preserve_iop = ps2_storage_requires_iop_preserve();
 
     sLoadedCount = 0;
     sIopWasReset = 0;
 
     SifInitRpc(0);
 
-    /* Keep host: alive so ps2link/PCSX2 hostfs remains usable.  All physical
-     * launch paths are rebuilt from a known IOP state. */
-    if (launch != PS2_BOOT_HOST)
+    /* host: and bare pfsN: data paths depend on services/mounts owned by the
+     * launcher.  Everything else is rebuilt from a known IOP state. */
+    if (!preserve_iop)
     {
         while (!SifIopReset("", 0))
         {
@@ -202,8 +202,10 @@ void ps2_iop_init(void)
         sbv_patch_fileio();
 
     LOAD_IRX(iomanx);
-    if (LOAD_IRX(filexio) == 0)
-        fileXioInit();
+    LOAD_IRX(filexio);
+    /* Even when the inherited IOP already had fileXio loaded and the duplicate
+     * module load is rejected, bind the EE RPC client to the live service. */
+    fileXioInit();
 
     LOAD_IRX(sio2man);
     LOAD_IRX(mtapman);
@@ -214,7 +216,7 @@ void ps2_iop_init(void)
     LOAD_IRX(sdr);
 
     ps2_log("IOP: %s, %d base modules",
-            sIopWasReset ? "reset" : "kept (host launch)", sLoadedCount);
+            sIopWasReset ? "reset" : "kept (inherited filesystem)", sLoadedCount);
 }
 
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
@@ -275,6 +277,19 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
     {
         static char hdd_args[] = "-o\0" "4\0" "-n\0" "20";
         static char pfs_args[] = "-o\0" "10\0" "-n\0" "40";
+
+        /* A bare pfsN: data path has no APA partition name to remount.  It is
+         * valid only when bootpath.c requested that the launcher's IOP/mount
+         * be preserved; in that case the filesystem is already ready. */
+        if (ps2_storage_hdd_mount_source()[0] == '\0')
+        {
+            if (ps2_storage_requires_iop_preserve())
+            {
+                ps2_log("IOP: using inherited PFS mount");
+                return 0;
+            }
+            return -1;
+        }
 
         if (LOAD_IRX(ps2dev9) < 0 || load_bdm_core() < 0 || LOAD_IRX(ps2atad) < 0)
             return -1;
