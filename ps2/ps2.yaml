@@ -13,6 +13,54 @@
 project: ssb64
 
 targets:
+  # Real-device IOP modules that are not guaranteed to exist in the
+  # ps2build package set are built from the vendored, pinned sources below.
+  - name: ata_bd
+    type: iop
+    sources: [iop/ata_bd/src/ps2atad.c]
+    include_dirs: [iop/ata_bd/src]
+    headers: &iop_headers [common, startup, stdio, ioman, iomanx, intrman, excepman, loadcore, sysmem, sysclib, threadman, timrman, dmacman, heaplib, sifcmd, sifman, modload, cdvd, dev9, smap, netman, bdm, usbd, sio2man, padman, mcman, secrman, sior, atad, libsd, spu2, vblank, poweroff, filexio]
+    defines: [ATA_USE_DEV9=1, ATA_GAMESTAR_WORKAROUND=1, ATA_ENABLE_BDM=1]
+    imports_lst: iop/ata_bd/src/imports.lst
+    exports_tab: iop/ata_bd/src/exports.tab
+
+  - name: smap_udpbd
+    type: iop
+    sources: [iop/smap_udpbd/src/main.c, iop/smap_udpbd/src/smap.c, iop/smap_udpbd/src/xfer.c, iop/smap_udpbd/src/ministack.c, iop/smap_udpbd/src/udpbd.c, iop/smap_udpbd/src/udptty.c]
+    include_dirs: [iop/smap_udpbd/src, iop/smap_udpbd/src/include]
+    headers: *iop_headers
+    cflags: [-mno-check-zero-division]
+    imports_lst: iop/smap_udpbd/src/imports.lst
+    exports_tab: iop/smap_udpbd/src/exports.tab
+
+  - name: udpfs_smap
+    type: iop
+    sources: [iop/udpfs_smap/src/main.c, iop/udpfs_smap/src/smap.c, iop/udpfs_smap/src/xfer.c]
+    include_dirs: [iop/udpfs_smap/src, iop/udpfs_smap/include]
+    headers: *iop_headers
+    cflags: [-mno-check-zero-division]
+    imports_lst: iop/udpfs_smap/src/imports.lst
+    exports_tab: iop/udpfs_smap/src/exports.tab
+
+  - name: udpfs_ministack
+    type: iop
+    sources: [iop/udpfs_ministack/src/main.c, iop/udpfs_ministack/src/ministack_arp.c, iop/udpfs_ministack/src/ministack_eth.c, iop/udpfs_ministack/src/ministack_ip.c, iop/udpfs_ministack/src/ministack_udp.c, iop/udpfs_ministack/src/udptty.c]
+    include_dirs: [iop/udpfs_ministack/src, iop/udpfs_ministack/include, iop/udpfs_smap/include]
+    headers: *iop_headers
+    cflags: [-mno-check-zero-division]
+    imports_lst: iop/udpfs_ministack/src/imports.lst
+    exports_tab: iop/udpfs_ministack/src/exports.tab
+
+  - name: udpfs_ioman
+    type: iop
+    sources: [iop/udpfs_ioman/src/main.c, iop/udpfs_ioman/src/udprdma.c, iop/udpfs_ioman/src/udpfs_core.c, iop/udpfs_ioman/src/udpfs_ioman.c]
+    include_dirs: [iop/udpfs_ioman/src, iop/udpfs_ioman/include, iop/udpfs_smap/include, iop/udpfs_ministack/include]
+    headers: *iop_headers
+    defines: [FEATURE_UDPFS_IOMAN, UDPRDMA_MAX_SOCKETS=1]
+    cflags: [-mno-check-zero-division]
+    imports_lst: iop/udpfs_ioman/src/imports.lst
+    exports_tab: iop/udpfs_ioman/src/exports.tab
+
   - name: ssb_platform
     type: ee_lib
     sources:
