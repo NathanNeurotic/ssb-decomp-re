@@ -52,6 +52,7 @@ DECLARE_IRX(bdmfs_fatfs);
 DECLARE_IRX(usbd_mini);
 DECLARE_IRX(usbmass_bd_mini);
 DECLARE_IRX(mmceman);
+DECLARE_IRX(cdvd);
 
 DECLARE_IRX(ps2dev9);
 DECLARE_IRX(ps2atad);
@@ -227,8 +228,10 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
     {
     case PS2_BOOT_HOST:
     case PS2_BOOT_MC:
-    case PS2_BOOT_CDROM:
         return 0;
+
+    case PS2_BOOT_CDROM:
+        return LOAD_IRX(cdvd);
 
     case PS2_BOOT_USB:
         if (load_bdm_core() < 0 || LOAD_IRX(usbd_mini) < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
