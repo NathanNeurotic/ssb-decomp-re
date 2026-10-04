@@ -29,6 +29,15 @@ typedef struct
 static udpfs_fd_t g_fds[UDPFS_MAX_HANDLES];
 static int g_udpfs_wd_tid = 0; /* lazy-connect / reconnect watchdog thread id */
 
+static void _invalidate_fds(void)
+{
+    int i;
+
+    for (i = 0; i < UDPFS_MAX_HANDLES; i++) {
+        g_fds[i].server_handle = -1;
+        g_fds[i].is_dir = 0;
+    }
+}
 
 /*
  * Helper: allocate a local file descriptor slot
@@ -91,8 +100,14 @@ static int udpfs_watchdog(void *arg)
 {
     (void)arg;
     while (1) {
-        if (!udpfs_core_is_connected())
-            udpfs_core_init();
+        if (!udpfs_core_is_connected()) {
+            if (udpfs_core_init() == 0) {
+                /* Server-side descriptors belong to the previous session.
+                 * Reusing them against a restarted server could target the
+                 * wrong file, so callers must reopen after reconnect. */
+                _invalidate_fds();
+            }
+        }
         DelayThread(1000000); /* 1s */
     }
     return 0;
@@ -100,14 +115,12 @@ static int udpfs_watchdog(void *arg)
 
 static int udpfs_init_dev(iomanX_iop_device_t *d)
 {
-    int i;
     iop_thread_t thinfo;
 
     M_DEBUG("%s()\n", __FUNCTION__);
 
     /* Initialize FD table */
-    for (i = 0; i < UDPFS_MAX_HANDLES; i++)
-        g_fds[i].server_handle = -1;
+    _invalidate_fds();
 
     /* First connect is best-effort ONLY: this runs inside AddDrv at module load, racing PHY
      * autonegotiation (the smap driver needs ~3 s before TX even enables) and the user's server
