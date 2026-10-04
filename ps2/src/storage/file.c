@@ -25,7 +25,10 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
     /* Large reads are split so a single request never blocks too long. */
     while (done < size)
     {
-        uint32_t chunk = ((size - done) > 0x40000u) ? 0x40000u : (size - done);
+        /* UDPFS has a 64 KiB protocol read ceiling, and the same bounded
+         * request size is friendlier to real BDM/fileXio drivers than the old
+         * 256 KiB RPC. */
+        uint32_t chunk = ((size - done) > 0x10000u) ? 0x10000u : (size - done);
         int n = (int)read(fd, out + done, chunk);
 
         if (n <= 0)
