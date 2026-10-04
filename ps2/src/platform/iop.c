@@ -93,44 +93,6 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
 #define LOAD_IRX(name) load_irx(#name, name##_irx, size_##name##_irx, NULL, 0)
 #define LOAD_IRX_ARGS(name, args, len) load_irx(#name, name##_irx, size_##name##_irx, args, len)
 
-/* Generic massN:/bare-pfs launches must keep the launcher's IOP alive.
- * Re-executing an IRX that is already resident is not a harmless no-op on
- * all real IOP stacks: some versions can block in module startup/RPC setup.
- * Query the resident module list first and only inject pieces that are
- * genuinely absent. */
-static int iop_module_present(const char *name1, const char *name2)
-{
-    int id;
-
-    if (name1 != NULL)
-    {
-        id = SifSearchModuleByName(name1);
-        if (id >= 0)
-            return 1;
-    }
-    if (name2 != NULL)
-    {
-        id = SifSearchModuleByName(name2);
-        if (id >= 0)
-            return 1;
-    }
-    return 0;
-}
-
-static int load_irx_if_missing(const char *label, void *buf, unsigned int size,
-                               const char *module_name1, const char *module_name2)
-{
-    if (iop_module_present(module_name1, module_name2))
-    {
-        ps2_log("IOP: keeping inherited %s", label);
-        return 0;
-    }
-    return load_irx(label, buf, size, NULL, 0);
-}
-
-#define LOAD_IRX_IF_MISSING(name, mod1, mod2) \
-    load_irx_if_missing(#name, name##_irx, size_##name##_irx, mod1, mod2)
-
 static int load_bdm_core(void)
 {
     if (LOAD_IRX(bdm) < 0)
@@ -243,19 +205,59 @@ static int mount_hdd_partition(void)
 
 void ps2_iop_init(void)
 {
-    int preserve_iop = ps2_storage_requires_iop_preserve();
+    int preserve_iop;
+    int inherited_filesystem_only = 0;
 
     sLoadedCount = 0;
     sIopWasReset = 0;
 
     SifInitRpc(0);
-    ps2_boot_stage("IOP: SIF RPC ready", 0x800000);
+    preserve_iop = ps2_storage_requires_iop_preserve();
 
-    /* host:, generic massN: and bare pfsN: data paths depend on services or
-     * mounts owned by the launcher. Everything else is rebuilt from a known
-     * IOP state. */
+    /* A generic massN: launch is only ambiguous while we still have the
+     * launcher's live mount. Bind to its fileXio service long enough to ask
+     * bdmfs which block-device driver backs that exact mass slot. If we can
+     * identify it, promote massN: to USB/ATA/MX4SIO/iLink/UDPBD and then do
+     * the same clean IOP reset/rebuild as an explicitly typed launch.
+     *
+     * This removes the fundamental problem seen on hardware: preserving an
+     * arbitrary launcher IOP and then trying to start duplicate base modules
+     * one by one. */
+    if (preserve_iop && ps2_storage_data_device() == PS2_BOOT_BDM)
+    {
+        ps2_boot_stage("IOP: identify mass transport", 0x806000);
+        SifLoadFileInit();
+        fileXioInit();
+
+        if (ps2_storage_promote_inherited_bdm())
+        {
+            fileXioExit();
+            SifLoadFileExit();
+            preserve_iop = 0;
+            ps2_boot_stage("IOP: mass transport identified", 0xA08000);
+        }
+        else
+        {
+            /* Legacy/non-BDM mass implementations may not expose the driver
+             * token. Keep their filesystem alive, but do not mutate that IOP
+             * with duplicate base IRXs. This fallback favors a working data
+             * path over guessing USB and destroying another transport. */
+            inherited_filesystem_only = 1;
+            ps2_log("IOP: mass transport opaque; preserving launcher IOP unchanged");
+        }
+    }
+    else if (preserve_iop && ps2_storage_data_device() != PS2_BOOT_HOST)
+    {
+        /* Bare pfsN: has the same reconstruction problem: argv contains the
+         * mount name but not the APA partition source. */
+        inherited_filesystem_only = 1;
+    }
+
+    /* host: and opaque inherited filesystems stay alive. Every transport that
+     * can be reconstructed starts from a known IOP state. */
     if (!preserve_iop)
     {
+        ps2_boot_stage("IOP: resetting", 0x800000);
         while (!SifIopReset("", 0))
         {
         }
@@ -268,57 +270,38 @@ void ps2_iop_init(void)
 
     SifLoadFileInit();
     SifInitIopHeap();
-    ps2_boot_stage("IOP: loadfile + heap ready", 0x804000);
 
     sbv_patch_enable_lmb();
     sbv_patch_disable_prefix_check();
     if (sIopWasReset)
         sbv_patch_fileio();
-    ps2_boot_stage("IOP: patches ready", 0x808000);
 
-    if (preserve_iop)
+    if (inherited_filesystem_only)
     {
-        /* Do not blindly start a second copy of launcher-owned modules.
-         * massN: is specifically the case that exposed this on hardware:
-         * the solid purple/pink stage screen meant we entered ps2_iop_init()
-         * but never returned from duplicate module/RPC startup. */
-        LOAD_IRX_IF_MISSING(iomanx, "IO/File_Manager", "IOX/File_Manager");
-        LOAD_IRX_IF_MISSING(filexio, "IOX/File_Manager_Rpc", NULL);
-    }
-    else
-    {
-        LOAD_IRX(iomanx);
-        LOAD_IRX(filexio);
+        /* fileXioInit was already bound above for generic mass. Bare PFS gets
+         * bound here. Crucially, do not execute any duplicate IRX modules on
+         * a launcher-owned IOP. */
+        fileXioInit();
+        ps2_log("IOP: inherited filesystem kept; base IRX injection skipped");
+        ps2_boot_stage("IOP: inherited stack ready", 0x008080);
+        return;
     }
 
-    /* Bind the EE client whether fileXio was inherited or loaded above. */
+    LOAD_IRX(iomanx);
+    LOAD_IRX(filexio);
     fileXioInit();
-    ps2_boot_stage("IOP: file RPC ready", 0x008000);
 
-    if (preserve_iop)
-    {
-        LOAD_IRX_IF_MISSING(sio2man, "sio2man", NULL);
-        LOAD_IRX_IF_MISSING(mtapman, "multitap_manager", NULL);
-        LOAD_IRX_IF_MISSING(padman, "padman", NULL);
-        LOAD_IRX_IF_MISSING(mcman, "mcman_cex", "mcman");
-        LOAD_IRX_IF_MISSING(mcserv, "mcserv", NULL);
-        LOAD_IRX_IF_MISSING(libsd, "freesd", "libsd");
-        LOAD_IRX_IF_MISSING(sdr, "sdr_driver", NULL);
-    }
-    else
-    {
-        LOAD_IRX(sio2man);
-        LOAD_IRX(mtapman);
-        LOAD_IRX(padman);
-        LOAD_IRX(mcman);
-        LOAD_IRX(mcserv);
-        LOAD_IRX(libsd);
-        LOAD_IRX(sdr);
-    }
+    LOAD_IRX(sio2man);
+    LOAD_IRX(mtapman);
+    LOAD_IRX(padman);
+    LOAD_IRX(mcman);
+    LOAD_IRX(mcserv);
+    LOAD_IRX(libsd);
+    LOAD_IRX(sdr);
 
+    ps2_log("IOP: %s, %d base modules",
+            sIopWasReset ? "reset/rebuilt" : "host preserved", sLoadedCount);
     ps2_boot_stage("IOP: base modules ready", 0x008080);
-    ps2_log("IOP: %s, %d newly loaded base modules",
-            sIopWasReset ? "reset" : "kept (inherited filesystem)", sLoadedCount);
 }
 
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
