@@ -125,6 +125,10 @@ const char *ps2_storage_hdd_mount_source(void);
 /* True when the selected data path depends on an inherited IOP filesystem
  * (host: or a bare pfsN: mount that cannot be reconstructed from argv[0]). */
 int ps2_storage_requires_iop_preserve(void);
+/* Resolve typed BDM launch identities (usb/ata/mx4sio/ilink/udpbd) to the
+ * actual massN: filesystem that contains probe_name. No-op for non-BDM data
+ * paths and explicit massN: paths. Returns 1 when usable/resolved. */
+int ps2_storage_resolve_data_root(const char *probe_name);
 int ps2_video_progressive(void);         /* 1 = 240p (ELF name contains "240p"), 0 = 480i */
 
 /* Boot-stage marker: shows a solid background colour (GS BGCOLOR with both
