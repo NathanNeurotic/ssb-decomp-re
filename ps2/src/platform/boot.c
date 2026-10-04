@@ -32,8 +32,8 @@ extern void ps2_overlay_state_init(void);
 
 #define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port"
 
-/* USB (and MMCE) storage appears asynchronously after its drivers load;
- * wait until a file next to the ELF can be opened (up to ~6 s). */
+/* Physical/network storage can appear asynchronously after its drivers load.
+ * Match launcHER's conservative real-hardware window: wait up to ~20 s. */
 static void wait_for_boot_file(const char *name)
 {
     extern void ps2_delay_vblanks(int n);
@@ -41,12 +41,12 @@ static void wait_for_boot_file(const char *name)
     int i, fd = -1;
 
     ps2_storage_path(path, sizeof(path), name);
-    for (i = 0; i < 60; i++)
+    for (i = 0; i < 200; i++)
     {
-        fd = open(path, O_RDONLY);
+        fd = ps2_file_open_read(path);
         if (fd >= 0)
         {
-            close(fd);
+            ps2_file_close(fd);
             ps2_log("boot: %s found after %d ms", path, i * 100);
             return;
         }
