@@ -563,6 +563,38 @@ static int pad_rpc_ready(void)
         (ps2_iop_rpc_available(pad1_old) && ps2_iop_rpc_available(pad2_old));
 }
 
+static int mtap_rpc_ready(void)
+{
+    const uint32_t mtap_open = 0x80000901u;
+    const uint32_t mtap_close = 0x80000902u;
+    const uint32_t mtap_conn = 0x80000903u;
+
+    return ps2_iop_rpc_available(mtap_open) &&
+           ps2_iop_rpc_available(mtap_close) &&
+           ps2_iop_rpc_available(mtap_conn);
+}
+
+static void prepare_optional_mtap_service(void)
+{
+    if (mtap_rpc_ready())
+    {
+        ps2_log("IOP: inherited multitap RPC ready");
+        return;
+    }
+
+    ps2_log("IOP: multitap RPC absent; lazy-loading mtapman");
+    if (lazy_load_bridge_irx("mtapman", mtapman_irx, size_mtapman_irx) < 0)
+    {
+        ps2_log("IOP: multitap service unavailable; continuing with two native ports");
+        return;
+    }
+
+    if (mtap_rpc_ready())
+        ps2_log("IOP: multitap RPC ready");
+    else
+        ps2_log("IOP: mtapman loaded but RPC unavailable; continuing without multitap");
+}
+
 static int sio2_fallback_is_safe(void)
 {
     PS2BootDevice dev = ps2_storage_data_device();
@@ -624,6 +656,7 @@ int ps2_iop_prepare_runtime_services(void)
         if (pad_rpc_ready())
         {
             ps2_log("IOP: inherited pad RPC ready");
+            prepare_optional_mtap_service();
             return 0;
         }
 
@@ -632,6 +665,7 @@ int ps2_iop_prepare_runtime_services(void)
             pad_rpc_ready())
         {
             ps2_log("IOP: pad RPC ready via inherited SIO2");
+            prepare_optional_mtap_service();
             return 0;
         }
 
@@ -657,6 +691,7 @@ int ps2_iop_prepare_runtime_services(void)
         }
 
         ps2_log("IOP: pad RPC ready after sio2man + padman");
+        prepare_optional_mtap_service();
     }
 
     return 0;
