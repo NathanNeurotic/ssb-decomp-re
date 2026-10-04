@@ -180,9 +180,9 @@ void ps2_save_init(void)
     sLock = CreateSema(&sema);
     memset(sSram, 0, sizeof(sSram));
 
-    if (SifSearchModuleByName("mcserv") < 0)
+    if (SifSearchModuleByName("mcserv") < 0 && SifSearchModuleByName("xfrmserv") < 0)
     {
-        ps2_log("save: mcserv unavailable, saving disabled");
+        ps2_log("save: memory-card RPC unavailable, saving disabled");
     }
     else if (mcInit(MC_TYPE_XMC) < 0)
     {
