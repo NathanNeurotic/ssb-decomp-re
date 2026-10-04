@@ -382,8 +382,7 @@ const char *ps2_storage_hdd_mount_source(void)
 
 int ps2_storage_requires_iop_preserve(void)
 {
-    return sDataNeedsExistingIop || sLaunchDevice == PS2_BOOT_HOST ||
-           sLaunchDevice == PS2_BOOT_BDM;
+    return sDataNeedsExistingIop;
 }
 
 static int bdm_driver_matches(PS2BootDevice dev, const char *driver)
