@@ -50,7 +50,7 @@ int handle_rx_udp(const uint8_t *hdr, uint16_t hdr_len)
     dport = ntohs(pkt->udp.port_dst);
 
     for (i = 0; i < UDP_MAX_PORTS; i++) {
-        if (dport == udp_ports[i].port_src)
+        if (udp_ports[i].handler != NULL && dport == udp_ports[i].port_src)
             return udp_ports[i].handler(&udp_ports[i], udp_ports[i].handler_arg, hdr, hdr_len);
     }
 
