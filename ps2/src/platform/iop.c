@@ -104,20 +104,56 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
 #define LOAD_IRX(name) load_irx(#name, name##_irx, size_##name##_irx, NULL, 0)
 #define LOAD_IRX_ARGS(name, args, len) load_irx(#name, name##_irx, size_##name##_irx, args, len)
 
+#define RPC_PROBE_SLOTS 16
+
+/* A NOWAIT bind needs storage that remains valid until the IOP replies. Keep a
+ * small static pool so a genuinely wedged request can time out without leaving
+ * an EE stack pointer behind for a late RPC completion. Completed slots are
+ * reused; a timed-out slot remains quarantined until sceSifCheckStatRpc()
+ * reports that the request has finally finished. */
+static SifRpcClientData_t sRpcProbe[RPC_PROBE_SLOTS] __attribute__((aligned(64)));
+static int sRpcProbeNext;
+
 int ps2_iop_rpc_available(uint32_t rpc_id)
 {
-    SifRpcClientData_t client __attribute__((aligned(64)));
+    SifRpcClientData_t *client = NULL;
+    int slot;
     int attempt;
 
-    memset(&client, 0, sizeof(client));
+    for (attempt = 0; attempt < RPC_PROBE_SLOTS; attempt++)
+    {
+        slot = (sRpcProbeNext + attempt) % RPC_PROBE_SLOTS;
+        if (!sceSifCheckStatRpc(&sRpcProbe[slot]))
+        {
+            client = &sRpcProbe[slot];
+            sRpcProbeNext = (slot + 1) % RPC_PROBE_SLOTS;
+            break;
+        }
+    }
+
+    if (client == NULL)
+    {
+        ps2_log("IOP: RPC probe pool exhausted for 0x%08x", (unsigned)rpc_id);
+        return 0;
+    }
+
+    memset(client, 0, sizeof(*client));
+
+    /* mode 0 is NOT a bounded probe: sceSifBindRpc() creates a semaphore and
+     * waits forever for SIF_CMD_RPC_END. That is exactly what the real console
+     * exposed when the SDR service was absent. Send one asynchronous bind and
+     * poll its packet state instead. */
+    if (sceSifBindRpc(client, (int)rpc_id, SIF_RPC_M_NOWAIT) < 0)
+        return 0;
+
     for (attempt = 0; attempt < 500; attempt++)
     {
-        if (sceSifBindRpc(&client, rpc_id, 0) < 0)
-            return 0;
-        if (client.server != NULL)
-            return 1;
+        if (!sceSifCheckStatRpc(client))
+            return client->server != NULL;
         DelayThread(1000);
     }
+
+    ps2_log("IOP: RPC probe 0x%08x timed out after 500 ms", (unsigned)rpc_id);
     return 0;
 }
 
@@ -712,6 +748,7 @@ static int load_rom_service(const char *label, const char *path)
      * used by the PS2SDK reference samples and avoids replacing low-level
      * hardware services with a second implementation when the BIOS already
      * supplies the canonical one. */
+    ps2_log("IOP: loading ROM %s from %s", label, path);
     id = SifLoadModule(path, 0, NULL);
     ps2_log("IOP: ROM %s load returned %d", label, id);
     return id;
@@ -767,6 +804,7 @@ int ps2_iop_prepare_audio_services(void)
 {
     const uint32_t sdr_rpc = 0x80000701u;
 
+    ps2_log("IOP: probing SDR RPC 0x%08x", (unsigned)sdr_rpc);
     if (ps2_iop_rpc_available(sdr_rpc))
     {
         ps2_log("IOP: inherited SDR audio RPC ready");

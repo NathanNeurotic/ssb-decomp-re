@@ -40,7 +40,6 @@ static int wait_for_boot_file(const char *name)
     char path[288];
     int i, fd = -1;
     int promotion_checked = 0;
-    int bdm_recovery_started = 0;
     int next_bdm_stage_at = 10;
 
     for (i = 0; i < 200; i++)
@@ -103,7 +102,6 @@ static int wait_for_boot_file(const char *name)
 
             if (recovered > 0)
             {
-                bdm_recovery_started = 1;
                 next_bdm_stage_at = i + 40; /* ~4 s for each transport to enumerate */
                 ps2_log("boot: waiting for recovered BDM transport");
             }
@@ -117,7 +115,6 @@ static int wait_for_boot_file(const char *name)
         {
             break; /* host: is there or not */
         }
-        (void)bdm_recovery_started;
         ps2_delay_vblanks(6);
     }
     ps2_log("boot: %s not found", path);

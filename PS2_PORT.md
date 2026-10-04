@@ -205,10 +205,10 @@ prepended) and the loop body is unrolled and resampled by a factor ~1 so it
 spans whole 28-sample blocks; the runtime multiplies the pitch by that
 factor. The 4.1 MiB set lives in EE RAM and samples are copied to SPU RAM
 (1.9 MiB cache, LRU) on first use. All register changes of a frame go to the
-IOP as one `sceSdProcBatch` via sdrdrv. Keep-IOP launches now lazily add
-`libsd` + `sdr` when the SDR RPC is absent, after storage and controller
-services have already been proven, so PCSX2 and minimalist launchers do not
-silently lose audio solely because they omitted the sound driver.
+IOP as one `sceSdProcBatch` via sdrdrv. Keep-IOP launches restore the SDR
+service only after storage and controllers are proven: BIOS `LIBSD` +
+`SDRDRV` are tried first, then the embedded SDR server against BIOS LIBSD,
+and embedded FreeSD + SDR is the final old-BIOS fallback.
 
 ### Input (`ps2/src/input/pad.c`)
 libpad + libmtap, up to four players (multitap on port 1, or port 1 + a
