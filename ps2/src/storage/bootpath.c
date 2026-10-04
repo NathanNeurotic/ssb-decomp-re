@@ -52,7 +52,9 @@ static PS2BootDevice detect_device(const char *path)
         return PS2_BOOT_UNKNOWN;
     if (starts_with_ci(path, "host"))
         return PS2_BOOT_HOST;
-    if (starts_with_ci(path, "mass") || starts_with_ci(path, "usb"))
+    if (starts_with_ci(path, "mass"))
+        return PS2_BOOT_BDM;
+    if (starts_with_ci(path, "usb"))
         return PS2_BOOT_USB;
     if (starts_with_ci(path, "mc"))
         return PS2_BOOT_MC;
@@ -110,23 +112,6 @@ static void ensure_directory_suffix(char *path, size_t size, PS2BootDevice dev)
         path[len] = sep;
         path[len + 1] = '\0';
     }
-}
-
-static int normalise_usb_path(const char *path, char *out, size_t out_size)
-{
-    const char *colon = strchr(path, ':');
-    int unit = 0;
-
-    if (colon == NULL)
-        return 0;
-
-    if (starts_with_ci(path, "mass") && path[4] >= '0' && path[4] <= '9')
-        unit = path[4] - '0';
-    else if (starts_with_ci(path, "usb") && path[3] >= '0' && path[3] <= '9')
-        unit = path[3] - '0';
-
-    snprintf(out, out_size, "mass%d:%s", unit, colon + 1);
-    return 1;
 }
 
 static int is_pfs_token(const char *p)
@@ -278,24 +263,30 @@ static int set_data_location(const char *path, int path_is_file)
         if (!normalise_hdd_path(path, tmp, sizeof(tmp), path_is_file))
             return 0;
     }
+    else if (dev == PS2_BOOT_BDM)
+    {
+        /* massN: names an already-mounted BDM filesystem but does not encode
+         * whether the transport is USB, ATA, MX4SIO, iLink, or network. Do
+         * not guess and destroy the correct stack with an IOP reset: inherit
+         * the launcher's mount exactly as supplied. */
+        sDataNeedsExistingIop = 1;
+        sDataNeedsBdmResolve = 0;
+        strncpy(tmp, path, sizeof(tmp) - 1);
+        tmp[sizeof(tmp) - 1] = '\0';
+        if (path_is_file)
+            strip_filename(tmp);
+        else
+            ensure_directory_suffix(tmp, sizeof(tmp), dev);
+        sHddMountSource[0] = '\0';
+    }
     else if (dev == PS2_BOOT_USB)
     {
         sDataNeedsExistingIop = 0;
-        /* massN: is already a filesystem path. usbN: is only a launch/
-         * transport identity on older BDM stacks, so keep it intact until
-         * the USB driver is loaded and resolve it to the matching massN:. */
-        if (starts_with_ci(path, "mass"))
-        {
-            if (!normalise_usb_path(path, tmp, sizeof(tmp)))
-                return 0;
-            sDataNeedsBdmResolve = 0;
-        }
-        else
-        {
-            strncpy(tmp, path, sizeof(tmp) - 1);
-            tmp[sizeof(tmp) - 1] = '\0';
-            sDataNeedsBdmResolve = 1;
-        }
+        /* usbN: is a typed transport identity on older BDM stacks. Resolve
+         * it to the matching massN: filesystem after the USB driver loads. */
+        strncpy(tmp, path, sizeof(tmp) - 1);
+        tmp[sizeof(tmp) - 1] = '\0';
+        sDataNeedsBdmResolve = 1;
         if (path_is_file)
             strip_filename(tmp);
         else
@@ -391,7 +382,8 @@ const char *ps2_storage_hdd_mount_source(void)
 
 int ps2_storage_requires_iop_preserve(void)
 {
-    return sDataNeedsExistingIop || sLaunchDevice == PS2_BOOT_HOST;
+    return sDataNeedsExistingIop || sLaunchDevice == PS2_BOOT_HOST ||
+           sLaunchDevice == PS2_BOOT_BDM;
 }
 
 static int bdm_driver_matches(PS2BootDevice dev, const char *driver)
@@ -494,7 +486,8 @@ const char *ps2_storage_device_name(PS2BootDevice dev)
     switch (dev)
     {
     case PS2_BOOT_HOST: return "host";
-    case PS2_BOOT_USB: return "usb/mass";
+    case PS2_BOOT_BDM: return "bdm/mass";
+    case PS2_BOOT_USB: return "usb";
     case PS2_BOOT_MC: return "memory card";
     case PS2_BOOT_ATA: return "ata-bdm";
     case PS2_BOOT_MX4SIO: return "mx4sio";
