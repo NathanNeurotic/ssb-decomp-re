@@ -251,11 +251,14 @@ void ps2_iop_init(void)
         sbv_patch_enable_lmb();
         sbv_patch_disable_prefix_check();
 
-        LOAD_IRX_IF_ABSENT(iomanx, "IO/File_Manager", "IOX/File_Manager", NULL);
-        LOAD_IRX_IF_ABSENT(filexio, "IOX/File_Manager_Rpc", NULL, NULL);
-
+        /* Never replace or add filesystem modules in sidecar mode. If the
+         * launcher used fileXio, bind the EE client to that exact live server;
+         * otherwise leave the inherited filesystem namespace untouched and
+         * let the subsequent sidecar open report whether it is reachable. */
         if (module_present_any("IOX/File_Manager_Rpc", NULL, NULL))
             fileXioInit();
+        else
+            ps2_log("IOP: inherited fileXio RPC not present");
 
         /* Do not touch controller/card/audio services yet. First prove that
          * the inherited sidecar filesystem can actually open SSB64.DAT, then
@@ -313,14 +316,12 @@ int ps2_iop_prepare_runtime_services(void)
     if (LOAD_IRX_IF_ABSENT(padman, "padman", NULL, NULL) < 0)
         failed = 1;
 
-    /* Multitap support is optional. pad.c will simply use the two native
-     * controller ports if mtapman could not be provided. */
-    LOAD_IRX_IF_ABSENT(mtapman, "multitap_manager", NULL, NULL);
+    /* Do not add multitap or memory-card modules to an inherited SIO2 stack.
+     * They are optional: pad.c falls back to the native ports and save.c
+     * disables persistence if the launch environment did not provide MC RPC. */
 
-    /* Saves and audio degrade gracefully if these services cannot be added;
-     * their consumers verify the module before binding RPC. */
-    LOAD_IRX_IF_ABSENT(mcman, "mcman_cex", "mcman_dex", "mcman");
-    LOAD_IRX_IF_ABSENT(mcserv, "mcserv", "xfrmserv", NULL);
+    /* Audio is independent of the storage namespace. Add its RPC only when
+     * genuinely absent; spu.c still verifies sdr_driver before binding. */
     LOAD_IRX_IF_ABSENT(libsd, "freesd", "libsd", "LIBSD");
     LOAD_IRX_IF_ABSENT(sdr, "sdr_driver", NULL, NULL);
 
