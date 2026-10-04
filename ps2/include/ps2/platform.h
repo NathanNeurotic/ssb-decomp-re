@@ -127,11 +127,6 @@ const char *ps2_storage_hdd_mount_source(void);
  * The normal sidecar contract (SSB64.DAT beside the ELF) always does this;
  * explicit --data= can opt into a separately reconstructed device stack. */
 int ps2_storage_requires_iop_preserve(void);
-/* While the launcher's generic massN: mount is still alive, identify the
- * backing BDM transport and promote the data device to a reconstructable
- * typed device. Returns 1 when promotion succeeded, 0 when the mount is not
- * generic BDM or its transport cannot be identified safely. */
-int ps2_storage_promote_inherited_bdm(void);
 /* Resolve typed BDM launch identities (usb/ata/mx4sio/ilink/udpbd) to the
  * actual massN: filesystem that contains probe_name. Generic massN: paths
  * deliberately keep the inherited launcher IOP and are already usable. */
