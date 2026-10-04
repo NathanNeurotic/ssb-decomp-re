@@ -294,8 +294,8 @@ targets:
       - udpfs_ioman
 
       # APA/PFS HDD.
-      - ps2hdd_osd:ps2hdd
-      - fs-osd:ps2fs
+      - apa:ps2hdd
+      - fs:ps2fs
       - secrsif
 
       # Optical filesystem for cdrom0: asset-pack launches.
