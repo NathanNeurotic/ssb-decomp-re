@@ -93,32 +93,22 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
 #define LOAD_IRX(name) load_irx(#name, name##_irx, size_##name##_irx, NULL, 0)
 #define LOAD_IRX_ARGS(name, args, len) load_irx(#name, name##_irx, size_##name##_irx, args, len)
 
-static int module_present_any(const char *a, const char *b, const char *d)
+int ps2_iop_rpc_available(uint32_t rpc_id)
 {
-    if (a != NULL && SifSearchModuleByName(a) >= 0)
-        return 1;
-    if (b != NULL && SifSearchModuleByName(b) >= 0)
-        return 1;
-    if (d != NULL && SifSearchModuleByName(d) >= 0)
-        return 1;
+    SifRpcClientData_t client __attribute__((aligned(64)));
+    int attempt;
+
+    memset(&client, 0, sizeof(client));
+    for (attempt = 0; attempt < 50; attempt++)
+    {
+        if (sceSifBindRpc(&client, rpc_id, 0) < 0)
+            return 0;
+        if (client.server != NULL)
+            return 1;
+        DelayThread(1000);
+    }
     return 0;
 }
-
-static int load_irx_if_absent(const char *label, void *buf, unsigned int size,
-                              const char *a, const char *b, const char *d)
-{
-    if (module_present_any(a, b, d))
-    {
-        ps2_log("IOP: inherited %s", label);
-        return 0;
-    }
-
-    ps2_log("IOP: %s missing; loading local copy", label);
-    return load_irx(label, buf, size, NULL, 0);
-}
-
-#define LOAD_IRX_IF_ABSENT(name, a, b, d) \
-    load_irx_if_absent(#name, name##_irx, size_##name##_irx, a, b, d)
 
 static int load_bdm_core(void)
 {
@@ -237,37 +227,38 @@ void ps2_iop_init(void)
     sLoadedCount = 0;
     sIopWasReset = 0;
 
+    /* Every child initializes its own EE-side SIF RPC client state. This does
+     * not reset or alter the inherited IOP. */
     SifInitRpc(0);
 
     if (preserve_iop)
     {
-        /* Sidecar mode: the filesystem that loaded this ELF is the filesystem
-         * that owns SSB64.DAT. Keep it alive. Do not reboot the IOP and do not
-         * reload storage drivers. Only fill in runtime services that are
-         * genuinely absent, using their actual IRX module IDs to avoid the
-         * duplicate-module hangs seen on hardware. */
-        SifLoadFileInit();
-        SifInitIopHeap();
-        sbv_patch_enable_lmb();
-        sbv_patch_disable_prefix_check();
+        /* Sidecar contract: the launcher already proved this filesystem by
+         * loading SSB64.ELF from it. Do not initialize loadfile/iopheap, apply
+         * SBV patches, query the module table, reset the IOP, or inject any
+         * IRX here. Those operations were exactly what made otherwise-live
+         * MMCE/BDM launch stacks hang on hardware.
+         *
+         * The only EE-side binding we need before opening the adjacent DAT is
+         * fileXio. Probe its RPC service with a finite timeout first because
+         * fileXioInit() itself waits forever for a missing server. */
+        ps2_log("IOP: keeping launcher sidecar stack untouched");
+        if (!ps2_iop_rpc_available(FILEXIO_IRX))
+        {
+            ps2_log("IOP: inherited fileXio RPC is unavailable");
+            return;
+        }
 
-        /* Never replace or add filesystem modules in sidecar mode. If the
-         * launcher used fileXio, bind the EE client to that exact live server;
-         * otherwise leave the inherited filesystem namespace untouched and
-         * let the subsequent sidecar open report whether it is reachable. */
-        if (module_present_any("IOX/File_Manager_Rpc", NULL, NULL))
-            fileXioInit();
+        ps2_log("IOP: binding inherited fileXio RPC");
+        if (fileXioInit() < 0)
+            ps2_log("IOP: fileXio EE binding failed");
         else
-            ps2_log("IOP: inherited fileXio RPC not present");
-
-        /* Do not touch controller/card/audio services yet. First prove that
-         * the inherited sidecar filesystem can actually open SSB64.DAT, then
-         * add only any missing runtime services with the GS log visible. */
-        ps2_log("IOP: inherited sidecar filesystem kept");
+            ps2_log("IOP: inherited fileXio RPC ready");
         return;
     }
 
-    /* Explicit cross-device --data mode: rebuild from a known IOP state. */
+    /* Explicit cross-device --data mode is the only path that owns the IOP.
+     * It starts from a clean state and loads one known stack. */
     fileXioExit();
     SifExitRpc();
     SifInitRpc(0);
@@ -303,30 +294,13 @@ void ps2_iop_init(void)
     ps2_log("IOP: reset/rebuilt, %d base modules", sLoadedCount);
 }
 
-
 int ps2_iop_prepare_runtime_services(void)
 {
-    int failed = 0;
-
-    if (!ps2_storage_requires_iop_preserve())
-        return 0; /* clean-reset path loaded the full base stack already */
-
-    if (LOAD_IRX_IF_ABSENT(sio2man, "sio2man", "sio2man_logger", NULL) < 0)
-        failed = 1;
-    if (LOAD_IRX_IF_ABSENT(padman, "padman", NULL, NULL) < 0)
-        failed = 1;
-
-    /* Do not add multitap or memory-card modules to an inherited SIO2 stack.
-     * They are optional: pad.c falls back to the native ports and save.c
-     * disables persistence if the launch environment did not provide MC RPC. */
-
-    /* Audio is independent of the storage namespace. Add its RPC only when
-     * genuinely absent; spu.c still verifies sdr_driver before binding. */
-    LOAD_IRX_IF_ABSENT(libsd, "freesd", "libsd", "LIBSD");
-    LOAD_IRX_IF_ABSENT(sdr, "sdr_driver", NULL, NULL);
-
-    ps2_log("IOP: inherited runtime services prepared (%d module(s) added)", sLoadedCount);
-    return failed ? -1 : 0;
+    /* Normal sidecar launches never mutate the inherited IOP. Input/save/audio
+     * consumers perform bounded RPC probes and either use the launcher's
+     * service or degrade cleanly. Explicit --data builds the complete stack
+     * in ps2_iop_init(), so nothing is needed here either. */
+    return 0;
 }
 
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
