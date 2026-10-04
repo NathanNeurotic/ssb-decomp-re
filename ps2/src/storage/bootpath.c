@@ -40,6 +40,7 @@ static char sHddMountSource[HDD_SOURCE_MAX] = "";
 static int sProgressive;
 static int sDataNeedsExistingIop;
 static int sDataNeedsBdmResolve;
+static int sSidecarMode;
 
 static int starts_with_ci(const char *s, const char *prefix)
 {
@@ -322,6 +323,7 @@ void ps2_storage_set_boot_path(const char *argv0)
     sHddMountSource[0] = '\0';
     sDataNeedsExistingIop = 0;
     sDataNeedsBdmResolve = 0;
+    sSidecarMode = 1;
 
     if (argv0 == NULL || argv0[0] == '\0')
     {
@@ -348,12 +350,26 @@ void ps2_storage_set_boot_path(const char *argv0)
         sDataDevice = PS2_BOOT_UNKNOWN;
         sDataDir[0] = '\0';
     }
+    else
+    {
+        /* Normal contract: SSB64.DAT is a sidecar beside the ELF. The launcher
+         * necessarily had this exact filesystem alive in order to load us, so
+         * keep that working mount instead of tearing it down and guessing how
+         * to reconstruct it. This is the same keep-IOP principle used by
+         * RiptOPL's sidecar-driven Ember handoff. */
+        sDataNeedsExistingIop = 1;
+        sDataNeedsBdmResolve = 0;
+    }
 }
 
 int ps2_storage_set_data_path(const char *path)
 {
     if (path == NULL || path[0] == '\0')
         return 0;
+
+    /* An explicit --data override opts out of the sidecar contract and uses
+     * the typed reconstruction rules below. */
+    sSidecarMode = 0;
     return set_data_location(path, 0);
 }
 
@@ -384,7 +400,7 @@ const char *ps2_storage_hdd_mount_source(void)
 
 int ps2_storage_requires_iop_preserve(void)
 {
-    return sDataNeedsExistingIop;
+    return sSidecarMode || sDataNeedsExistingIop;
 }
 
 static PS2BootDevice bdm_device_for_driver(const char *driver)
