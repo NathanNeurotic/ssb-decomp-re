@@ -69,13 +69,13 @@ static PS2BootDevice detect_device(const char *path)
         return PS2_BOOT_UDPBD;
     if (starts_with_ci(path, "udpfs"))
         return PS2_BOOT_UDPFS;
-    if (starts_with_ci(path, "hdd") || starts_with_ci(path, "pfs") ||
-        path[0] == '+' || starts_with_ci(path, "__") || strstr(path, ":pfs") != NULL)
-        return PS2_BOOT_HDD;
     if (starts_with_ci(path, "mmce"))
         return PS2_BOOT_MMCE;
     if (starts_with_ci(path, "cdrom"))
         return PS2_BOOT_CDROM;
+    if (starts_with_ci(path, "hdd") || starts_with_ci(path, "pfs") ||
+        path[0] == '+' || starts_with_ci(path, "__") || strstr(path, ":pfs") != NULL)
+        return PS2_BOOT_HDD;
 
     /* "bdm:" alone is intentionally ambiguous (USB/MX4SIO/iLink/ATA/UDPBD). */
     return PS2_BOOT_UNKNOWN;
