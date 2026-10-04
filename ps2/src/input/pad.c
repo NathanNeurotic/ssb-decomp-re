@@ -16,6 +16,7 @@
 #include <kernel.h>
 #include <libmtap.h>
 #include <libpad.h>
+#include <loadfile.h>
 #include <sifrpc.h>
 #include <string.h>
 
@@ -141,10 +142,19 @@ void ps2_input_init(void)
 {
     int i;
 
-    mtapInit();
+    if (SifSearchModuleByName("multitap_manager") >= 0)
+    {
+        mtapInit();
+        sMtap[0] = detect_multitap(0);
+        sMtap[1] = detect_multitap(1);
+    }
+    else
+    {
+        sMtap[0] = sMtap[1] = 0;
+        ps2_log("input: mtapman unavailable; using native controller ports");
+    }
+
     padInit(0);
-    sMtap[0] = detect_multitap(0);
-    sMtap[1] = detect_multitap(1);
     assign_slots();
 
     for (i = 0; i < PS2_INPUT_MAX_PLAYERS; i++)
