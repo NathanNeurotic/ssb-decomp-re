@@ -12,13 +12,19 @@ int _start(int argc, char *argv[])
 {
     int result;
 
-    if ((result = smap_init(argc, argv)) < 0) {
-        M_DEBUG("smap: smap_init -> %d\n", result);
+    /* Claim the export namespace before smap_init installs IRQ/thread state.
+     * A duplicate load must have no hardware side effects. */
+    if (RegisterLibraryEntries(&_exp_smap) != 0) {
+        M_DEBUG("smap: module already loaded\n");
         return MODULE_NO_RESIDENT_END;
     }
 
-    if (RegisterLibraryEntries(&_exp_smap) != 0) {
-        M_DEBUG("smap: module already loaded\n");
+    result = smap_init(argc, argv);
+    if (result < 0) {
+        M_DEBUG("smap: smap_init -> %d\n", result);
+        /* smap_init cleans up any thread/event setup that fails internally;
+         * release the namespace so a later load can retry. */
+        ReleaseLibraryEntries(&_exp_smap);
         return MODULE_NO_RESIDENT_END;
     }
 
