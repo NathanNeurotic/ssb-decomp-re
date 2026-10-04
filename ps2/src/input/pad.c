@@ -16,7 +16,6 @@
 #include <kernel.h>
 #include <libmtap.h>
 #include <libpad.h>
-#include <loadfile.h>
 #include <sifrpc.h>
 #include <string.h>
 
@@ -86,6 +85,32 @@ static PS2InputState sState[PS2_INPUT_MAX_PLAYERS];
 static uint16_t sRawHeld[PS2_INPUT_MAX_PLAYERS];
 static int sInitDone;
 
+#define PAD_RPC_ID1_NEW 0x80000100u
+#define PAD_RPC_ID2_NEW 0x80000101u
+#define PAD_RPC_ID1_OLD 0x8000010Fu
+#define PAD_RPC_ID2_OLD 0x8000011Fu
+#define MTAP_RPC_OPEN   0x80000901u
+#define MTAP_RPC_CLOSE  0x80000902u
+#define MTAP_RPC_CONN   0x80000903u
+
+static int pad_rpc_pair_available(void)
+{
+    if (ps2_iop_rpc_available(PAD_RPC_ID1_NEW) &&
+        ps2_iop_rpc_available(PAD_RPC_ID2_NEW))
+        return 1;
+    if (ps2_iop_rpc_available(PAD_RPC_ID1_OLD) &&
+        ps2_iop_rpc_available(PAD_RPC_ID2_OLD))
+        return 1;
+    return 0;
+}
+
+static int mtap_rpc_available(void)
+{
+    return ps2_iop_rpc_available(MTAP_RPC_OPEN) &&
+           ps2_iop_rpc_available(MTAP_RPC_CLOSE) &&
+           ps2_iop_rpc_available(MTAP_RPC_CONN);
+}
+
 static void assign_slots(void)
 {
     int i;
@@ -142,14 +167,17 @@ void ps2_input_init(void)
 {
     int i;
 
-    if (SifSearchModuleByName("multitap_manager") >= 0)
-        mtapInit();
+    if (!pad_rpc_pair_available())
+        ps2_panic("padman RPC unavailable in inherited launcher IOP");
 
-    /* padGetSlotMax() used by multitap detection is a libpad RPC, so padInit
-     * must be complete before detect_multitap() calls it. */
-    padInit(0);
+    /* libpad's own bind loops are unbounded, so only enter them after both
+     * RPC endpoints have answered our finite probes. */
+    if (padInit(0) < 0)
+        ps2_panic("padman RPC bind failed");
 
-    if (SifSearchModuleByName("multitap_manager") >= 0)
+    /* Multitap is optional. Probe every endpoint first because mtapInit()
+     * otherwise waits forever when only part of mtapman is present. */
+    if (mtap_rpc_available() && mtapInit() >= 0)
     {
         sMtap[0] = detect_multitap(0);
         sMtap[1] = detect_multitap(1);
@@ -157,7 +185,7 @@ void ps2_input_init(void)
     else
     {
         sMtap[0] = sMtap[1] = 0;
-        ps2_log("input: mtapman unavailable; using native controller ports");
+        ps2_log("input: mtap RPC unavailable; using native controller ports");
     }
     assign_slots();
 
