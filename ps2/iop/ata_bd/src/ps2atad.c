@@ -193,6 +193,7 @@ static ata_cmd_state_t atad_cmd_state;
 #define ATA_BD_SECTOR_SIZE 512
 static struct block_device g_ata_bd[NUM_DEVICES];
 static u8 g_ata_bd_connected[NUM_DEVICES]; /* FORK: bdm_connect_bd at most once per unit */
+static s8 g_ata_bd_apa_state[NUM_DEVICES] = {-1, -1}; /* -1 unknown, 0 not APA, 1 APA */
 #endif
 
 #ifdef ATA_USE_DEV9
@@ -1271,6 +1272,11 @@ static int ata_init_devices(ata_devinfo_t *devinfo)
     int i, res;
     u32 total_sectors_nonlba48, total_sectors_lba48;
 
+#ifdef ATA_ENABLE_BDM
+    for (i = 0; i < NUM_DEVICES; i++)
+        g_ata_bd_apa_state[i] = -1;
+#endif
+
     /* Probe devices */
     if (!ata_dvrp_workaround) {
         for (i = 0; i < 2; i++) {
@@ -1611,9 +1617,13 @@ static int ata_bd_write_hits_apa_reserved(int device, u64 sector, u16 count)
 
     if (count == 0 || sector >= ATA_BD_APA_RESERVED_SECTORS)
         return 0;
+    if (sector != 0 && g_ata_bd_apa_state[device] >= 0)
+        return g_ata_bd_apa_state[device];
     if (ata_device_sector_io64(device, lba0, 0, 1, ATA_DIR_READ) != 0)
         return 1;
-    return lba0[4] == 'A' && lba0[5] == 'P' && lba0[6] == 'A' && lba0[7] == 0;
+    g_ata_bd_apa_state[device] =
+        (lba0[4] == 'A' && lba0[5] == 'P' && lba0[6] == 'A' && lba0[7] == 0);
+    return g_ata_bd_apa_state[device];
 }
 
 static int ata_bd_write(struct block_device *bd, u64 sector, const void *buffer, u16 count)
@@ -1627,6 +1637,9 @@ static int ata_bd_write(struct block_device *bd, u64 sector, const void *buffer,
     if (ata_device_sector_io64(bd->devNr, (void *)buffer, sector, count, ATA_DIR_WRITE) != 0) {
         return -EIO;
     }
+
+    if (sector == 0)
+        g_ata_bd_apa_state[bd->devNr] = -1;
 
     return count;
 }
