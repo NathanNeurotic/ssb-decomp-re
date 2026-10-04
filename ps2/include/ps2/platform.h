@@ -99,7 +99,8 @@ typedef enum PS2BootDevice
 {
     PS2_BOOT_UNKNOWN,
     PS2_BOOT_HOST,       /* host: (ps2link / PCSX2 host fs) */
-    PS2_BOOT_USB,        /* usb:/massN: -> USB BDM */
+    PS2_BOOT_BDM,        /* generic massN: inherited BDM filesystem */
+    PS2_BOOT_USB,        /* explicit usbN: transport identity */
     PS2_BOOT_MC,         /* mc0:/mc1: */
     PS2_BOOT_ATA,        /* ata: BDM (internal/exFAT) */
     PS2_BOOT_MX4SIO,     /* mx4sio: BDM */
@@ -126,8 +127,8 @@ const char *ps2_storage_hdd_mount_source(void);
  * (host: or a bare pfsN: mount that cannot be reconstructed from argv[0]). */
 int ps2_storage_requires_iop_preserve(void);
 /* Resolve typed BDM launch identities (usb/ata/mx4sio/ilink/udpbd) to the
- * actual massN: filesystem that contains probe_name. No-op for non-BDM data
- * paths and explicit massN: paths. Returns 1 when usable/resolved. */
+ * actual massN: filesystem that contains probe_name. Generic massN: paths
+ * deliberately keep the inherited launcher IOP and are already usable. */
 int ps2_storage_resolve_data_root(const char *probe_name);
 int ps2_video_progressive(void);         /* 1 = 240p (ELF name contains "240p"), 0 = 480i */
 
