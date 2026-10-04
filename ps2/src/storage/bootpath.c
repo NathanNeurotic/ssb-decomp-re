@@ -158,9 +158,34 @@ static int normalise_hdd_path(const char *path, char *out, size_t out_size, int 
     const char *slash;
     const char *bslash;
     const char *pfs;
+    const char *runtime_pfs;
+    char pfs_mount[8] = "pfs0:";
     size_t part_len;
 
     sHddMountSource[0] = '\0';
+
+    /* A sidecar launch can include the launcher's already-mounted PFS slot
+     * (for example hdd0:+OPL:pfs2:/APPS/...). Preserve that runtime mount
+     * name instead of canonicalising it to pfs0:, because sidecar mode keeps
+     * the inherited IOP and does not remount the partition. Explicit --data
+     * directory paths still canonicalise to pfs0: for our own rebuilt stack. */
+    runtime_pfs = path_is_file ? find_pfs_token(path) : NULL;
+    if (runtime_pfs != NULL)
+    {
+        const char *end = runtime_pfs + 3;
+        size_t len;
+
+        while (*end >= '0' && *end <= '9')
+            end++;
+        if (*end == ':')
+            end++;
+        len = (size_t)(end - runtime_pfs);
+        if (len > 0 && len < sizeof(pfs_mount))
+        {
+            memcpy(pfs_mount, runtime_pfs, len);
+            pfs_mount[len] = '\0';
+        }
+    }
 
     if (starts_with_ci(p, "pfs"))
     {
@@ -229,11 +254,11 @@ static int normalise_hdd_path(const char *path, char *out, size_t out_size, int 
     }
 
     if (*sub == '\0')
-        snprintf(out, out_size, "pfs0:/");
+        snprintf(out, out_size, "%s/", pfs_mount);
     else if (*sub == '/' || *sub == '\\')
-        snprintf(out, out_size, "pfs0:%s", sub);
+        snprintf(out, out_size, "%s%s", pfs_mount, sub);
     else
-        snprintf(out, out_size, "pfs0:/%s", sub);
+        snprintf(out, out_size, "%s/%s", pfs_mount, sub);
 
     /* PFS accepts forward slashes consistently. */
     {
