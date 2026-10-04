@@ -367,10 +367,13 @@ int ps2_storage_set_data_path(const char *path)
     if (path == NULL || path[0] == '\0')
         return 0;
 
-    /* An explicit --data override opts out of the sidecar contract and uses
-     * the typed reconstruction rules below. */
+    /* An explicit --data override opts out of the sidecar contract only after
+     * it has been parsed successfully. An invalid override must not silently
+     * destroy the valid inherited sidecar mode before boot can report it. */
+    if (!set_data_location(path, 0))
+        return 0;
     sSidecarMode = 0;
-    return set_data_location(path, 0);
+    return 1;
 }
 
 PS2BootDevice ps2_storage_launch_device(void)
