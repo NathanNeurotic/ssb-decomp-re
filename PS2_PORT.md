@@ -35,10 +35,40 @@ ps2/tools/prepare_assets.sh          # once per ROM / asset change -> ps2/build/
 cd ps2 && ps2build build             # -> ps2/build/bin/ssb64.elf
 ```
 
-Copy `ssb64.elf` and `SSB64.DAT` to the same directory on any boot device
-(USB mass storage, memory card, MMCE, or `host:` in PCSX2) and run the ELF.
-The boot code finds the pack next to the ELF from `argv[0]`; no path is
-hard-coded.
+Copy `ssb64.elf` and `SSB64.DAT` to the same directory and run the ELF.
+The boot layer derives the launch/data device from `argv[0]` and supports
+`host:`, generic `massN:` BDM mounts, explicit USB, internal ATA/exFAT BDM,
+MX4SIO, iLink, MMCE, APA/PFS HDD, UDPBD, UDPFS, memory card and `cdrom0:`.
+
+For launchers that expose a BDM device only as `massN:`, the port deliberately
+**keeps the inherited IOP/filesystem alive instead of guessing that `mass:`
+means USB**. Explicit transport identities such as `usb0:`, `ata0:`,
+`mx4sio0:`, `ilink0:` and `udpbd:` are rebuilt from a clean IOP and then
+resolved to the actual `massN:` filesystem containing `SSB64.DAT`.
+
+The asset pack can also live on a different device from the ELF:
+
+```text
+ssb64.elf --data=usb0:/SSB64/
+ssb64.elf --data=mmce0:/SSB64/
+ssb64.elf --data=hdd0:+OPL:pfs:/SSB64/
+ssb64.elf --data=udpfs:/SSB64/
+```
+
+This is particularly useful when the launcher lives on a memory card, since
+`SSB64.DAT` is much larger than a standard 8 MiB card. For cross-device
+`--data=` use, prefer a typed transport such as `usb0:`, `ata0:`,
+`mx4sio0:` or `ilink0:`. A generic `massN:` data path is only usable when
+the launcher has already mounted that exact BDM filesystem; `massN:` does not
+encode which transport driver would be needed to recreate it.
+
+Network modes inherit
+the PS2's address from `mc0:/SYS-CONF/IPCONFIG.DAT` or
+`mc1:/SYS-CONF/IPCONFIG.DAT`. UDPBD/UDPFS use their legacy unauthenticated
+LAN discovery protocols, so treat them as trusted-LAN transports rather than
+Internet-facing services; after discovery this port binds data replies to the
+selected peer. A bare `bdm:` path is rejected because it does not identify a
+transport or an existing filesystem mount.
 
 Testing in PCSX2 (Windows helpers, default Pad 1 keyboard bindings):
 
@@ -148,12 +178,45 @@ low-priority thread, debounced. Two slots (A/B) with sequence number + CRC;
 the newest valid slot wins at boot, so a torn write never loses the previous
 save. Without a formatted card, saves stay in RAM.
 
-### Boot (`ps2/src/platform/boot.c`, `iop.c`)
-Order: log → memory → boot path from `argv[0]` → IOP modules (embedded IRX:
-iomanX, fileXio, sio2man, padman, mtapman, mcman/mcserv, libsd, sdr, bdm +
-FAT, USB mass storage, mmceman) → VBlank/GS → threads/VI → scene arena →
-overlay state → input → assets → saves → audio → render thread → the game's
-own `syMainLoop`.
+### Boot (`ps2/src/platform/boot.c`, `iop.c`, `storage/bootpath.c`)
+Launch identity, filesystem identity and asset location are separate. The
+default data directory is beside the ELF, while `--data=<directory>` can
+select another device.
+
+The IOP policy is deliberately transport-aware:
+
+- `host:`, generic `massN:`, and bare inherited `pfsN:` mounts are kept
+  alive because resetting the IOP would destroy information that `argv[0]`
+  does not contain.
+- Explicit USB, ATA/exFAT, MX4SIO, iLink, UDPBD, UDPFS, MMCE, APA/PFS and
+  optical paths can be reconstructed from embedded drivers after a clean IOP
+  reset.
+- Typed BDM identities are resolved back to the matching `massN:` filesystem
+  by verifying both `SSB64.DAT` and the BDM driver's transport token. This
+  avoids assuming that BDM slot numbers and transport unit numbers are the
+  same.
+- Unknown paths are rejected; there is no "unknown means USB" fallback.
+
+The embedded IOP stacks are:
+
+| data path | IOP stack / handling |
+|---|---|
+| `host:` | inherited ps2link/PCSX2 filesystem |
+| `massN:` | inherited BDM filesystem, transport-agnostic |
+| `usbN:` | bdm + bdmfs_fatfs + usbd_mini + usbmass_bd_mini |
+| `ataN:` | ps2dev9 + bdm + bdmfs_fatfs + BDM-enabled ps2atad |
+| `mx4sioN:` | bdm + bdmfs_fatfs + mx4sio_bd |
+| `ilinkN:` | bdm + bdmfs_fatfs + iLinkman + IEEE1394_bd |
+| `udpbd:` | ps2dev9 + bdm + bdmfs_fatfs + SUDPBDv2 SMAP/UDPBD |
+| `udpfs:` | ps2dev9 + UDPFS SMAP + ministack + udpfs_ioman |
+| `hdd0:<partition>:pfs:/...` | ps2dev9 + ps2atad + ps2hdd + ps2fs, then mount on `pfs0:` |
+| `pfsN:` | inherited PFS mount (partition identity is not recoverable from a bare PFS path) |
+| `mmceN:` | mmceman |
+| `mcN:` | base mcman/mcserv stack |
+| `cdrom0:` | cdfs, with ISO9660 `;1` fallback for `SSB64.DAT` |
+
+Real-device files are read in bounded 64 KiB requests and the boot path allows
+up to roughly 20 seconds for asynchronous BDM/network media to become ready.
 
 ### Game-source changes
 - `include/PR/rcp.h`: register reads/writes go through the platform layer.
