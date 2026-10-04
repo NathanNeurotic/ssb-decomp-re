@@ -99,7 +99,7 @@ int ps2_iop_rpc_available(uint32_t rpc_id)
     int attempt;
 
     memset(&client, 0, sizeof(client));
-    for (attempt = 0; attempt < 50; attempt++)
+    for (attempt = 0; attempt < 500; attempt++)
     {
         if (sceSifBindRpc(&client, rpc_id, 0) < 0)
             return 0;
@@ -107,6 +107,63 @@ int ps2_iop_rpc_available(uint32_t rpc_id)
             return 1;
         DelayThread(1000);
     }
+    return 0;
+}
+
+static int lazy_load_bridge_irx(const char *label, void *buf, unsigned int size)
+{
+    int result = 0;
+    int id;
+
+    /* RiptOPL/wLaunchELF use this same pattern: keep the live device stack,
+     * initialize only the loader/heap RPC clients, enable LoadModuleBuffer,
+     * then inject the missing bridge module. No IOP reset, no storage-driver
+     * reload, and no mount teardown. */
+    SifLoadFileInit();
+    SifInitIopHeap();
+    sbv_patch_enable_lmb();
+
+    id = SifExecModuleBuffer(buf, size, 0, NULL, &result);
+
+    SifExitIopHeap();
+    SifLoadFileExit();
+
+    if (id < 0 || result == 1)
+    {
+        ps2_log("IOP: lazy %s load returned id=%d res=%d", label, id, result);
+        return -1;
+    }
+
+    ps2_log("IOP: lazy-loaded %s", label);
+    return 0;
+}
+
+static int ensure_filexio_bridge(void)
+{
+    int loaded = 0;
+
+    if (!ps2_iop_rpc_available(FILEXIO_IRX))
+    {
+        ps2_log("IOP: fileXio RPC absent; lazy-loading bridge only");
+        loaded = lazy_load_bridge_irx("filexio", filexio_irx, size_filexio_irx);
+
+        /* A duplicate/racing load can report NO_RESIDENT even though the
+         * existing server becomes available immediately afterward, so the
+         * RPC probe is authoritative. */
+        if (!ps2_iop_rpc_available(FILEXIO_IRX))
+        {
+            ps2_log("IOP: fileXio RPC still unavailable after lazy load");
+            return -1;
+        }
+    }
+
+    if (fileXioInit() < 0)
+    {
+        ps2_log("IOP: fileXio EE bind failed");
+        return -1;
+    }
+
+    ps2_log("IOP: fileXio bridge ready%s", loaded == 0 ? "" : " (lazy)");
     return 0;
 }
 
@@ -242,18 +299,12 @@ void ps2_iop_init(void)
          * The only EE-side binding we need before opening the adjacent DAT is
          * fileXio. Probe its RPC service with a finite timeout first because
          * fileXioInit() itself waits forever for a missing server. */
-        ps2_log("IOP: keeping launcher sidecar stack untouched");
-        if (!ps2_iop_rpc_available(FILEXIO_IRX))
+        ps2_log("IOP: keeping launcher sidecar device stack");
+        if (ensure_filexio_bridge() < 0)
         {
-            ps2_log("IOP: inherited fileXio RPC is unavailable");
+            ps2_log("IOP: cannot expose inherited filesystem to EE");
             return;
         }
-
-        ps2_log("IOP: binding inherited fileXio RPC");
-        if (fileXioInit() < 0)
-            ps2_log("IOP: fileXio EE binding failed");
-        else
-            ps2_log("IOP: inherited fileXio RPC ready");
         return;
     }
 
@@ -296,10 +347,41 @@ void ps2_iop_init(void)
 
 int ps2_iop_prepare_runtime_services(void)
 {
-    /* Normal sidecar launches never mutate the inherited IOP. Input/save/audio
-     * consumers perform bounded RPC probes and either use the launcher's
-     * service or degrade cleanly. Explicit --data builds the complete stack
-     * in ps2_iop_init(), so nothing is needed here either. */
+    /* Storage is already proven at this point because SSB64.DAT opened from
+     * the sidecar path. Only controller RPC is mandatory for gameplay.
+     * Do not touch SIO2 itself: MMCE and other launchers may already own it.
+     * padman can be safely supplied on top of the live SIO2 service. */
+    if (ps2_storage_requires_iop_preserve())
+    {
+        const uint32_t pad1_new = 0x80000100u;
+        const uint32_t pad2_new = 0x80000101u;
+        const uint32_t pad1_old = 0x8000010Fu;
+        const uint32_t pad2_old = 0x8000011Fu;
+        int pad_ready;
+
+        pad_ready =
+            (ps2_iop_rpc_available(pad1_new) && ps2_iop_rpc_available(pad2_new)) ||
+            (ps2_iop_rpc_available(pad1_old) && ps2_iop_rpc_available(pad2_old));
+
+        if (!pad_ready)
+        {
+            ps2_log("IOP: pad RPC absent; lazy-loading padman only");
+            lazy_load_bridge_irx("padman", padman_irx, size_padman_irx);
+
+            pad_ready =
+                (ps2_iop_rpc_available(pad1_new) && ps2_iop_rpc_available(pad2_new)) ||
+                (ps2_iop_rpc_available(pad1_old) && ps2_iop_rpc_available(pad2_old));
+        }
+
+        if (!pad_ready)
+        {
+            ps2_log("IOP: pad RPC unavailable after lazy load");
+            return -1;
+        }
+
+        ps2_log("IOP: pad RPC ready");
+    }
+
     return 0;
 }
 
