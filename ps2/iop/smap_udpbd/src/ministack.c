@@ -136,16 +136,11 @@ int arp_add_entry(uint32_t ip, uint8_t mac[6])
 
     // Add new entry
     for (i = 0; i < MS_ARP_ENTRIES; i++) {
-        // Test the SLOT, not the argument. This read `if (ip == 0)`, i.e. it checked the peer IP
-        // being added rather than whether arp_table[i] was free -- so for any real peer (ip != 0)
-        // no free slot was ever found and arp_add_entry always returned -1, leaving the ARP cache
-        // permanently empty. udpfs_ministack (ministack_arp.c) has always had this right, which is
-        // why only the UDPBD monolith is affected.
-        //
-        // The consequence is not a hard failure, which is why it went unnoticed: every send site in
-        // this driver targets the broadcast MAC anyway, so traffic still flows -- as a BROADCAST to
-        // every host on the LAN, on every frame. On a busy network that is both a throughput
-        // problem and a good way to look like "UDPBD isn't working right".
+        // Test the SLOT, not the argument. Upstream checked `ip == 0` here, so no nonzero peer
+        // could ever occupy a free entry. The UDPBD monolith currently transmits using broadcast
+        // Ethernet destinations and does not consult arp_table, so fixing this dormant cache bug has
+        // no runtime effect today; keep it correct so future unicast/ARP use is not built on broken
+        // state.
         if (arp_table[i].ip == 0) {
             arp_table[i].ip = ip;
             arp_table[i].mac[0] = mac[0];
@@ -218,7 +213,7 @@ static inline int handle_rx_udp(uint16_t pointer)
     dport = SMAP_REG16(SMAP_R_RXFIFO_DATA);
 
     for (i = 0; i < UDP_MAX_PORTS; i++) {
-        if (dport == udp_ports[i].port_src)
+        if (udp_ports[i].handler != NULL && dport == udp_ports[i].port_src)
             return udp_ports[i].handler(&udp_ports[i], pointer, udp_ports[i].handler_arg);
     }
 
