@@ -123,9 +123,9 @@ PS2BootDevice ps2_storage_data_device(void);
 PS2BootDevice ps2_storage_boot_device(void);
 const char *ps2_storage_launch_path(void);
 const char *ps2_storage_hdd_mount_source(void);
-/* True when the selected data path depends on an inherited IOP filesystem
- * (host:, generic massN:, or a bare pfsN: mount whose transport/source
- * cannot be reconstructed from argv[0]). */
+/* True when the active data path must retain the launcher's live filesystem.
+ * The normal sidecar contract (SSB64.DAT beside the ELF) always does this;
+ * explicit --data= can opt into a separately reconstructed device stack. */
 int ps2_storage_requires_iop_preserve(void);
 /* While the launcher's generic massN: mount is still alive, identify the
  * backing BDM transport and promote the data device to a reconstructable
@@ -168,7 +168,8 @@ void ps2_file_close(int fd);
 /* IOP modules (ps2/src/platform/iop.c)                                */
 /* ------------------------------------------------------------------ */
 
-void ps2_iop_init(void);                 /* reset IOP + load base modules */
+void ps2_iop_init(void);                 /* preserve sidecar stack or rebuild explicit --data stack */
+int ps2_iop_prepare_runtime_services(void);
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 int  ps2_iop_module_loaded(const char *name);
 int  ps2_iop_module_count(void);
