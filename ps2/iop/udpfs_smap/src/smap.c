@@ -610,7 +610,14 @@ int smap_init(int argc, char *argv[])
 
     xfer_init();
 
-    return SetupNetDev();
+    result = SetupNetDev();
+    if (result < 0) {
+        xfer_deinit();
+        for (i = 2; i < 7; i++)
+            dev9RegisterIntrCb(i, NULL);
+        dev9IntrDisable(DEV9_SMAP_ALL_INTR_MASK);
+    }
+    return result;
 }
 
 int SMAPGetMACAddress(uint8_t *buffer)
