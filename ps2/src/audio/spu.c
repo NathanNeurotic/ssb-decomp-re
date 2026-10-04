@@ -18,6 +18,7 @@
 
 #include <iopheap.h>
 #include <kernel.h>
+#include <loadfile.h>
 #include <libsdr.h>
 #include <sifrpc.h>
 #include <string.h>
@@ -250,6 +251,12 @@ int ps2_spu_init(void)
     sCount = head.count;
     for (i = 0; i < sCount; i++)
         sResidentOf[i] = -1;
+
+    if (SifSearchModuleByName("sdr_driver") < 0)
+    {
+        ps2_log("audio: sdrdrv unavailable; audio stays silent");
+        return -1;
+    }
 
     SifInitIopHeap();
     sIopStage = SifAllocIopHeap(IOP_STAGE_SIZE);
