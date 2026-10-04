@@ -17,6 +17,7 @@
 
 #include <kernel.h>
 #include <libmc.h>
+#include <loadfile.h>
 #include <string.h>
 
 #define SRAM_SIZE (32 * 1024)
@@ -179,7 +180,11 @@ void ps2_save_init(void)
     sLock = CreateSema(&sema);
     memset(sSram, 0, sizeof(sSram));
 
-    if (mcInit(MC_TYPE_XMC) < 0)
+    if (SifSearchModuleByName("mcserv") < 0)
+    {
+        ps2_log("save: mcserv unavailable, saving disabled");
+    }
+    else if (mcInit(MC_TYPE_XMC) < 0)
     {
         ps2_log("save: mcInit failed, saving disabled");
     }
