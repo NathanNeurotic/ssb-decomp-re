@@ -431,41 +431,112 @@ void ps2_iop_init(void)
     ps2_log("IOP: reset/rebuilt, %d base modules", sLoadedCount);
 }
 
+static int pad_rpc_ready(void)
+{
+    const uint32_t pad1_new = 0x80000100u;
+    const uint32_t pad2_new = 0x80000101u;
+    const uint32_t pad1_old = 0x8000010Fu;
+    const uint32_t pad2_old = 0x8000011Fu;
+
+    return
+        (ps2_iop_rpc_available(pad1_new) && ps2_iop_rpc_available(pad2_new)) ||
+        (ps2_iop_rpc_available(pad1_old) && ps2_iop_rpc_available(pad2_old));
+}
+
+static int sio2_fallback_is_safe(void)
+{
+    PS2BootDevice dev = ps2_storage_data_device();
+
+    switch (dev)
+    {
+    case PS2_BOOT_HOST:
+    case PS2_BOOT_USB:
+    case PS2_BOOT_ATA:
+    case PS2_BOOT_ILINK:
+    case PS2_BOOT_UDPBD:
+    case PS2_BOOT_UDPFS:
+    case PS2_BOOT_HDD:
+    case PS2_BOOT_CDROM:
+        return 1;
+
+    case PS2_BOOT_BDM:
+    {
+        char driver[32];
+
+        if (!ps2_storage_inherited_bdm_driver(driver, sizeof(driver)))
+        {
+            ps2_log("IOP: BDM transport unknown; refusing to replace SIO2");
+            return 0;
+        }
+
+        ps2_log("IOP: inherited BDM transport=%s", driver);
+        if (strcmp(driver, "sdc") == 0 || strcmp(driver, "mx4sio") == 0)
+            return 0;
+
+        return strcmp(driver, "usb") == 0 ||
+               strcmp(driver, "ata") == 0 ||
+               strcmp(driver, "sd") == 0 ||
+               strcmp(driver, "ilink") == 0 ||
+               strcmp(driver, "udp") == 0;
+    }
+
+    case PS2_BOOT_MC:
+    case PS2_BOOT_MX4SIO:
+    case PS2_BOOT_MMCE:
+    case PS2_BOOT_UNKNOWN:
+    default:
+        return 0;
+    }
+}
+
 int ps2_iop_prepare_runtime_services(void)
 {
     /* Storage is already proven at this point because SSB64.DAT opened from
      * the sidecar path. Only controller RPC is mandatory for gameplay.
-     * Do not touch SIO2 itself: MMCE and other launchers may already own it.
-     * padman can be safely supplied on top of the live SIO2 service. */
+     *
+     * First try to consume whatever pad stack the launcher left behind. If it
+     * is absent, try PADMAN alone so launchers with a compatible live SIO2
+     * service keep complete ownership of that transport. Only when PADMAN
+     * still cannot register do we add SIO2MAN, and only for devices where
+     * replacing/adding SIO2 cannot disconnect the active storage path. */
     if (ps2_storage_requires_iop_preserve())
     {
-        const uint32_t pad1_new = 0x80000100u;
-        const uint32_t pad2_new = 0x80000101u;
-        const uint32_t pad1_old = 0x8000010Fu;
-        const uint32_t pad2_old = 0x8000011Fu;
-        int pad_ready;
-
-        pad_ready =
-            (ps2_iop_rpc_available(pad1_new) && ps2_iop_rpc_available(pad2_new)) ||
-            (ps2_iop_rpc_available(pad1_old) && ps2_iop_rpc_available(pad2_old));
-
-        if (!pad_ready)
+        if (pad_rpc_ready())
         {
-            ps2_log("IOP: pad RPC absent; lazy-loading padman only");
-            lazy_load_bridge_irx("padman", padman_irx, size_padman_irx);
-
-            pad_ready =
-                (ps2_iop_rpc_available(pad1_new) && ps2_iop_rpc_available(pad2_new)) ||
-                (ps2_iop_rpc_available(pad1_old) && ps2_iop_rpc_available(pad2_old));
+            ps2_log("IOP: inherited pad RPC ready");
+            return 0;
         }
 
-        if (!pad_ready)
+        ps2_log("IOP: pad RPC absent; trying padman on inherited SIO2");
+        if (lazy_load_bridge_irx("padman", padman_irx, size_padman_irx) >= 0 &&
+            pad_rpc_ready())
         {
-            ps2_log("IOP: pad RPC unavailable after lazy load");
+            ps2_log("IOP: pad RPC ready via inherited SIO2");
+            return 0;
+        }
+
+        if (!sio2_fallback_is_safe())
+        {
+            ps2_log("IOP: controller RPC missing and SIO2 is storage-owned/unknown");
             return -1;
         }
 
-        ps2_log("IOP: pad RPC ready");
+        /* PS2SDK's reference pad sample loads SIO2MAN before PADMAN. PCSX2
+         * host launches commonly arrive without either service, while USB,
+         * ATA, iLink, UDP and HDD storage do not depend on SIO2. */
+        ps2_log("IOP: adding sio2man + padman controller stack");
+        if (lazy_load_bridge_irx("sio2man", sio2man_irx, size_sio2man_irx) < 0)
+            return -1;
+        if (lazy_load_bridge_irx("padman", padman_irx, size_padman_irx) < 0)
+            return -1;
+
+        if (!pad_rpc_ready())
+        {
+            ps2_log("IOP: pad RPC unavailable after sio2man + padman");
+            return -1;
+        }
+
+        ps2_log("IOP: pad RPC ready after sio2man + padman");
     }
 
     return 0;

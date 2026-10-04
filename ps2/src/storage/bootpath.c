@@ -429,6 +429,51 @@ static int bdm_driver_matches(PS2BootDevice dev, const char *driver)
 }
 
 
+int ps2_storage_inherited_bdm_driver(char *out, size_t out_size)
+{
+    const char *colon;
+    char root[16];
+    int dfd, io;
+    size_t prefix_len;
+
+    if (out == NULL || out_size == 0 || sDataDevice != PS2_BOOT_BDM)
+        return 0;
+
+    out[0] = '\0';
+    colon = strchr(sDataDir, ':');
+    if (colon == NULL)
+        return 0;
+
+    prefix_len = (size_t)(colon - sDataDir) + 1;
+    if (prefix_len + 2 > sizeof(root))
+        return 0;
+
+    memcpy(root, sDataDir, prefix_len);
+    root[prefix_len] = '/';
+    root[prefix_len + 1] = '\0';
+
+    /* Called only after SSB64.DAT has opened successfully. At that point the
+     * exact massN: mount is proven live, so querying this one root cannot hit
+     * the empty-slot fault that motivated removing broad mass-slot probes. */
+    dfd = fileXioDopen(root);
+    if (dfd < 0)
+        return 0;
+
+    memset(out, 0, out_size);
+    io = fileXioIoctl2(dfd, USBMASS_IOCTL_GET_DRIVERNAME,
+                       NULL, 0, out, (unsigned int)(out_size - 1));
+    fileXioDclose(dfd);
+    if (io < 0)
+    {
+        out[0] = '\0';
+        return 0;
+    }
+
+    out[out_size - 1] = '\0';
+    return out[0] != '\0';
+}
+
+
 int ps2_storage_resolve_data_root(const char *probe_name)
 {
     char relative[PATH_BUF_MAX];

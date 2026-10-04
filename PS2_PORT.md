@@ -52,6 +52,12 @@ FileIO/ioman (notably host-style launches) from fileXio/iomanX
 missing, only that bridge is added lazily after the real DAT open fails; the
 storage drivers and mounts are left untouched. Controller/card/audio services are considered only after the DAT
 has opened, and storage drivers are never blindly duplicated in sidecar mode.
+Controller recovery is similarly conservative: an inherited PAD RPC is used
+as-is; otherwise PADMAN is tried on the launcher's live SIO2 service. SIO2MAN
+is added only when the active storage transport is known not to depend on
+SIO2 (for example PCSX2 host, USB, ATA, iLink, UDP or HDD). Generic massN:
+launches identify their already-proven BDM transport only after the DAT opens,
+so MX4SIO is never disconnected just to obtain controller support.
 
 `--data=<directory>` remains an advanced override. Using it opts out of the normal
 sidecar contract and allows the port to rebuild a separate typed data-device stack.

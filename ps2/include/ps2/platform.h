@@ -131,6 +131,9 @@ int ps2_storage_requires_iop_preserve(void);
  * actual massN: filesystem that contains probe_name. Generic massN: paths
  * deliberately keep the inherited launcher IOP and are already usable. */
 int ps2_storage_resolve_data_root(const char *probe_name);
+/* Query the transport token for the already-proven inherited massN: mount.
+ * This is intentionally unavailable before the real sidecar DAT has opened. */
+int ps2_storage_inherited_bdm_driver(char *out, size_t out_size);
 int ps2_video_progressive(void);         /* 1 = 240p (ELF name contains "240p"), 0 = 480i */
 
 /* Boot-stage marker: shows a solid background colour (GS BGCOLOR with both
