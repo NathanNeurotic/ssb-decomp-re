@@ -115,48 +115,6 @@ static void assign_slots(void)
 
 static void setup_pad_mode(PadSlot *s);
 
-/* libmtap's EE API exposes open/close/connection only, while mtapman also
- * provides the compatible GET_SLOT_NUMBER RPC (0x800009FE). Use that RPC
- * directly so a plain controller port that happens to answer the connection
- * probe cannot be misclassified as a multitap. */
-#define MTAPSERV_GET_SLOT_NUMBER 0x800009FE
-
-static SifRpcClientData_t sMtapSlotClient __attribute__((aligned(64)));
-static uint32_t sMtapSlotRpcBuffer[32] __attribute__((aligned(64)));
-static int sMtapSlotRpcBound;
-
-static int mtap_get_slot_number(int port)
-{
-    int attempt;
-
-    if (!sMtapSlotRpcBound)
-    {
-        memset(&sMtapSlotClient, 0, sizeof(sMtapSlotClient));
-        for (attempt = 0; attempt < 20; attempt++)
-        {
-            if (sceSifBindRpc(&sMtapSlotClient, MTAPSERV_GET_SLOT_NUMBER, 0) < 0)
-                return -1;
-            if (sMtapSlotClient.server != NULL)
-            {
-                sMtapSlotRpcBound = 1;
-                break;
-            }
-            DelayThread(1000);
-        }
-        if (!sMtapSlotRpcBound)
-            return -1;
-    }
-
-    sMtapSlotRpcBuffer[0] = (uint32_t)port;
-    if (sceSifCallRpc(&sMtapSlotClient, 1, 0,
-                      sMtapSlotRpcBuffer, 4,
-                      sMtapSlotRpcBuffer, 8,
-                      NULL, NULL) < 0)
-        return -1;
-
-    return (int)sMtapSlotRpcBuffer[1];
-}
-
 static int detect_multitap(int port)
 {
     int slots;
@@ -170,7 +128,7 @@ static int detect_multitap(int port)
     /* mtapman can successfully probe a plain controller port and still
      * report one available slot. A real multitap exposes multiple slots;
      * require that before remapping players 2-4 onto the port. */
-    slots = mtap_get_slot_number(port);
+    slots = padGetSlotMax(port);
     if (slots <= 1)
     {
         mtapPortClose(port);
