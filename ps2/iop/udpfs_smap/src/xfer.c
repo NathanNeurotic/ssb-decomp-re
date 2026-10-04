@@ -60,6 +60,18 @@ void xfer_init(void)
     dev9RegisterPostDmaCb(1, &Dev9PostDmaCbHandler);
 }
 
+void xfer_deinit(void)
+{
+    dev9RegisterPreDmaCb(1, NULL);
+    dev9RegisterPostDmaCb(1, NULL);
+    if (tx_sema >= 0) {
+        DeleteSema(tx_sema);
+        tx_sema = -1;
+    }
+    g_rx_callback = NULL;
+    g_hdr_read_bytes = 0;
+}
+
 static int SmapDmaTransfer(volatile u8 *smap_regbase, void *buffer, unsigned int size, int direction)
 {
     unsigned int NumBlocks;
