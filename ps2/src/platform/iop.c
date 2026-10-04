@@ -106,56 +106,20 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
 #define LOAD_IRX(name) load_irx(#name, name##_irx, size_##name##_irx, NULL, 0)
 #define LOAD_IRX_ARGS(name, args, len) load_irx(#name, name##_irx, size_##name##_irx, args, len)
 
-#define RPC_PROBE_SLOTS 16
-
-/* A NOWAIT bind needs storage that remains valid until the IOP replies. Keep a
- * small static pool so a genuinely wedged request can time out without leaving
- * an EE stack pointer behind for a late RPC completion. Completed slots are
- * reused; a timed-out slot remains quarantined until sceSifCheckStatRpc()
- * reports that the request has finally finished. */
-static SifRpcClientData_t sRpcProbe[RPC_PROBE_SLOTS] __attribute__((aligned(64)));
-static int sRpcProbeNext;
-
 int ps2_iop_rpc_available(uint32_t rpc_id)
 {
-    SifRpcClientData_t *client = NULL;
-    int slot;
+    SifRpcClientData_t client __attribute__((aligned(64)));
     int attempt;
 
-    for (attempt = 0; attempt < RPC_PROBE_SLOTS; attempt++)
-    {
-        slot = (sRpcProbeNext + attempt) % RPC_PROBE_SLOTS;
-        if (!sceSifCheckStatRpc(&sRpcProbe[slot]))
-        {
-            client = &sRpcProbe[slot];
-            sRpcProbeNext = (slot + 1) % RPC_PROBE_SLOTS;
-            break;
-        }
-    }
-
-    if (client == NULL)
-    {
-        ps2_log("IOP: RPC probe pool exhausted for 0x%08x", (unsigned)rpc_id);
-        return 0;
-    }
-
-    memset(client, 0, sizeof(*client));
-
-    /* mode 0 is NOT a bounded probe: sceSifBindRpc() creates a semaphore and
-     * waits forever for SIF_CMD_RPC_END. That is exactly what the real console
-     * exposed when the SDR service was absent. Send one asynchronous bind and
-     * poll its packet state instead. */
-    if (sceSifBindRpc(client, (int)rpc_id, SIF_RPC_M_NOWAIT) < 0)
-        return 0;
-
+    memset(&client, 0, sizeof(client));
     for (attempt = 0; attempt < 500; attempt++)
     {
-        if (!sceSifCheckStatRpc(client))
-            return client->server != NULL;
+        if (sceSifBindRpc(&client, rpc_id, 0) < 0)
+            return 0;
+        if (client.server != NULL)
+            return 1;
         DelayThread(1000);
     }
-
-    ps2_log("IOP: RPC probe 0x%08x timed out after 500 ms", (unsigned)rpc_id);
     return 0;
 }
 
