@@ -33,6 +33,7 @@ static char sLaunchPath[PATH_BUF_MAX] = "";
 static char sDataDir[PATH_BUF_MAX] = "host:";
 static char sHddMountSource[HDD_SOURCE_MAX] = "";
 static int sProgressive;
+static int sDataNeedsExistingIop;
 
 static int starts_with_ci(const char *s, const char *prefix)
 {
@@ -170,6 +171,9 @@ static int normalise_hdd_path(const char *path, char *out, size_t out_size, int 
 
     if (starts_with_ci(p, "pfs"))
     {
+        /* A bare pfsN: path contains no APA partition identity. It is only
+         * usable while preserving the launcher's already-mounted IOP state. */
+        sDataNeedsExistingIop = 1;
         strncpy(out, p, out_size - 1);
         out[out_size - 1] = '\0';
         if (path_is_file)
@@ -263,11 +267,13 @@ static int set_data_location(const char *path, int path_is_file)
 
     if (dev == PS2_BOOT_HDD)
     {
+        sDataNeedsExistingIop = 0;
         if (!normalise_hdd_path(path, tmp, sizeof(tmp), path_is_file))
             return 0;
     }
     else if (dev == PS2_BOOT_USB)
     {
+        sDataNeedsExistingIop = 0;
         if (!normalise_usb_path(path, tmp, sizeof(tmp)))
             return 0;
         if (path_is_file)
@@ -278,6 +284,7 @@ static int set_data_location(const char *path, int path_is_file)
     }
     else
     {
+        sDataNeedsExistingIop = (dev == PS2_BOOT_HOST);
         strncpy(tmp, path, sizeof(tmp) - 1);
         tmp[sizeof(tmp) - 1] = '\0';
         if (path_is_file)
@@ -299,6 +306,7 @@ void ps2_storage_set_boot_path(const char *argv0)
 
     sProgressive = 0;
     sHddMountSource[0] = '\0';
+    sDataNeedsExistingIop = 0;
 
     if (argv0 == NULL || argv0[0] == '\0')
     {
@@ -356,6 +364,11 @@ const char *ps2_storage_launch_path(void)
 const char *ps2_storage_hdd_mount_source(void)
 {
     return sHddMountSource;
+}
+
+int ps2_storage_requires_iop_preserve(void)
+{
+    return sDataNeedsExistingIop || sLaunchDevice == PS2_BOOT_HOST;
 }
 
 int ps2_video_progressive(void)
