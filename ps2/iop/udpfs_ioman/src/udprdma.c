@@ -151,6 +151,16 @@ static int _ist(udp_socket_t *udp_socket, void *arg, const uint8_t *hdr, uint16_
 
         case UDPRDMA_PT_DATA: {
             udprdma_hdr_data_t data_hdr;
+            uint32_t src_ip = IP_ADDR(disc_pkt->ip.addr_src.addr[0],
+                                      disc_pkt->ip.addr_src.addr[1],
+                                      disc_pkt->ip.addr_src.addr[2],
+                                      disc_pkt->ip.addr_src.addr[3]);
+            uint16_t src_port = ntohs(disc_pkt->udp.port_src);
+
+            /* Once discovery selected a server, data/ACK authority is bound
+             * to that peer. Ignore same-port LAN traffic from other hosts. */
+            if (s->state != STATE_CONNECTED || src_ip != s->peer_ip || src_port != s->port)
+                break;
             smap_fifo_read(0x2C, &data_hdr.raw, sizeof(udprdma_hdr_data_t));
             //M_DEBUG("_ist: DATA seq=%d flags=0x%02X bytes=%d\n",
             //    data_hdr.seq_nr_ack, data_hdr.flags, data_hdr.data_byte_count);
@@ -170,6 +180,12 @@ static int _ist(udp_socket_t *udp_socket, void *arg, const uint8_t *hdr, uint16_
                     if (base_hdr.seq_nr == s->rx_seq_nr_expected) {
                         /* Extract app header via smap_fifo_read PIO (first packet only) */
                         if (hdr_size > 0) {
+                            if (hdr_size > UDPRDMA_MAX_APP_HDR ||
+                                (s->rx_hdr_buffer != NULL && s->rx_hdr_received == 0 &&
+                                 hdr_size > s->rx_hdr_size)) {
+                                M_DEBUG("_ist: app header too large (%u)\n", hdr_size);
+                                return -1;
+                            }
                             if (s->rx_hdr_buffer != NULL && s->rx_hdr_received == 0) {
                                 smap_fifo_read(0x30, s->rx_hdr_buffer, hdr_size);
                             } else {
@@ -442,6 +458,23 @@ int udprdma_discover(udprdma_socket_t *socket, uint32_t timeout_ms)
                     (socket->peer_ip >> 8) & 0xFF,
                     (socket->peer_ip >> 0) & 0xFF,
                     socket->port);
+
+            /* A newly discovered server starts a fresh reliable-transfer
+             * session. Never carry sequence/window/buffer authority from a
+             * timed-out server into the replacement session. */
+            socket->tx_seq_nr = 0;
+            socket->tx_seq_nr_acked = 0;
+            socket->tx_retries = 0;
+            socket->rx_seq_nr_expected = 0;
+            socket->rx_window_count = 0;
+            socket->rx_nack_sent = 0;
+            socket->rx_buffer = NULL;
+            socket->rx_buffer_size = 0;
+            socket->rx_received = 0;
+            socket->rx_hdr_buffer = NULL;
+            socket->rx_hdr_size = 0;
+            socket->rx_hdr_received = 0;
+            ClearEventFlag(socket->event_flag, 0);
 
             /* Update packet destination to peer */
             udp_packet_init((udp_packet_t *)&socket->pkt_data, socket->peer_ip, socket->port);
