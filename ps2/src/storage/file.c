@@ -1,10 +1,11 @@
 /*
  * Minimal blocking file API used by the asset manager.
  *
- * Uses the ps2sdk newlib port's POSIX calls. For basic open/read/seek/close,
- * libcglue lazily binds the IOP FileIO RPC, so inherited sidecar launches do
- * not require a fileXio RPC server merely to read SSB64.DAT. The registered
- * IOP device (mass:, mmce:, pfs:, host:, etc.) remains owned by the launcher.
+ * Uses the ps2sdk newlib port's POSIX calls. The IOP handoff selects the
+ * inherited filesystem RPC first: legacy FileIO/ioman for host-like paths, or
+ * fileXio/iomanX for BDM/PFS/MMCE paths. fileXioInit() switches libcglue to
+ * its iomanX-backed operations without replacing the launcher's device
+ * drivers or mounts.
  */
 #include <ps2/platform.h>
 

@@ -45,9 +45,12 @@ udpfs:/APPS/SSB64/SSB64.DAT
 
 This intentionally follows the keep-IOP model used by sidecar-driven PS2 homebrew:
 if the launcher was able to load the ELF from that filesystem, the child keeps that
-same mounted filesystem alive for its adjacent DAT. The first storage authority is an
-actual open of SSB64.DAT through PS2SDK's basic FileIO RPC; fileXio is not injected just
-to reach the sidecar. Controller/card/audio services are considered only after the DAT
+same mounted filesystem alive for its adjacent DAT. The first storage authority is an actual open of SSB64.DAT through the
+launcher's live filesystem service. The EE client now distinguishes legacy
+FileIO/ioman (notably host-style launches) from fileXio/iomanX
+(BDM/PFS/MMCE). If an iomanX sidecar is live but its fileXio RPC bridge is
+missing, only that bridge is added lazily after the real DAT open fails; the
+storage drivers and mounts are left untouched. Controller/card/audio services are considered only after the DAT
 has opened, and storage drivers are never blindly duplicated in sidecar mode.
 
 `--data=<directory>` remains an advanced override. Using it opts out of the normal

@@ -74,6 +74,15 @@ static const char *sLoaded[MAX_TRACKED_MODULES];
 static int sLoadedCount;
 static int sIopWasReset;
 
+enum
+{
+    PS2_FS_CLIENT_NONE = 0,
+    PS2_FS_CLIENT_FILEIO,
+    PS2_FS_CLIENT_FILEXIO
+};
+
+static int sFsClient;
+
 static int load_irx(const char *name, void *buf, unsigned int size, const char *args, int args_len)
 {
     int result = 0;
@@ -136,6 +145,119 @@ static int lazy_load_bridge_irx(const char *label, void *buf, unsigned int size)
 
     ps2_log("IOP: lazy-loaded %s", label);
     return 0;
+}
+
+static int device_prefers_iomanx(PS2BootDevice dev)
+{
+    switch (dev)
+    {
+    case PS2_BOOT_BDM:
+    case PS2_BOOT_USB:
+    case PS2_BOOT_ATA:
+    case PS2_BOOT_MX4SIO:
+    case PS2_BOOT_ILINK:
+    case PS2_BOOT_UDPBD:
+    case PS2_BOOT_UDPFS:
+    case PS2_BOOT_HDD:
+    case PS2_BOOT_MMCE:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static int activate_filexio_client(void)
+{
+    if (sFsClient == PS2_FS_CLIENT_FILEXIO)
+        return 0;
+
+    /* fileXioInit() has an unbounded bind loop, so only enter it after the
+     * bounded service probe proved that the inherited FILEXIO server exists. */
+    if (!ps2_iop_rpc_available(FILEXIO_IRX))
+        return -1;
+    if (fileXioInit() < 0)
+        return -1;
+
+    sFsClient = PS2_FS_CLIENT_FILEXIO;
+    ps2_log("IOP: filesystem client = fileXio/iomanX");
+    return 0;
+}
+
+int ps2_iop_prepare_filesystem_client(void)
+{
+    const uint32_t fileio_rpc = 0x80000001u;
+    PS2BootDevice dev = ps2_storage_data_device();
+    int have_filexio = ps2_iop_rpc_available(FILEXIO_IRX);
+    int have_fileio = ps2_iop_rpc_available(fileio_rpc);
+
+    ps2_log("IOP: fs RPC fileXio=%s FileIO=%s",
+            have_filexio ? "yes" : "no",
+            have_fileio ? "yes" : "no");
+
+    /* BDM/PFS/MMCE are iomanX filesystems. host:/mc:/cdrom: are commonly
+     * exposed through the legacy FileIO/ioman service. Prefer the bridge that
+     * matches the inherited device instead of assuming one RPC model for all
+     * launchers (PCSX2 is a useful legacy-FileIO control case). */
+    if (device_prefers_iomanx(dev) && have_filexio)
+        return activate_filexio_client();
+
+    if (have_fileio)
+    {
+        sFsClient = PS2_FS_CLIENT_FILEIO;
+        ps2_log("IOP: filesystem client = FileIO/ioman");
+        return 0;
+    }
+
+    if (have_filexio)
+        return activate_filexio_client();
+
+    sFsClient = PS2_FS_CLIENT_NONE;
+    ps2_log("IOP: no inherited filesystem RPC client is currently reachable");
+    return -1;
+}
+
+int ps2_iop_promote_filesystem_client(void)
+{
+    const uint32_t loadfile_rpc = 0x80000006u;
+    const uint32_t iopheap_rpc = 0x80000003u;
+    PS2BootDevice dev = ps2_storage_data_device();
+
+    if (!ps2_storage_requires_iop_preserve() || !device_prefers_iomanx(dev))
+        return 0;
+    if (sFsClient == PS2_FS_CLIENT_FILEXIO)
+        return 0;
+
+    if (ps2_iop_rpc_available(FILEXIO_IRX))
+    {
+        if (activate_filexio_client() < 0)
+            return -1;
+        ps2_log("IOP: promoted filesystem client to inherited fileXio");
+        return 1;
+    }
+
+    /* The storage filesystem itself stays exactly as the launcher left it.
+     * If only the EE<->iomanX bridge is missing, add fileXio alone. Do not
+     * reload iomanX, BDM, USB, MX4SIO, MMCE, ATA, or any mounted filesystem. */
+    if (!ps2_iop_rpc_available(loadfile_rpc) ||
+        !ps2_iop_rpc_available(iopheap_rpc))
+    {
+        ps2_log("IOP: cannot lazy-load fileXio (loadfile/iopheap RPC absent)");
+        return -1;
+    }
+
+    ps2_log("IOP: DAT not visible through FileIO; adding fileXio bridge only");
+    if (lazy_load_bridge_irx("filexio", filexio_irx, size_filexio_irx) < 0)
+        return -1;
+    if (!ps2_iop_rpc_available(FILEXIO_IRX))
+    {
+        ps2_log("IOP: fileXio RPC absent after bridge load");
+        return -1;
+    }
+    if (activate_filexio_client() < 0)
+        return -1;
+
+    ps2_log("IOP: promoted filesystem client to lazy fileXio");
+    return 1;
 }
 
 static int load_bdm_core(void)
@@ -254,6 +376,7 @@ void ps2_iop_init(void)
 
     sLoadedCount = 0;
     sIopWasReset = 0;
+    sFsClient = PS2_FS_CLIENT_NONE;
 
     /* Every child initializes its own EE-side SIF RPC client state. This does
      * not reset or alter the inherited IOP. */

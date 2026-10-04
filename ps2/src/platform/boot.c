@@ -39,16 +39,7 @@ static int wait_for_boot_file(const char *name)
     extern void ps2_delay_vblanks(int n);
     char path[288];
     int i, fd = -1;
-
-    /* newlib open() ultimately binds PS2SDK's basic FileIO RPC. Probe it
-     * first in inherited-sidecar mode so a launcher without that service
-     * fails visibly instead of entering fioInit()'s unbounded bind loop. */
-    if (ps2_storage_requires_iop_preserve() &&
-        !ps2_iop_rpc_available(0x80000001u))
-    {
-        ps2_log("boot: inherited FileIO RPC is unavailable");
-        return 0;
-    }
+    int promotion_checked = 0;
 
     for (i = 0; i < 200; i++)
     {
@@ -72,6 +63,22 @@ static int wait_for_boot_file(const char *name)
             ps2_log("boot: %s found after %d ms", path, i * 100);
             return 1;
         }
+
+        /* A legacy FileIO client cannot see an iomanX-only BDM/PFS/MMCE
+         * filesystem. On the first real DAT failure, promote the EE client to
+         * the launcher's existing fileXio service (or add that bridge only)
+         * and retry without touching the mounted storage stack. */
+        if (!promotion_checked)
+        {
+            int promoted = ps2_iop_promote_filesystem_client();
+            promotion_checked = 1;
+            if (promoted > 0)
+            {
+                ps2_log("boot: retrying %s through fileXio", path);
+                continue;
+            }
+        }
+
         if (ps2_storage_data_device() == PS2_BOOT_HOST)
         {
             break; /* host: is there or not */
@@ -152,6 +159,13 @@ int ps2_main(int argc, char *argv[])
 
     if (ps2_iop_load_boot_device_drivers(ps2_storage_data_device()) < 0)
         ps2_panic("failed to initialize %s storage", ps2_storage_device_name(ps2_storage_data_device()));
+
+    if (ps2_iop_prepare_filesystem_client() < 0)
+    {
+        int promoted = ps2_iop_promote_filesystem_client();
+        if (promoted <= 0)
+            ps2_panic("no usable inherited filesystem RPC for %s", ps2_storage_boot_dir());
+    }
 
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
     if (!wait_for_boot_file("SSB64.DAT"))

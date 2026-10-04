@@ -166,6 +166,12 @@ void ps2_file_close(int fd);
 void ps2_iop_init(void);                 /* preserve sidecar stack or rebuild explicit --data stack */
 /* Bounded, non-destructive probe for an inherited IOP RPC service. */
 int ps2_iop_rpc_available(uint32_t rpc_id);
+/* Select the launcher's live FileIO/fileXio bridge without replacing storage. */
+int ps2_iop_prepare_filesystem_client(void);
+/* After a real DAT-open failure, add/switch to fileXio only when iomanX media
+ * requires it. Returns >0 when the client was promoted, 0 when not applicable,
+ * and <0 when promotion was required but failed. */
+int ps2_iop_promote_filesystem_client(void);
 int ps2_iop_prepare_runtime_services(void);
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 int  ps2_iop_module_loaded(const char *name);
