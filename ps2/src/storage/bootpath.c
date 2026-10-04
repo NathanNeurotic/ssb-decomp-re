@@ -134,6 +134,21 @@ static int is_pfs_token(const char *p)
     return *q == ':' || *q == '/' || *q == '\\' || *q == '\0';
 }
 
+static const char *find_pfs_token(const char *s)
+{
+    const char *p;
+
+    for (p = s; *p != '\0'; p++)
+    {
+        if ((p[0] == 'p' || p[0] == 'P') &&
+            (p[1] == 'f' || p[1] == 'F') &&
+            (p[2] == 's' || p[2] == 'S') &&
+            is_pfs_token(p))
+            return p;
+    }
+    return NULL;
+}
+
 /* Resolve a canonical HDD/PFS runtime path and remember which APA partition
  * must be mounted on pfs0:.  A bare pfs0: path can be used only when the
  * caller preserved an already-mounted IOP; after our normal reset there is
@@ -184,13 +199,9 @@ static int normalise_hdd_path(const char *path, char *out, size_t out_size, int 
     if (bslash != NULL && (slash == NULL || bslash < slash))
         slash = bslash;
 
-    pfs = part_start;
-    while ((pfs = strcasestr(pfs, "pfs")) != NULL)
-    {
-        if (pfs > part_start && is_pfs_token(pfs))
-            break;
-        pfs += 3;
-    }
+    pfs = find_pfs_token(part_start);
+    if (pfs == part_start)
+        pfs = NULL;
 
     if (colon != NULL)
         part_end = colon;
