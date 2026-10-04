@@ -144,6 +144,9 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
+    concurrency:
+      group: ssb64-nightly
+      cancel-in-progress: true
     permissions:
       contents: write
 
@@ -165,6 +168,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+
+          latest_main="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          if [ "$GITHUB_SHA" != "$latest_main" ]; then
+            echo "Skipping stale nightly build $GITHUB_SHA; main is now $latest_main"
+            exit 0
+          fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
