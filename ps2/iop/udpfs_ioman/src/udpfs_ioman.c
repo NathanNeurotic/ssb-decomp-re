@@ -101,12 +101,11 @@ static int udpfs_watchdog(void *arg)
     (void)arg;
     while (1) {
         if (!udpfs_core_is_connected()) {
-            if (udpfs_core_init() == 0) {
-                /* Server-side descriptors belong to the previous session.
-                 * Reusing them against a restarted server could target the
-                 * wrong file, so callers must reopen after reconnect. */
-                _invalidate_fds();
-            }
+            /* Invalidate before rediscovery so there is no reconnect window
+             * where a stale server descriptor can be reused against the new
+             * session. Callers must reopen after any disconnect. */
+            _invalidate_fds();
+            udpfs_core_init();
         }
         DelayThread(1000000); /* 1s */
     }
