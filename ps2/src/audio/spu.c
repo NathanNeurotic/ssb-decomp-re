@@ -251,12 +251,12 @@ int ps2_spu_init(void)
     for (i = 0; i < sCount; i++)
         sResidentOf[i] = -1;
 
-    /* libsdr's init loop is unbounded when the service is absent.
-     * Sidecar launches keep the launcher IOP, so treat audio as optional
-     * rather than mutating that IOP to add a driver. */
-    if (!ps2_iop_rpc_available(0x80000701u))
+    /* Never probe/bind SDR speculatively. ps2_iop_prepare_audio_services()
+     * has already started a concrete SDR server or marked audio unavailable.
+     * Only enter libsdr's blocking initializer when a server should exist. */
+    if (!ps2_iop_audio_services_ready())
     {
-        ps2_log("audio: sdr RPC unavailable; audio stays silent");
+        ps2_log("audio: SDR service was not prepared; audio stays silent");
         return -1;
     }
 
@@ -269,11 +269,13 @@ int ps2_spu_init(void)
         ps2_log("audio: IOP heap allocation failed; audio stays silent");
         return -1;
     }
+    ps2_log("audio: binding libsdr to prepared SDR service");
     if (sceSdRemoteInit() < 0)
     {
-        ps2_log("audio: sdrdrv RPC unavailable; audio stays silent");
+        ps2_log("audio: prepared SDR service rejected libsdr bind; audio stays silent");
         return -1;
     }
+    ps2_log("audio: libsdr bind complete");
     sceSdRemote(1, rSdInit, 0);
 
     /* core 1: all voices dry to the output, master volume full, no effects */

@@ -310,3 +310,14 @@ optional runtime services without resetting the IOP or replacing storage.
 Both services degrade independently: save failure leaves SRAM in RAM and audio
 failure leaves the game silent; neither is allowed to break the proven game
 storage path.
+
+
+### Optional-service initialization rule
+
+Memory-card and audio bring-up no longer use speculative RPC-ID probes. Real
+hardware showed that even an asynchronous SIF bind can wedge depending on the
+current launcher/recovery state. These services now follow a stronger rule:
+first start a concrete IOP implementation (ROM XMCMAN/XMCSERV or
+LIBSD/SDRDRV, with PS2SDK fallbacks), then call the subsystem's actual client
+initializer exactly once. If module startup cannot be established, the feature
+is disabled instead of attempting a bind that might never return.

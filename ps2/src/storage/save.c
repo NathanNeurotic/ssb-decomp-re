@@ -184,12 +184,13 @@ void ps2_save_init(void)
     sLock = CreateSema(&sema);
     memset(sSram, 0, sizeof(sSram));
 
-    /* libmc waits forever for 0x80000400 when mcserv is absent.
-     * Probe first so saving can degrade cleanly on minimal launcher stacks. */
+    /* The IOP layer prepared a concrete XMC service first. Do not issue a
+     * separate RPC-presence probe here; the real console proved that bind
+     * probing can itself be the blocking operation. */
     sPersistenceReady = 0;
-    if (!ps2_iop_rpc_available(0x80000400u))
+    if (!ps2_iop_save_services_ready())
     {
-        ps2_log("save: memory-card RPC unavailable, persistence disabled");
+        ps2_log("save: memory-card service was not prepared, persistence disabled");
     }
     else if (mcInit(MC_TYPE_XMC) < 0)
     {

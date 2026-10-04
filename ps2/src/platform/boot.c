@@ -230,7 +230,7 @@ int ps2_main(int argc, char *argv[])
     ps2_log("boot: assets ready");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
-    ps2_log("boot: preparing memory-card RPC");
+    ps2_log("boot: preparing memory-card modules");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
     ps2_iop_prepare_save_services();
     ps2_log("boot: initializing saves");
@@ -239,7 +239,7 @@ int ps2_main(int argc, char *argv[])
     ps2_log("boot: saves initialized");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
-    ps2_log("boot: preparing audio RPC");
+    ps2_log("boot: preparing audio modules");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
     ps2_iop_prepare_audio_services();
     ps2_log("boot: initializing SPU audio");
