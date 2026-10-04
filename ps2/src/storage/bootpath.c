@@ -274,6 +274,7 @@ static int set_data_location(const char *path, int path_is_file)
     if (dev == PS2_BOOT_HDD)
     {
         sDataNeedsExistingIop = 0;
+        sDataNeedsBdmResolve = 0;
         if (!normalise_hdd_path(path, tmp, sizeof(tmp), path_is_file))
             return 0;
     }
