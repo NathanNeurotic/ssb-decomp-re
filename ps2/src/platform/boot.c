@@ -31,23 +31,23 @@ extern void ps2_overlay_state_init(void);
 
 #define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port"
 
-/* USB (and MMCE) storage appears asynchronously after its drivers load;
- * wait until a file next to the ELF can be opened (up to ~6 s). */
-static void wait_for_boot_file(const char *name)
+/* Real storage appears asynchronously after its transport stack loads.
+ * Give slow USB/HDD/network media a bounded 20 s window. */
+static int wait_for_boot_file(const char *name)
 {
     extern void ps2_delay_vblanks(int n);
     char path[288];
     int i, fd = -1;
 
     ps2_storage_path(path, sizeof(path), name);
-    for (i = 0; i < 60; i++)
+    for (i = 0; i < 200; i++)
     {
         fd = open(path, O_RDONLY);
         if (fd >= 0)
         {
             close(fd);
             ps2_log("boot: %s found after %d ms", path, i * 100);
-            return;
+            return 1;
         }
         if (ps2_storage_boot_device() == PS2_BOOT_HOST)
         {
@@ -56,6 +56,7 @@ static void wait_for_boot_file(const char *name)
         ps2_delay_vblanks(6);
     }
     ps2_log("boot: %s not found", path);
+    return 0;
 }
 
 int ps2_main(int argc, char *argv[])
@@ -98,9 +99,17 @@ int ps2_main(int argc, char *argv[])
     ps2_gs_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
-    ps2_iop_load_boot_device_drivers(ps2_storage_boot_device());
+    if (ps2_iop_load_boot_device_drivers(ps2_storage_boot_device()) < 0)
+    {
+        ps2_panic("failed to restore launch device %s (%s)",
+                  ps2_storage_device_name(ps2_storage_boot_device()),
+                  ps2_storage_original_path());
+    }
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
-    wait_for_boot_file("SSB64.DAT");
+    if (!wait_for_boot_file("SSB64.DAT"))
+    {
+        ps2_panic("SSB64.DAT did not become readable at %s", ps2_storage_boot_dir());
+    }
     if (ps2_storage_boot_device() != PS2_BOOT_CDROM)
     {
         ps2_log_enable_save(1);
