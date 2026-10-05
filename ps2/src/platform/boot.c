@@ -152,7 +152,8 @@ int ps2_main(int argc, char *argv[])
      * that get created along the way. */
     ChangeThreadPriority(GetThreadId(), 2);
 
-    ps2_log("build: AUDIO-EARLY 81c143d");\n    ps2_log("boot: argv0=%s", (argc > 0 && argv[0] != NULL) ? argv[0] : "(none)");
+    ps2_log("build: AUDIO-EARLY 81c143d");
+    ps2_log("boot: argv0=%s", (argc > 0 && argv[0] != NULL) ? argv[0] : "(none)");
     ps2_log("boot: launch=%s data=%s dir=%s",
             ps2_storage_device_name(ps2_storage_launch_device()),
             ps2_storage_device_name(ps2_storage_data_device()),
