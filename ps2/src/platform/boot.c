@@ -30,7 +30,7 @@ extern void ps2_render_thread_init(void);
 extern void ps2_arena_init(void);
 extern void ps2_overlay_state_init(void);
 
-#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [MMCEDRV-HANDOFF]"
+#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [MMCEDRV-IOCTL2]"
 
 /* Physical/network storage can appear asynchronously after its drivers load.
  * Match launcHER's conservative real-hardware window: wait up to ~20 s. */
@@ -152,7 +152,7 @@ int ps2_main(int argc, char *argv[])
      * that get created along the way. */
     ChangeThreadPriority(GetThreadId(), 2);
 
-    ps2_log("build: MMCEDRV-HANDOFF 9cc86e4");
+    ps2_log("build: MMCEDRV-IOCTL2 d5d6d01");
     ps2_log("boot: argv0=%s", (argc > 0 && argv[0] != NULL) ? argv[0] : "(none)");
     ps2_log("boot: launch=%s data=%s dir=%s",
             ps2_storage_device_name(ps2_storage_launch_device()),
