@@ -56,6 +56,8 @@ extern uint16_t gSYZBuffer[PS2_SCREEN_W * PS2_SCREEN_H] __attribute__((weak));
 
 static volatile int sDisplayedFb = -1;
 static volatile int sBlackout = 1;
+/* Bit N remains set from SETCIMG until GS FINISH for that render task. */
+static volatile uint32_t sDrawingFbMask;
 
 /* ------------------------------------------------------------------ */
 /* 8x8 font (public domain font8x8_basic, bit 0 = leftmost pixel)       */
@@ -310,6 +312,26 @@ void ps2_gs_present_now(int fb_index)
     display_fb(fb_index);
     sBlackout = 0;
     apply_blackout();
+}
+
+void ps2_gs_framebuffer_draw_begin(int fb_index)
+{
+    if (fb_index >= 0 && fb_index < PS2_FB_COUNT)
+        sDrawingFbMask |= 1u << fb_index;
+}
+
+void ps2_gs_framebuffers_draw_complete(uint32_t fb_mask)
+{
+    sDrawingFbMask &= ~fb_mask;
+}
+
+int ps2_gs_is_framebuffer_drawing(const void *n64_fb)
+{
+    int fb = ps2_gs_fb_index_for(n64_fb);
+
+    if (fb < 0 || fb >= PS2_FB_COUNT)
+        return 0;
+    return (sDrawingFbMask & (1u << fb)) != 0;
 }
 
 void ps2_gs_frame_setup(int fb_index)
