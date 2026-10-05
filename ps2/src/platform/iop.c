@@ -47,6 +47,7 @@ DECLARE_IRX(mcman);
 DECLARE_IRX(mcserv);
 DECLARE_IRX(libsd);
 DECLARE_IRX(sdr);
+DECLARE_IRX(ssb_audio);
 
 DECLARE_IRX(bdm);
 DECLARE_IRX(bdmfs_fatfs);
@@ -324,16 +325,17 @@ int ps2_iop_mmce_prepare_runtime_stream(void)
 int ps2_iop_load_audio_driver(void)
 {
     /*
-     * Keep SDR out of early boot. On real hardware an unavailable SDR RPC
-     * endpoint previously left the EE client waiting forever and looked like
-     * a pink-screen boot hang. Storage, PAD and MC are already established
-     * before this late load is attempted.
+     * Do not use sdrdrv here. Real-hardware testing proved that the SDR client
+     * can poison the shared SIF RPC path and stall later storage traffic.
+     * ssb_audio is a tiny purpose-built server exposing only the libsd
+     * operations this port needs (init, batched register writes, sample DMA,
+     * and optional readback).
      */
-    if (ps2_iop_module_loaded("sdr"))
+    if (ps2_iop_module_loaded("ssb_audio"))
         return 0;
 
-    ps2_log("IOP: starting deferred sdr audio server");
-    return LOAD_IRX(sdr);
+    ps2_log("IOP: starting dedicated ssb_audio server");
+    return LOAD_IRX(ssb_audio);
 }
 
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
