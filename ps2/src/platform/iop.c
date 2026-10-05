@@ -859,6 +859,15 @@ int ps2_iop_prepare_save_services(void)
     int emb_man;
     int emb_serv;
 
+    /* MMCE boot already loaded the exact embedded MCMAN/MCSERV pair used by
+     * the official MMCE test app. Do not replace/duplicate it with ROM XMC
+     * modules after storage and PADMAN are active. */
+    if (sSaveServicesReady)
+    {
+        ps2_log("IOP: memory-card services already established during boot");
+        return 1;
+    }
+
     sSaveServicesReady = 0;
 
     if (!pad_rpc_ready())
@@ -996,17 +1005,32 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
         return 0;
 
     case PS2_BOOT_MMCE:
-        /* Match ps2-mmce/testapp's critical SIO2 ordering:
-         *   SIO2MAN -> MMCEMAN -> SIO2 clients (PADMAN/MTAPMAN/MCMAN)
-         * MMCEMAN must install its SIO2 hook before PADMAN resolves imports.
-         * The reference test app also gives MMCEMAN a short settle window. */
-        ps2_log("IOP: MMCE: loading MMCEMAN before controller clients");
+        /* Follow ps2-mmce/testapp's SIO2 client ordering exactly:
+         *
+         *   SIO2MAN -> MMCEMAN -> MCMAN -> MCSERV -> PADMAN
+         *
+         * The previous fork still diverged here by loading PADMAN first and
+         * then bringing up ROM XMCMAN/XMCSERV much later. That leaves a second
+         * memory-card stack entering the already-active MMCE/PAD SIO2 path
+         * after the DAT and controller are live. Keep one known PS2SDK stack
+         * from boot instead, exactly like the MMCE reference application. */
+        ps2_log("IOP: MMCE: loading reference SIO2 client order");
         if (LOAD_IRX(mmceman) < 0)
             return -1;
         DelayThread(1000 * 1000);
-        ps2_log("IOP: MMCE: hook installed; loading mtapman + padman");
-        if (LOAD_IRX(mtapman) < 0 || LOAD_IRX(padman) < 0)
+
+        if (LOAD_IRX(mcman) < 0 || LOAD_IRX(mcserv) < 0)
             return -1;
+        sSaveServicesReady = 1;
+        ps2_log("IOP: MMCE: mcman + mcserv ready before padman");
+
+        if (LOAD_IRX(padman) < 0)
+            return -1;
+
+        /* Multitap is not part of the MMCE reference app. Add it only after
+         * the reference MMCE/memory-card/pad chain is fully established. */
+        if (LOAD_IRX(mtapman) < 0)
+            ps2_log("IOP: MMCE: mtapman unavailable; continuing without multitap");
         return 0;
 
     case PS2_BOOT_HDD:
