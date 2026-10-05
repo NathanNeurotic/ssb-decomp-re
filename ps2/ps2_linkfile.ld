@@ -12,13 +12,18 @@ ENTRY(__start);
 
 PHDRS {
   text PT_LOAD;
+  late PT_LOAD;
 }
 
 SECTIONS {
 	.text 0x00100000: {
 		_ftext = . ;
 		*(.text)
-		*(.text.*)
+		/* Keep the functions present in the proven build in the early image,
+		 * but leave the newly-referenced blocking init entry for .late_text. */
+		*(EXCLUDE_FILE(*sdr_main.o) .text.*)
+		*sdr_main.o(.text.sceSdTransToIOP)
+		*sdr_main.o(.text.sceSdRemote)
 		*(.gnu.linkonce.t*)
 		KEEP(*(.init))
 		KEEP(*(.fini))
@@ -28,7 +33,8 @@ SECTIONS {
 	PROVIDE(_etext = .);
 	PROVIDE(etext = .);
 
-	.ctors ALIGN(16): {
+	/* Hardware-proven early image boundary from 13dffe8. */
+	.ctors 0x00276810: {
 		PROVIDE(__CTOR_LIST__ = .);
 		KEEP(*crtbegin*.o(.ctors))
 		KEEP(*(EXCLUDE_FILE(*crtend*.o) .ctors))
@@ -47,7 +53,7 @@ SECTIONS {
 
 	.reginfo : { *(.reginfo) }
 
-	.data ALIGN(128): {
+	.data 0x00276880: {
 		_fdata = . ;
 		__ps2_ovl_data_start = .;
 		. = ALIGN(16); __ps2_ovl0_data_start = .;
@@ -646,9 +652,9 @@ SECTIONS {
 		SORT(CONSTRUCTORS)
 	}
 
-	.rodata ALIGN(128): {
+	.rodata 0x00312780: {
 		*(.rodata)
-		*(.rodata.*)
+		*(EXCLUDE_FILE(*spu.o) .rodata.*)
 		*(.gnu.linkonce.r*)
 	}
 
@@ -659,7 +665,7 @@ SECTIONS {
 	.lit4 ALIGN(128): { *(.lit4) }
 	.lit8 ALIGN(128): { *(.lit8) }
 
-	.sdata ALIGN(128): {
+	.sdata 0x0031d980: {
 		*(.sdata)
 		*(.sdata.*)
 		*(.gnu.linkonce.s*)
@@ -676,7 +682,7 @@ SECTIONS {
 		*(.scommon)
 	}
 
-	.bss ALIGN(128) : {
+	.bss 0x0031da00 : {
 		. = ALIGN(16); __ps2_ovl0_bss_start = .;
 		*libssb_game.a:lbcommon.o(.bss .bss.* COMMON)
 		*libssb_game.a:lbreloc.o(.bss .bss.* COMMON)
@@ -1282,14 +1288,16 @@ SECTIONS {
 	.late_text ALIGN(16) : {
 		*(.late_text)
 		*(.late_text.*)
-	}
+		*sdr_main.o(.text.sceSdRemoteInit)
+	} :late
 	.late_rodata ALIGN(16) : {
 		*(.late_rodata)
 		*(.late_rodata.*)
-	}
+		*spu.o(.rodata .rodata.*)
+	} :late
 	.late_irx ALIGN(128) : {
 		*sdr_irx.o(.data .data.*)
-	}
+	} :late
 
 	_end = . ;
 	PROVIDE(end = .);
