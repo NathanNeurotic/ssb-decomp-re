@@ -166,6 +166,7 @@ void ps2_file_close(int fd);
 
 void ps2_iop_init(void);                 /* reset IOP + load base modules */
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
+int ps2_iop_load_audio_driver(void); /* deferred SDR server; safe to call after storage/input */
 int ps2_iop_mmce_prepare_runtime_stream(void);
 int  ps2_iop_module_loaded(const char *name);
 int  ps2_iop_module_count(void);
