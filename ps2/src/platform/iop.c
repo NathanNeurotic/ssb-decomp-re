@@ -208,10 +208,11 @@ static int activate_filexio_client(void)
     if (sFsClient == PS2_FS_CLIENT_FILEXIO)
         return 0;
 
-    /* fileXioInit() has an unbounded bind loop, so only enter it after the
-     * bounded service probe proved that the inherited FILEXIO server exists. */
-    if (!ps2_iop_rpc_available(FILEXIO_IRX))
-        return -1;
+    /* Call this only after the FILEXIO module has been positively established
+     * by an inherited-service path or a concrete module load. Do not perform
+     * another RPC-ID presence probe here: probing a missing service is the
+     * exact failure mode seen on real hardware. */
+    ps2_log("IOP: binding fileXio client to established server");
     if (fileXioInit() < 0)
         return -1;
 
@@ -255,8 +256,6 @@ int ps2_iop_prepare_filesystem_client(void)
 
 int ps2_iop_promote_filesystem_client(void)
 {
-    const uint32_t loadfile_rpc = 0x80000006u;
-    const uint32_t iopheap_rpc = 0x80000003u;
     PS2BootDevice dev = ps2_storage_data_device();
 
     if (!ps2_storage_requires_iop_preserve() || !device_prefers_iomanx(dev))
@@ -264,36 +263,26 @@ int ps2_iop_promote_filesystem_client(void)
     if (sFsClient == PS2_FS_CLIENT_FILEXIO)
         return 0;
 
-    if (ps2_iop_rpc_available(FILEXIO_IRX))
+    /* The real DAT open already failed through legacy FileIO. Do not ask
+     * whether FILEXIO exists by binding to its RPC ID: an absent service can
+     * wedge the EE before recovery even begins. Instead, concretely establish
+     * the bridge. recovery_load_irx() tolerates an already-resident module,
+     * so this covers both inherited fileXio and the missing-bridge case
+     * without a speculative bind. */
+    ps2_log("IOP: DAT not visible through FileIO; establishing fileXio bridge");
+    if (recovery_load_irx("filexio", filexio_irx, size_filexio_irx) < 0)
     {
-        if (activate_filexio_client() < 0)
-            return -1;
-        ps2_log("IOP: promoted filesystem client to inherited fileXio");
-        return 1;
-    }
-
-    /* The storage filesystem itself stays exactly as the launcher left it.
-     * If only the EE<->iomanX bridge is missing, add fileXio alone. Do not
-     * reload iomanX, BDM, USB, MX4SIO, MMCE, ATA, or any mounted filesystem. */
-    if (!ps2_iop_rpc_available(loadfile_rpc) ||
-        !ps2_iop_rpc_available(iopheap_rpc))
-    {
-        ps2_log("IOP: cannot lazy-load fileXio (loadfile/iopheap RPC absent)");
+        ps2_log("IOP: fileXio bridge not ready; deferring to BDM recovery");
         return -1;
     }
 
-    ps2_log("IOP: DAT not visible through FileIO; adding fileXio bridge only");
-    if (lazy_load_bridge_irx("filexio", filexio_irx, size_filexio_irx) < 0)
-        return -1;
-    if (!ps2_iop_rpc_available(FILEXIO_IRX))
-    {
-        ps2_log("IOP: fileXio RPC absent after bridge load");
-        return -1;
-    }
     if (activate_filexio_client() < 0)
+    {
+        ps2_log("IOP: fileXio client bind failed; deferring to BDM recovery");
         return -1;
+    }
 
-    ps2_log("IOP: promoted filesystem client to lazy fileXio");
+    ps2_log("IOP: promoted filesystem client to fileXio");
     return 1;
 }
 
