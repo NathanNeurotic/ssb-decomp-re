@@ -114,8 +114,7 @@ int ps2_assets_init(void)
         stream_fd = ps2_file_mmce_enter_streaming(sFd);
         if (stream_fd < 0)
         {
-            ps2_log("assets: MMCE runtime streaming handoff failed");
-            return 0;
+            ps2_panic("MMCE DAT opened and loaded, but MMCEDRV runtime handoff failed");
         }
         sFd = stream_fd;
     }
