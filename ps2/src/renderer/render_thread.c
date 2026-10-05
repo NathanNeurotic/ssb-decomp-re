@@ -30,7 +30,6 @@ static volatile int sHead, sTail;
 static int sJobSema = -1;
 static int sThreadId = -1;
 static uint32_t sTasksDone;
-static volatile int sRenderBusy;
 static uint8_t sStack[64 * 1024] __attribute__((aligned(64)));
 
 /* libultra side (ps2/src/ultra/sp.c): posts OS_EVENT_SP / OS_EVENT_DP. */
@@ -137,17 +136,10 @@ static void render_thread(void *arg)
         RenderJob job;
 
         WaitSema(sJobSema);
-        /*
-         * Set busy before consuming the queue entry. The VBlank ISR uses this
-         * plus head/tail to avoid presenting a framebuffer while GIF/GS work
-         * is still changing it.
-         */
-        sRenderBusy = 1;
         job = sQueue[sTail];
         sTail = (sTail + 1) % RENDER_QUEUE;
 
         render_one(&job);
-        sRenderBusy = 0;
         ps2_render_task_done(job.cookie);
         {
             extern void ps2_crash_test_poll(void);
@@ -155,11 +147,6 @@ static void render_thread(void *arg)
             ps2_crash_test_poll();
         }
     }
-}
-
-int ps2_render_is_idle(void)
-{
-    return !sRenderBusy && sHead == sTail;
 }
 
 void ps2_render_thread_init(void)
