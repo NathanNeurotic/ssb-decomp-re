@@ -29,11 +29,40 @@ static uint32_t sMisses;
 
 static int read_exact(void *dst, uint32_t offset, uint32_t size)
 {
-    if (ps2_file_seek(sFd, offset) < 0)
+    extern void ps2_delay_vblanks(int n);
+    int attempt;
+
+    /*
+     * Every attempt starts from the absolute pack offset, so a transport that
+     * returns a short/error read cannot leave the next retry at an ambiguous
+     * file position. This is useful for removable/network storage as well as
+     * MMCE and keeps recovery below the asset mapping layer.
+     */
+    for (attempt = 0; attempt < 3; attempt++)
     {
-        return 0;
+        int seek_rc = ps2_file_seek(sFd, offset);
+        int got;
+
+        if (seek_rc < 0)
+        {
+            ps2_log("assets: seek failed off=0x%08x rc=%d attempt=%d",
+                    (unsigned)offset, seek_rc, attempt + 1);
+        }
+        else
+        {
+            got = ps2_file_read(sFd, dst, size);
+            if (got == (int)size)
+                return 1;
+
+            ps2_log("assets: short/read fail off=0x%08x want=%u got=%d attempt=%d",
+                    (unsigned)offset, (unsigned)size, got, attempt + 1);
+        }
+
+        if (attempt + 1 < 3)
+            ps2_delay_vblanks(2);
     }
-    return ps2_file_read(sFd, dst, size) == (int)size;
+
+    return 0;
 }
 
 int ps2_assets_init(void)
@@ -116,6 +145,21 @@ int ps2_assets_init(void)
                               ? sResidentBlob + (sRegions[i].file_offset - sHeader.resident_offset)
                               : NULL;
     }
+
+    /*
+     * MMCE is the only backend whose setup driver differs from its intended
+     * in-game streaming driver. Promote the already-open pack now, after all
+     * setup/resident reads but before boot.c initializes the EE pad client.
+     * The asset API itself remains unchanged after this point.
+     */
+    if (ps2_storage_data_device() == PS2_BOOT_MMCE)
+    {
+        int runtime_fd = ps2_file_mmce_enter_runtime_stream(sFd);
+        if (runtime_fd < 0)
+            ps2_panic("MMCE setup reads passed, but in-game DAT stream promotion failed");
+        sFd = runtime_fd;
+    }
+
     ps2_log("assets: %s: %u regions, %u KiB resident, %u KiB total", path, (unsigned)sHeader.region_count,
             (unsigned)(sHeader.resident_bytes >> 10), (unsigned)(sHeader.total_size >> 10));
     return 1;
@@ -185,7 +229,8 @@ void ps2_rom_read(uint32_t rom_addr, void *dst, uint32_t size)
             if (!read_exact(out, r->file_offset + off, n))
             {
                 SignalSema(sReadSema);
-                ps2_panic("asset read failed at 0x%08x (%u bytes)", (unsigned)rom_addr, (unsigned)n);
+                ps2_panic("asset read failed vrom=0x%08x file=0x%08x size=%u",
+                          (unsigned)rom_addr, (unsigned)(r->file_offset + off), (unsigned)n);
             }
             SignalSema(sReadSema);
             sBytesRead += n;
