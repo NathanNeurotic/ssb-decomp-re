@@ -245,8 +245,13 @@ void ps2_iop_init(void)
     LOAD_IRX(padman);
     LOAD_IRX(mcman);
     LOAD_IRX(mcserv);
+
+    /* Real PS2 hardware consistently wedges while starting the embedded
+     * sdrdrv during the baseline IOP bring-up. Keep the otherwise-clean
+     * upstream stack intact and defer sound rather than trapping the entire
+     * boot behind the pink IOP stage. */
     LOAD_IRX(libsd);
-    LOAD_IRX(sdr);
+    ps2_log("IOP: hardware-safe baseline: sdr deferred");
 
     ps2_log("IOP: %s, %d base modules",
             sIopWasReset ? "reset" : "kept (inherited filesystem)", sLoadedCount);
