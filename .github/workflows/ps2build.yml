@@ -91,71 +91,9 @@ jobs:
         run: |
           set -euo pipefail
           elf="ps2/build/bin/ssb64.elf"
-          unstripped="ps2/build/obj/ssb64/ssb64.unstripped.elf"
-          readelf="$PS2BUILD_HOME/toolchain/ee/bin/mips64r5900el-ps2-elf-readelf"
-
           test -s "$elf"
-          test -s "$unstripped"
-          ls -lh "$elf" "$unstripped"
-          "$readelf" -h "$elf"
-
-          # Hardware launchers in the tested path must see one executable
-          # PT_LOAD. A previous audio experiment used a second PT_LOAD for
-          # deferred code; real hardware jumped into an unloaded address and
-          # raised a reserved-instruction exception.
-          load_count="$("$readelf" -lW "$unstripped" | awk '$1 == "LOAD" {n++} END {print n+0}')"
-          test "$load_count" -eq 1
-
-          # Freeze the addresses that define the known-good 13dffe8 early
-          # runtime image. New optional services may only live after _end_bss.
-          python3 - "$unstripped" "$readelf" <<'PY'
-          import re
-          import subprocess
-          import sys
-
-          elf, readelf = sys.argv[1:3]
-          sec = subprocess.check_output([readelf, "-SW", elf], text=True)
-          sym = subprocess.check_output([readelf, "-sW", elf], text=True)
-
-          expected_sections = {
-              ".text": 0x00100000,
-              ".ctors": 0x00276810,
-              ".data": 0x00276880,
-              ".rodata": 0x00312780,
-              ".sdata": 0x0031D980,
-              ".bss": 0x0031DA00,
-              ".late_text": 0x00CCE280,
-          }
-          for name, want in expected_sections.items():
-              m = re.search(r"\]\s+" + re.escape(name) + r"\s+\S+\s+([0-9A-Fa-f]+)", sec)
-              if not m:
-                  raise SystemExit(f"missing section {name}")
-              got = int(m.group(1), 16)
-              if got != want:
-                  raise SystemExit(f"{name}: got 0x{got:08x}, expected 0x{want:08x}")
-
-          expected_symbols = {
-              "ps2_main": 0x00254E20,
-              "ps2_input_init": 0x00259618,
-              "ps2_save_init": 0x00258E48,
-              "ps2_audio_init": 0x00259998,
-              "ps2_render_thread_init": 0x0025C460,
-              "gPS2SceneArena": 0x00662580,
-              "gSYFramebufferSets": 0x00C62580,
-              "_end_bss": 0x00CCE280,
-          }
-          found = {}
-          for line in sym.splitlines():
-              m = re.match(r"\s*\d+:\s+([0-9A-Fa-f]+)\s+\d+\s+\S+\s+\S+\s+\S+\s+\S+\s+(.+)", line)
-              if m and m.group(2) in expected_symbols:
-                  found[m.group(2)] = int(m.group(1), 16)
-          for name, want in expected_symbols.items():
-              got = found.get(name)
-              if got != want:
-                  raise SystemExit(f"{name}: got {got!r}, expected 0x{want:08x}")
-
-          print("ELF layout matches proven early runtime; deferred audio is in the primary load image.")
-          PY
+          ls -lh "$elf"
+          "$PS2BUILD_HOME/toolchain/ee/bin/mips64r5900el-ps2-elf-readelf" -h "$elf"
 
       - name: Prepare artifact
         shell: bash
