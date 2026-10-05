@@ -13,7 +13,11 @@ static uint32_t sAiQueuedBytes;
 
 void ps2_audio_init(void)
 {
-    ps2_spu_init();
+    /* The embedded sdrdrv is deliberately not started in this hardware-safe
+     * baseline build. Calling sceSdRemoteInit without that server can block
+     * indefinitely, so keep audio silent instead of turning the later boot
+     * stage into the same hang we just removed from ps2_iop_init(). */
+    ps2_log("audio: sdr deferred on real-hardware baseline");
 }
 
 int32_t ps2_audio_ai_set_frequency(uint32_t frequency)
