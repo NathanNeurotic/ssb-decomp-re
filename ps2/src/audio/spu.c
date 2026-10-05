@@ -251,15 +251,6 @@ int ps2_spu_init(void)
     for (i = 0; i < sCount; i++)
         sResidentOf[i] = -1;
 
-    /* Never probe/bind SDR speculatively. ps2_iop_prepare_audio_services()
-     * has already started a concrete SDR server or marked audio unavailable.
-     * Only enter libsdr's blocking initializer when a server should exist. */
-    if (!ps2_iop_audio_services_ready())
-    {
-        ps2_log("audio: SDR service was not prepared; audio stays silent");
-        return -1;
-    }
-
     SifInitIopHeap();
     sIopStage = SifAllocIopHeap(IOP_STAGE_SIZE);
     sIopBatch = SifAllocIopHeap(MAX_BATCH * sizeof(sceSdBatch));
@@ -269,13 +260,11 @@ int ps2_spu_init(void)
         ps2_log("audio: IOP heap allocation failed; audio stays silent");
         return -1;
     }
-    ps2_log("audio: binding libsdr to prepared SDR service");
     if (sceSdRemoteInit() < 0)
     {
-        ps2_log("audio: prepared SDR service rejected libsdr bind; audio stays silent");
+        ps2_log("audio: sdrdrv RPC unavailable; audio stays silent");
         return -1;
     }
-    ps2_log("audio: libsdr bind complete");
     sceSdRemote(1, rSdInit, 0);
 
     /* core 1: all voices dry to the output, master volume full, no effects */
