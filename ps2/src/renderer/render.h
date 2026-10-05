@@ -88,6 +88,11 @@ int ps2_gs_is_zbuffer(const void *n64_addr);
 void ps2_gs_frame_setup(int fb_index);          /* FRAME/ZBUF/offset/scissor defaults */
 void ps2_gs_clear(int fb_index, uint32_t rgba, int clear_z);
 void ps2_gs_present_now(int fb_index);          /* direct display switch (boot screen) */
+/* Track only framebuffer(s) actively being drawn so VI can defer a flip to
+ * that exact target without waiting for the entire render queue to go idle. */
+void ps2_gs_framebuffer_draw_begin(int fb_index);
+void ps2_gs_framebuffers_draw_complete(uint32_t fb_mask);
+int ps2_gs_is_framebuffer_drawing(const void *n64_fb);
 
 /* Debug text (gs.c): 8x8 font, coordinates in 320x240 screen pixels. */
 void ps2_gs_text(int x, int y, uint32_t rgba, const char *s);
@@ -167,6 +172,7 @@ void ps2_gbi_init(void);
 void ps2_gbi_run(const void *dl);
 /* True if the last run targeted a framebuffer (sets *fb_index). */
 int ps2_gbi_last_color_target(void);
+uint32_t ps2_gbi_color_targets_mask(void);
 
 /* ------------------------------------------------------------------ */
 /* Debug overlay (overlay.c)                                            */
