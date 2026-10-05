@@ -101,8 +101,27 @@ int ps2_assets_init(void)
                               ? sResidentBlob + (sRegions[i].file_offset - sHeader.resident_offset)
                               : NULL;
     }
+
+    /* MMCEMAN is only the setup filesystem. The MMCE project's own guidance
+     * says in-game streaming belongs on MMCEDRV. Header/table/resident data
+     * are now safely resident, so hand the still-open DAT descriptor to the
+     * lightweight runtime driver before the first scene starts. */
+    if (ps2_storage_data_device() == PS2_BOOT_MMCE)
+    {
+        int stream_fd;
+
+        ps2_log("assets: handing open MMCE DAT to MMCEDRV for gameplay");
+        stream_fd = ps2_file_mmce_enter_streaming(sFd);
+        if (stream_fd < 0)
+        {
+            ps2_log("assets: MMCE runtime streaming handoff failed");
+            return 0;
+        }
+        sFd = stream_fd;
+    }
+
     ps2_log("assets: %s: %u regions, %u KiB resident, %u KiB total", path, (unsigned)sHeader.region_count,
-            (unsigned)(sHeader.resident_bytes >> 10), (unsigned)(sHeader.total_size >> 10));
+            (unsigned)(sHeader.resident_bytes >> 10), (unsigned)sHeader.total_size >> 10);
     return 1;
 }
 
