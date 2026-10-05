@@ -10,11 +10,14 @@
 
 #include <delaythread.h>
 #include <libsdr-common.h>
+#include <kernel.h>
 #include <sifrpc.h>
 #include <string.h>
 
 static uint32_t sAiFrequency;
 static uint32_t sAiQueuedBytes;
+static int sAudioThreadId = -1;
+static uint8_t sAudioThreadStack[16 * 1024] __attribute__((aligned(64)));
 
 static int sdr_rpc_ready(void)
 {
@@ -39,8 +42,9 @@ static int sdr_rpc_ready(void)
     return 0;
 }
 
-void ps2_audio_init(void)
+static void audio_init_thread(void *arg)
 {
+    (void)arg;
     ps2_log("audio: init begin");
 
     /*
@@ -69,6 +73,40 @@ void ps2_audio_init(void)
         ps2_log("audio: SPU2 backend unavailable; continuing silent");
     else
         ps2_log("audio: init complete");
+}
+
+void ps2_audio_init(void)
+{
+    ee_thread_t th = { 0 };
+    extern void *_gp;
+
+    if (sAudioThreadId >= 0)
+        return;
+
+    /*
+     * SDR/libsd RPC is optional to getting the game on screen. Keep it off
+     * the boot thread: a real IOP/server fault must never wedge storage,
+     * input, rendering, or the game itself. The synthesizer already treats
+     * an unready SPU backend as silent and begins using it once sReady is set.
+     */
+    th.func = (void *)audio_init_thread;
+    th.stack = sAudioThreadStack;
+    th.stack_size = sizeof(sAudioThreadStack);
+    th.gp_reg = &_gp;
+    th.initial_priority = 109;
+
+    sAudioThreadId = CreateThread(&th);
+    if (sAudioThreadId < 0)
+    {
+        ps2_log("audio: could not create init thread (%d); continuing silent", sAudioThreadId);
+        return;
+    }
+    if (StartThread(sAudioThreadId, NULL) < 0)
+    {
+        ps2_log("audio: could not start init thread; continuing silent");
+        return;
+    }
+    ps2_log("audio: initialization scheduled off the boot path");
 }
 
 int32_t ps2_audio_ai_set_frequency(uint32_t frequency)
