@@ -51,7 +51,23 @@ static volatile int sPktInFlight; /* a buffer was kicked and not yet waited on *
 
 /* The game's framebuffers (RDRAM on N64) - defined by the linker glue
  * (ps2/src/platform/arena.S) so every scene's arena-size arithmetic holds. */
-extern uint16_t gSYFramebufferSets[PS2_FB_COUNT][PS2_SCREEN_W * PS2_SCREEN_H];
+/*
+ * The game-owned framebuffer backing store is 320x230, not 320x240.
+ * Keep this declaration byte-for-byte consistent with src/sys/video.h.
+ *
+ * The old 240-line declaration changed C's array stride by 6400 bytes
+ * per framebuffer. As a result, game FB0 and FB1 both mapped to GS FB0,
+ * while game FB2 mapped to GS FB1. The scheduler still believed it had
+ * three independent buffers, so rendering could modify the same GS buffer
+ * currently being scanned out, producing the persistent moving horizontal
+ * tear/line seen on real hardware.
+ *
+ * The GS output remains 320x240; this constant describes only the game's
+ * RDRAM-style backing layout used to identify which logical framebuffer an
+ * N64 pointer belongs to.
+ */
+#define PS2_GAME_FB_H 230
+extern uint16_t gSYFramebufferSets[PS2_FB_COUNT][PS2_GAME_FB_H][PS2_SCREEN_W];
 extern uint16_t gSYZBuffer[PS2_SCREEN_W * PS2_SCREEN_H] __attribute__((weak));
 
 static volatile int sDisplayedFb = -1;
