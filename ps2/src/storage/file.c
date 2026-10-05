@@ -22,6 +22,7 @@
 
 static char sMmceDatPath[384];
 static int sMmceSetupNativeFd = -1;
+static char sMmceRuntimeError[160];
 
 static int is_mmce_stream_fd(int fd)
 {
@@ -118,9 +119,15 @@ int ps2_file_size(int fd)
     return size;
 }
 
+const char *ps2_file_mmce_last_error(void)
+{
+    return sMmceRuntimeError[0] != '\0' ? sMmceRuntimeError : "unknown MMCE runtime handoff failure";
+}
+
 int ps2_file_mmce_enter_runtime_stream(int fd)
 {
     int remote_fd;
+    sMmceRuntimeError[0] = '\0';
     int stream_fd;
     int port = 2;
     char stream_path[48];
@@ -131,7 +138,8 @@ int ps2_file_mmce_enter_runtime_stream(int fd)
 
     if (sMmceDatPath[0] == '\0')
     {
-        ps2_log("MMCE: no DAT path remembered for runtime handoff");
+        snprintf(sMmceRuntimeError, sizeof(sMmceRuntimeError), "no DAT path remembered before MMCE handoff");
+        ps2_log("MMCE: %s", sMmceRuntimeError);
         return -1;
     }
 
@@ -142,7 +150,8 @@ int ps2_file_mmce_enter_runtime_stream(int fd)
     sMmceSetupNativeFd = fileXioOpen(sMmceDatPath, O_RDONLY, 0);
     if (sMmceSetupNativeFd < 0)
     {
-        ps2_log("MMCE: native setup open failed (%d)", sMmceSetupNativeFd);
+        snprintf(sMmceRuntimeError, sizeof(sMmceRuntimeError), "native MMCEMAN open failed (%d)", sMmceSetupNativeFd);
+        ps2_log("MMCE: %s", sMmceRuntimeError);
         return -1;
     }
 
@@ -150,7 +159,8 @@ int ps2_file_mmce_enter_runtime_stream(int fd)
                               NULL, 0, NULL, 0);
     if (remote_fd < 0)
     {
-        ps2_log("MMCE: ioctl2 GET_FD failed (%d)", remote_fd);
+        snprintf(sMmceRuntimeError, sizeof(sMmceRuntimeError), "ioctl2(0x80) GET_FD failed (%d)", remote_fd);
+        ps2_log("MMCE: %s", sMmceRuntimeError);
         return -1;
     }
 
@@ -163,7 +173,8 @@ int ps2_file_mmce_enter_runtime_stream(int fd)
 
     if (ps2_iop_mmce_prepare_runtime_stream() < 0)
     {
-        ps2_log("MMCE: failed to load MMCEDRV runtime stack");
+        snprintf(sMmceRuntimeError, sizeof(sMmceRuntimeError), "post-reset MMCEDRV/bridge module load failed (fd=%d port=%d)", remote_fd, port);
+        ps2_log("MMCE: %s", sMmceRuntimeError);
         return -1;
     }
 
@@ -171,13 +182,15 @@ int ps2_file_mmce_enter_runtime_stream(int fd)
     stream_fd = fileXioOpen(stream_path, O_RDONLY, 0);
     if (stream_fd < 0)
     {
-        ps2_log("MMCE: runtime bridge open failed (%d)", stream_fd);
+        snprintf(sMmceRuntimeError, sizeof(sMmceRuntimeError), "MMCEDRV fd validation/bridge open failed (%d; fd=%d port=%d)", stream_fd, remote_fd, port);
+        ps2_log("MMCE: %s", sMmceRuntimeError);
         return -1;
     }
 
     if (ps2_iop_mmce_finish_runtime_services() < 0)
     {
-        ps2_log("MMCE: DAT fd valid, but post-MMCE pad/mc services failed");
+        snprintf(sMmceRuntimeError, sizeof(sMmceRuntimeError), "DAT fd validated, but post-MMCE pad/mc module load failed");
+        ps2_log("MMCE: %s", sMmceRuntimeError);
         fileXioClose(stream_fd);
         return -1;
     }
