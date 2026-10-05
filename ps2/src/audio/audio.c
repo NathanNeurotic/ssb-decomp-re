@@ -41,6 +41,8 @@ static int sdr_rpc_ready(void)
 
 void ps2_audio_init(void)
 {
+    ps2_log("audio: init begin");
+
     /*
      * ps2sdk's sceSdRemoteInit() waits indefinitely for sce_SDR_DEV. Probe
      * the service first so a bad/missing IOP audio server can never turn
@@ -48,11 +50,13 @@ void ps2_audio_init(void)
      */
     if (!sdr_rpc_ready())
     {
+        ps2_log("audio: SDR RPC absent; loading server");
         if (ps2_iop_load_audio_driver() < 0)
         {
             ps2_log("audio: SDR module failed to start; continuing silent");
             return;
         }
+        ps2_log("audio: SDR module load returned; probing RPC");
         if (!sdr_rpc_ready())
         {
             ps2_log("audio: SDR RPC server not ready after bounded wait; continuing silent");
@@ -61,7 +65,10 @@ void ps2_audio_init(void)
     }
 
     ps2_log("audio: SDR RPC ready; initializing SPU2 backend");
-    ps2_spu_init();
+    if (ps2_spu_init() < 0)
+        ps2_log("audio: SPU2 backend unavailable; continuing silent");
+    else
+        ps2_log("audio: init complete");
 }
 
 int32_t ps2_audio_ai_set_frequency(uint32_t frequency)
