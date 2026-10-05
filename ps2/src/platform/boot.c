@@ -30,7 +30,7 @@ extern void ps2_render_thread_init(void);
 extern void ps2_arena_init(void);
 extern void ps2_overlay_state_init(void);
 
-#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [MMCE-FD-VERIFY]"
+#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [MMCE-STORAGE-FIRST]"
 
 /* Physical/network storage can appear asynchronously after its drivers load.
  * Match launcHER's conservative real-hardware window: wait up to ~20 s. */
@@ -141,14 +141,19 @@ int ps2_main(int argc, char *argv[])
     ps2_vi_init();
     ps2_arena_init();
     ps2_overlay_state_init();
-    ps2_input_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
+    /*
+     * MMCE asset setup performs the one deliberate runtime IOP transition.
+     * Do it before libpad binds to padman; otherwise the reset invalidates the
+     * EE pad RPC client and also starts MMCEDRV after competing SIO2 clients.
+     */
     if (!ps2_assets_init())
     {
         ps2_panic("asset pack not found next to the ELF (%sSSB64.DAT). Run ps2/tools/prepare_assets.sh first.",
                   ps2_storage_boot_dir());
     }
+    ps2_input_init();
     ps2_save_init();
     ps2_audio_init();
     ps2_render_thread_init();
