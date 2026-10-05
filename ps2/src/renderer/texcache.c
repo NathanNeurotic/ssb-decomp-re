@@ -292,55 +292,21 @@ static inline int src_coord(int x, int size, int mirror)
     return x % size;
 }
 
-static uint32_t hash_bytes(uint32_t h, const uint8_t *p, uint32_t n)
-{
-    uint32_t i;
-
-    for (i = 0; i < n; i++)
-        h = (h ^ p[i]) * 16777619u;
-    return h;
-}
-
 static uint32_t hash_source(const PS2TexKey *k)
 {
     const uint8_t *p = (const uint8_t *)k->addr;
     uint32_t h = 2166136261u;
-    uint32_t row_bytes;
-    uint32_t sample;
-    int rows[3];
-    int ri;
+    int i;
 
-    switch (k->siz)
+    for (i = 0; i < 32; i++)
+        h = (h ^ p[i]) * 16777619u;
+    if (k->tlut != NULL)
     {
-    case SIZ_4: row_bytes = ((uint32_t)k->width + 1u) >> 1; break;
-    case SIZ_8: row_bytes = k->width; break;
-    case SIZ_16: row_bytes = (uint32_t)k->width * 2u; break;
-    default: row_bytes = (uint32_t)k->width * 4u; break;
+        const uint8_t *t = (const uint8_t *)k->tlut;
+
+        for (i = 0; i < 16; i++)
+            h = (h ^ t[i]) * 16777619u;
     }
-    if (k->line_bytes != 0 && row_bytes > k->line_bytes)
-        row_bytes = k->line_bytes;
-    sample = (row_bytes > 64u) ? 64u : row_bytes;
-
-    /*
-     * Sprite storage is frequently reused and many sprites have transparent
-     * leading rows. Sampling top/middle/bottom catches content changes that
-     * the former first-32-byte hash missed, preventing stale VRAM sprites.
-     */
-    rows[0] = 0;
-    rows[1] = k->height / 2;
-    rows[2] = k->height - 1;
-    for (ri = 0; ri < 3; ri++)
-    {
-        const uint8_t *row = p + (uint32_t)rows[ri] * k->line_bytes;
-
-        h = hash_bytes(h, row, sample);
-        if (row_bytes > sample)
-            h = hash_bytes(h, row + row_bytes - sample, sample);
-    }
-
-    if (k->tlut != NULL && k->tlut_entries != 0)
-        h = hash_bytes(h, (const uint8_t *)k->tlut, (uint32_t)k->tlut_entries * 2u);
-
     return h;
 }
 
@@ -499,12 +465,10 @@ static int make_resident(TexEntry *e, int16_t idx)
         int i;
 
         clut_dst = staging_alloc(clut_bytes);
-        memset(clut_dst, 0, clut_bytes);
-        for (i = 0; i < k->tlut_entries && (int)k->tlut_start + i < clut_entries; i++)
+        for (i = 0; i < clut_entries; i++)
         {
-            int ci = (int)k->tlut_start + i;
             uint32_t c = (k->tlut_type == 3) ? ia16_to_ct32(pal[i]) : rgba5551_to_ct32(pal[i]);
-            int pos = (clut_entries == 256) ? ((ci & ~0x18) | ((ci & 0x08) << 1) | ((ci & 0x10) >> 1)) : ci;
+            int pos = (clut_entries == 256) ? ((i & ~0x18) | ((i & 0x08) << 1) | ((i & 0x10) >> 1)) : i;
 
             clut_dst[pos] = c;
         }
@@ -548,8 +512,7 @@ static uint32_t key_hash(const PS2TexKey *k)
 
     h ^= (uint32_t)(uintptr_t)k->tlut * 40503u;
     h ^= ((uint32_t)k->width << 16) ^ k->height ^ ((uint32_t)k->fmt << 5) ^ ((uint32_t)k->siz << 9) ^
-         ((uint32_t)k->mirror_s << 12) ^ ((uint32_t)k->mirror_t << 13) ^ ((uint32_t)k->line_bytes << 3) ^
-         ((uint32_t)k->tlut_start << 19) ^ ((uint32_t)k->tlut_entries << 7);
+         ((uint32_t)k->mirror_s << 12) ^ ((uint32_t)k->mirror_t << 13) ^ ((uint32_t)k->line_bytes << 3);
     return h;
 }
 
@@ -557,8 +520,7 @@ static int key_eq(const PS2TexKey *a, const PS2TexKey *b)
 {
     return a->addr == b->addr && a->tlut == b->tlut && a->width == b->width && a->height == b->height &&
            a->fmt == b->fmt && a->siz == b->siz && a->line_bytes == b->line_bytes &&
-           a->tlut_type == b->tlut_type && a->tlut_start == b->tlut_start &&
-           a->tlut_entries == b->tlut_entries && a->mirror_s == b->mirror_s && a->mirror_t == b->mirror_t &&
+           a->tlut_type == b->tlut_type && a->mirror_s == b->mirror_s && a->mirror_t == b->mirror_t &&
            a->odd_swap == b->odd_swap;
 }
 
