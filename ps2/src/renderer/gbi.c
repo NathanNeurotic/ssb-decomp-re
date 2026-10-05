@@ -747,59 +747,17 @@ static void bind_texture(int tile_index, TexInfo *ti)
     {
         uint16_t pal_tmem = (uint16_t)(256 + ((t->siz == G_IM_SIZ_4b) ? (t->palette * 16) : 0));
         int pl = find_load(pal_tmem, 1);
-        uint32_t delta = 0;
-        uint32_t max_entries = (t->siz == G_IM_SIZ_4b) ? 16u : 256u;
-
-        /*
-         * The SGI sprite library can load only nTLUT entries beginning at
-         * 256+startTLUT. CI8 still indexes the conceptual 256-entry palette
-         * from zero, so requiring a load that covers TMEM word 256 makes
-         * perfectly valid partial palettes disappear (notably menu cursors).
-         * If entry zero was not part of the most recent load, retain that
-         * load's placement and let texcache build a sparse GS CLUT.
-         */
-        if (pl < 0 && t->siz == G_IM_SIZ_8b)
-        {
-            int pi;
-            for (pi = R.load_count - 1; pi >= 0; pi--)
-            {
-                if (R.loads[pi].is_tlut && R.loads[pi].tmem >= 256 && R.loads[pi].tmem < 512)
-                {
-                    pl = pi;
-                    break;
-                }
-            }
-        }
 
         if (pl < 0)
-            return;
-
-        if (R.loads[pl].tmem <= pal_tmem)
         {
-            delta = (uint32_t)(pal_tmem - R.loads[pl].tmem);
-            key.tlut = R.loads[pl].src + delta * 2u;
-            key.tlut_start = 0;
-        }
-        else
-        {
-            key.tlut = R.loads[pl].src;
-            key.tlut_start = (uint16_t)(R.loads[pl].tmem - pal_tmem);
-        }
-
-        key.tlut_entries = (R.loads[pl].words > delta)
-                               ? (uint16_t)(R.loads[pl].words - delta)
-                               : 0;
-        if ((uint32_t)key.tlut_start + key.tlut_entries > max_entries)
-            key.tlut_entries = (uint16_t)(max_entries - key.tlut_start);
-        if (key.tlut_entries == 0)
             return;
-
+        }
+        key.tlut = R.loads[pl].src + (uint32_t)(pal_tmem - R.loads[pl].tmem) * 2u;
         if (gPS2TlutTrace > 0)
         {
             gPS2TlutTrace--;
-            ps2_log("ci bind tex %p tlut %p start=%u entries=%u (load tmem %u+%u cmd %p)", key.addr,
-                    key.tlut, (unsigned)key.tlut_start, (unsigned)key.tlut_entries,
-                    R.loads[pl].tmem, R.loads[pl].words, R.loads[pl].cmd);
+            ps2_log("ci bind tex %p tlut %p (tlut load cmd %p tmem %u+%u) tex load cmd %p at cmd %p", key.addr,
+                    key.tlut, R.loads[pl].cmd, R.loads[pl].tmem, R.loads[pl].words, R.loads[li].cmd, sCurCmd);
         }
         key.tlut_type = (uint8_t)((tlut_type == 3) ? 3 : 2);
         key.pal_index = t->palette;
