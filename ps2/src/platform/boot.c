@@ -30,7 +30,7 @@ extern void ps2_render_thread_init(void);
 extern void ps2_arena_init(void);
 extern void ps2_overlay_state_init(void);
 
-#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [MMCE-TWO-PHASE]"
+#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [MMCE-FD-VERIFY]"
 
 /* Physical/network storage can appear asynchronously after its drivers load.
  * Match launcHER's conservative real-hardware window: wait up to ~20 s. */
