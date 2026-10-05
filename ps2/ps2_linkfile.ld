@@ -11,8 +11,11 @@
 ENTRY(__start);
 
 PHDRS {
+  /*
+   * Real PS2 launchers used in the hardware path are only guaranteed to load
+   * the primary PT_LOAD. Keep deferred audio in that same segment.
+   */
   text PT_LOAD;
-  late PT_LOAD;
 }
 
 SECTIONS {
@@ -1289,15 +1292,15 @@ SECTIONS {
 		*(.late_text)
 		*(.late_text.*)
 		*sdr_main.o(.text.sceSdRemoteInit)
-	} :late
+	} :text
 	.late_rodata ALIGN(16) : {
 		*(.late_rodata)
 		*(.late_rodata.*)
 		*spu.o(.rodata .rodata.*)
-	} :late
+	} :text
 	.late_irx ALIGN(128) : {
 		*sdr_irx.o(.data .data.*)
-	} :late
+	} :text
 
 	_end = . ;
 	PROVIDE(end = .);
