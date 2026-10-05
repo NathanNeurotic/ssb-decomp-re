@@ -225,8 +225,23 @@ int ps2_iop_prepare_filesystem_client(void)
 {
     const uint32_t fileio_rpc = 0x80000001u;
     PS2BootDevice dev = ps2_storage_data_device();
-    int have_filexio = ps2_iop_rpc_available(FILEXIO_IRX);
-    int have_fileio = ps2_iop_rpc_available(fileio_rpc);
+    int have_filexio;
+    int have_fileio;
+
+    /* When SSB owns the freshly-reset IOP, there is nothing to infer or
+     * probe: iomanX/fileXio were loaded by ps2_iop_init() and are the
+     * filesystem contract for every reconstructed physical device. This is
+     * the RiptOPL boot model. Avoid binding to arbitrary RPC IDs entirely. */
+    if (sIopWasReset)
+    {
+        if (sFsClient != PS2_FS_CLIENT_FILEXIO)
+            return activate_filexio_client();
+        ps2_log("IOP: filesystem client = fileXio/iomanX (owned stack)");
+        return 0;
+    }
+
+    have_filexio = ps2_iop_rpc_available(FILEXIO_IRX);
+    have_fileio = ps2_iop_rpc_available(fileio_rpc);
 
     ps2_log("IOP: fs RPC fileXio=%s FileIO=%s",
             have_filexio ? "yes" : "no",
@@ -460,18 +475,18 @@ void ps2_iop_init(void)
 
     if (preserve_iop)
     {
-        /* Sidecar contract: the launcher already proved this filesystem by
-         * loading SSB64.ELF from it. Keep that IOP untouched. Basic POSIX file
-         * calls in PS2SDK bind the inherited FileIO RPC lazily, so fileXio is
-         * not a prerequisite for opening the adjacent SSB64.DAT. In
-         * particular, do not initialize loadfile/iopheap, apply SBV patches,
-         * reset the IOP, query BDM slots, or inject storage/bridge IRXs here. */
-        ps2_log("IOP: keeping launcher sidecar device stack untouched");
+        /* Only genuinely unreconstructable paths reach this branch (host:
+         * and bare pfsN:). Physical launch devices follow RiptOPL's boot
+         * model below: reset once, build the common stack, then load exactly
+         * the transport identified by argv[0]. */
+        ps2_log("IOP: preserving unreconstructable inherited filesystem");
         return;
     }
 
-    /* Explicit cross-device --data mode is the only path that owns the IOP.
-     * It starts from a clean state and loads one known stack. */
+    /* RiptOPL-style startup: SSB owns one clean IOP. Build controller and
+     * filesystem foundations FIRST, before USB/MX4SIO/MMCE/ATA drivers are
+     * introduced. That ordering is critical for MX4SIO/MMCE because storage
+     * and pads share SIO2. */
     fileXioExit();
     SifExitRpc();
     SifInitRpc(0);
@@ -494,8 +509,12 @@ void ps2_iop_init(void)
 
     LOAD_IRX(iomanx);
     LOAD_IRX(filexio);
-    fileXioInit();
+    if (fileXioInit() < 0)
+        ps2_panic("failed to bind owned fileXio client");
+    sFsClient = PS2_FS_CLIENT_FILEXIO;
 
+    /* RiptOPL loads SIO2/PAD before device transports. Do not reverse this
+     * for MX4SIO/MMCE: those devices share the controller bus. */
     LOAD_IRX(sio2man);
     LOAD_IRX(mtapman);
     LOAD_IRX(padman);
@@ -508,88 +527,94 @@ void ps2_iop_init(void)
 
 int ps2_iop_recover_generic_bdm_next(void)
 {
-    const uint32_t loadfile_rpc = 0x80000006u;
-    const uint32_t iopheap_rpc = 0x80000003u;
-
-    if (ps2_storage_data_device() != PS2_BOOT_BDM ||
-        !ps2_storage_requires_iop_preserve())
+    if (ps2_storage_data_device() != PS2_BOOT_BDM)
         return 0;
 
-    if (!ps2_iop_rpc_available(loadfile_rpc) ||
-        !ps2_iop_rpc_available(iopheap_rpc))
-    {
-        ps2_log("IOP: generic BDM recovery unavailable (loader/heap RPC missing)");
-        return -1;
-    }
-
+    /* massN: tells us the filesystem slot but not the backing transport.
+     * RiptOPL resolves that bootstrap ambiguity in a bounded transport ladder
+     * instead of inheriting or guessing from launcher state. SSB uses the
+     * adjacent SSB64.DAT as the proof after each stage. The common
+     * iomanX/fileXio/SIO2/PAD stack and BDM core are already resident. */
     if (!sBdmRecoveryBaseReady)
     {
-        ps2_log("IOP: inherited massN: is gone; rebuilding BDM core without IOP reset");
-
-        /* A reset launcher leaves legacy ioman/FileIO but removes the
-         * iomanX/BDM stack. Try fileXio first in case iomanX survived; if it
-         * did not, add iomanX and then the EE<->IOP bridge. */
-        if (!ps2_iop_rpc_available(FILEXIO_IRX))
+        if (sIopWasReset)
         {
-            recovery_load_irx("filexio", filexio_irx, size_filexio_irx);
-            if (!ps2_iop_rpc_available(FILEXIO_IRX))
-            {
-                recovery_load_irx("iomanx", iomanx_irx, size_iomanx_irx);
-                recovery_load_irx("filexio", filexio_irx, size_filexio_irx);
-            }
+            if (load_bdm_core() < 0)
+                return -1;
         }
-
-        if (!ps2_iop_rpc_available(FILEXIO_IRX) ||
-            activate_filexio_client() < 0)
+        else
         {
-            ps2_log("IOP: generic BDM recovery could not establish fileXio");
-            return -1;
+            ps2_log("IOP: inherited massN: recovery needs BDM core");
+            if (recovery_load_irx("bdm", bdm_irx, size_bdm_irx) < 0 ||
+                recovery_load_irx("bdmfs_fatfs", bdmfs_fatfs_irx, size_bdmfs_fatfs_irx) < 0)
+                return -1;
         }
-
-        /* Duplicate loads are tolerated here because the real proof is the
-         * sidecar DAT open, never module bookkeeping. */
-        recovery_load_irx("bdm", bdm_irx, size_bdm_irx);
-        recovery_load_irx("bdmfs_fatfs", bdmfs_fatfs_irx, size_bdmfs_fatfs_irx);
         sBdmRecoveryBaseReady = 1;
     }
 
-    /* Generic massN: does not encode its transport. Add one transport family
-     * at a time and let bootpath.c rediscover the real sidecar by relative
-     * path. massN numbering after recovery is deliberately ignored. */
     switch (sBdmRecoveryStage++)
     {
     case 0:
-        ps2_log("IOP: generic BDM recovery stage USB");
-        recovery_load_irx("usbd_mini", usbd_mini_irx, size_usbd_mini_irx);
-        recovery_load_irx("usbmass_bd_mini", usbmass_bd_mini_irx, size_usbmass_bd_mini_irx);
+        ps2_log("IOP: mass boot resolve stage USB");
+        if (sIopWasReset)
+        {
+            if (LOAD_IRX(usbd_mini) < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
+                return -1;
+        }
+        else
+        {
+            if (recovery_load_irx("usbd_mini", usbd_mini_irx, size_usbd_mini_irx) < 0 ||
+                recovery_load_irx("usbmass_bd_mini", usbmass_bd_mini_irx, size_usbmass_bd_mini_irx) < 0)
+                return -1;
+        }
         return 1;
 
     case 1:
-        ps2_log("IOP: generic BDM recovery stage MX4SIO");
-        /* MX4SIO hooks SIO2MAN when present. After a launcher-side IOP reset
-         * there is no live mass filesystem left to protect, so providing
-         * SIO2MAN here is safe and also prepares later controller use. */
-        recovery_load_irx("sio2man", sio2man_irx, size_sio2man_irx);
-        recovery_load_irx("mx4sio_bd", mx4sio_bd_irx, size_mx4sio_bd_irx);
+        ps2_log("IOP: mass boot resolve stage MX4SIO");
+        /* SIO2MAN/PADMAN were deliberately established before this point. */
+        if (sIopWasReset)
+        {
+            if (LOAD_IRX(mx4sio_bd) < 0)
+                return -1;
+        }
+        else if (recovery_load_irx("mx4sio_bd", mx4sio_bd_irx, size_mx4sio_bd_irx) < 0)
+            return -1;
         return 1;
 
     case 2:
-        ps2_log("IOP: generic BDM recovery stage iLink");
-        recovery_load_irx("iLinkman", iLinkman_irx, size_iLinkman_irx);
-        recovery_load_irx("IEEE1394_bd", IEEE1394_bd_irx, size_IEEE1394_bd_irx);
+        ps2_log("IOP: mass boot resolve stage iLink");
+        if (sIopWasReset)
+        {
+            if (LOAD_IRX(iLinkman) < 0 || LOAD_IRX(IEEE1394_bd) < 0)
+                return -1;
+        }
+        else
+        {
+            if (recovery_load_irx("iLinkman", iLinkman_irx, size_iLinkman_irx) < 0 ||
+                recovery_load_irx("IEEE1394_bd", IEEE1394_bd_irx, size_IEEE1394_bd_irx) < 0)
+                return -1;
+        }
         return 1;
 
     case 3:
-        ps2_log("IOP: generic BDM recovery stage ATA");
-        recovery_load_irx("ps2dev9", ps2dev9_irx, size_ps2dev9_irx);
-        recovery_load_irx("ps2atad", ps2atad_irx, size_ps2atad_irx);
+        ps2_log("IOP: mass boot resolve stage ATA");
+        if (sIopWasReset)
+        {
+            if (LOAD_IRX(ps2dev9) < 0 || LOAD_IRX(ps2atad) < 0)
+                return -1;
+        }
+        else
+        {
+            if (recovery_load_irx("ps2dev9", ps2dev9_irx, size_ps2dev9_irx) < 0 ||
+                recovery_load_irx("ps2atad", ps2atad_irx, size_ps2atad_irx) < 0)
+                return -1;
+        }
         return 1;
 
     default:
         return 0;
     }
 }
-
 static int pad_rpc_ready(void)
 {
     const uint32_t pad1_new = 0x80000100u;
@@ -874,8 +899,17 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
     switch (dev)
     {
     case PS2_BOOT_HOST:
-    case PS2_BOOT_BDM:
     case PS2_BOOT_MC:
+        return 0;
+
+    case PS2_BOOT_BDM:
+        /* A massN: launch has a concrete filesystem identity but no transport
+         * token. Load only the common BDM filesystem now; wait_for_boot_file()
+         * advances USB -> MX4SIO -> iLink -> ATA and accepts the stage whose
+         * real sidecar opens. */
+        if (load_bdm_core() < 0)
+            return -1;
+        sBdmRecoveryBaseReady = 1;
         return 0;
 
     case PS2_BOOT_CDROM:
