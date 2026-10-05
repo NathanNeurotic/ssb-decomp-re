@@ -19,14 +19,17 @@ static void __attribute__((section(".late_text"), noinline)) ps2_audio_init_late
         ps2_log("audio: deferred until hardware-safe SDR bring-up is restored");
 }
 
-void ps2_audio_init(void)
+void __attribute__((naked, noinline)) ps2_audio_init(void)
 {
     /*
-     * Keep this early wrapper the same instruction footprint as the proven
-     * silent build. The real work is in .late_text after the frozen BSS.
+     * Exactly three MIPS instructions (12 bytes), matching the proven silent
+     * build's wrapper footprint so every following early text symbol keeps its
+     * hardware-tested address. The real work is beyond BSS in .late_text.
      */
-    __asm__ volatile("nop");
-    ps2_audio_init_late();
+    __asm__ volatile(
+        "nop\n"
+        "j ps2_audio_init_late\n"
+        "nop\n");
 }
 
 int32_t ps2_audio_ai_set_frequency(uint32_t frequency)
