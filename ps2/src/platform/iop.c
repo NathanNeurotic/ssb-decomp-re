@@ -546,11 +546,24 @@ void ps2_iop_init(void)
         ps2_panic("failed to bind owned fileXio client");
     sFsClient = PS2_FS_CLIENT_FILEXIO;
 
-    /* RiptOPL loads SIO2/PAD before device transports. Do not reverse this
-     * for MX4SIO/MMCE: those devices share the controller bus. */
+    /* SIO2MAN must exist before any SIO2 client. For MMCE specifically,
+     * do NOT load PADMAN/MTAPMAN yet: MMCEMAN hooks SIO2MAN, and the official
+     * ps2-mmce test application loads MMCEMAN before PADMAN/MCMAN so those
+     * clients resolve through the hooked SIO2 exports. Loading PADMAN first
+     * can leave it holding the original SIO2 imports and bypass MMCE's bus
+     * arbitration once gameplay begins polling pads continuously.
+     *
+     * Non-MMCE devices keep the upstream controller ordering. */
     LOAD_IRX(sio2man);
-    LOAD_IRX(mtapman);
-    LOAD_IRX(padman);
+    if (dev != PS2_BOOT_MMCE)
+    {
+        LOAD_IRX(mtapman);
+        LOAD_IRX(padman);
+    }
+    else
+    {
+        ps2_log("IOP: MMCE: deferring pad/mtap until MMCEMAN hooks SIO2");
+    }
 
     /* Upstream PS2 port ordering: establish the SPU2 RPC server while this is
      * still the pristine post-reset module-load phase, BEFORE MMCE/BDM/USB
@@ -983,7 +996,18 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
         return 0;
 
     case PS2_BOOT_MMCE:
-        return LOAD_IRX(mmceman);
+        /* Match ps2-mmce/testapp's critical SIO2 ordering:
+         *   SIO2MAN -> MMCEMAN -> SIO2 clients (PADMAN/MTAPMAN/MCMAN)
+         * MMCEMAN must install its SIO2 hook before PADMAN resolves imports.
+         * The reference test app also gives MMCEMAN a short settle window. */
+        ps2_log("IOP: MMCE: loading MMCEMAN before controller clients");
+        if (LOAD_IRX(mmceman) < 0)
+            return -1;
+        DelayThread(1000 * 1000);
+        ps2_log("IOP: MMCE: hook installed; loading mtapman + padman");
+        if (LOAD_IRX(mtapman) < 0 || LOAD_IRX(padman) < 0)
+            return -1;
+        return 0;
 
     case PS2_BOOT_HDD:
     {
