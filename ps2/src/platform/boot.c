@@ -30,7 +30,7 @@ extern void ps2_render_thread_init(void);
 extern void ps2_arena_init(void);
 extern void ps2_overlay_state_init(void);
 
-#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [UNIFIED-STORAGE-V2]"
+#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [UNIFIED-RECOVERY]"
 
 int ps2_main(int argc, char *argv[])
 {
@@ -107,9 +107,9 @@ int ps2_main(int argc, char *argv[])
 
     /*
      * Open and validate the asset stream before starting controller clients.
-     * All devices share the same asset API. MMCE additionally converts its
-     * already-open setup handle to MMCEDRV here, while no EE pad client is
-     * bound yet; other devices simply keep their original handle.
+     * Every device keeps the same filesystem/backend for the lifetime of the
+     * pack. Transient descriptor failures are recovered by reopening the same
+     * path; storage is never switched underneath the game.
      */
     if (!ps2_assets_init())
     {
