@@ -246,7 +246,13 @@ void ps2_iop_init(void)
     LOAD_IRX(mcman);
     LOAD_IRX(mcserv);
     LOAD_IRX(libsd);
-    LOAD_IRX(sdr);
+    /*
+     * Real hardware has already proven the embedded sdr server can wedge this
+     * port during startup. Storage work must not be masked by an unrelated
+     * audio RPC hang, so keep SDR deferred until the common storage path is
+     * stable on hardware.
+     */
+    ps2_log("IOP: sdr deferred for hardware-safe storage validation");
 
     ps2_log("IOP: %s, %d base modules",
             sIopWasReset ? "reset" : "kept (inherited filesystem)", sLoadedCount);
