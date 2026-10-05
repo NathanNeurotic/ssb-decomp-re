@@ -92,6 +92,21 @@ int ps2_assets_init(void)
                               ? sResidentBlob + (sRegions[i].file_offset - sHeader.resident_offset)
                               : NULL;
     }
+
+    /* MMCEMAN is kept for setup exactly as before. Once the pack metadata and
+     * resident block are proven, switch only future non-resident reads to
+     * MMCEDRV, matching wOPL's in-game MMCE model. */
+    if (ps2_storage_data_device() == PS2_BOOT_MMCE)
+    {
+        int stream_fd;
+
+        ps2_log("assets: switching MMCE DAT to MMCEDRV runtime reads");
+        stream_fd = ps2_file_mmce_enter_runtime_stream(sFd);
+        if (stream_fd < 0)
+            ps2_panic("MMCE DAT loaded, but MMCEDRV runtime setup failed");
+        sFd = stream_fd;
+    }
+
     ps2_log("assets: %s: %u regions, %u KiB resident, %u KiB total", path, (unsigned)sHeader.region_count,
             (unsigned)(sHeader.resident_bytes >> 10), (unsigned)(sHeader.total_size >> 10));
     return 1;
