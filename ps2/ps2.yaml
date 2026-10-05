@@ -61,6 +61,23 @@ targets:
     imports_lst: iop/udpfs_ioman/src/imports.lst
     exports_tab: iop/udpfs_ioman/src/exports.tab
 
+  # Coherent MMCEMAN pinned to the same post-sio2man-fix generation
+  # used by RiptOPL. The SDK prebuilt is older and fails sustained transfers
+  # against current sio2man on real hardware. Keep SDK stock MMCEDRV below.
+  - name: mmceman
+    type: iop
+    sources:
+      - iop/mmceman/src/ioplib.c
+      - iop/mmceman/src/sio2man_hook.c
+      - iop/mmceman/src/mmce_sio2.c
+      - iop/mmceman/src/mmce_cmds.c
+      - iop/mmceman/src/mmce_fs.c
+      - iop/mmceman/src/mmceman.c
+    include_dirs: [iop/mmceman/include]
+    headers: *iop_headers
+    defines: [IOMANX_OLD_NAME_COMPATIBILITY=0, IOMANX_OLD_NAME_ADDDELDRV=0]
+    imports_lst: iop/mmceman/src/imports.lst
+
   - name: ssb_mmce_stream
     type: iop
     sources: [iop/mmce_stream/src/main.c]
