@@ -29,6 +29,7 @@ targets:
     sources: [iop/mmce_stream/src/main.c]
     include_dirs: [iop/mmce_stream/src]
     headers: *iop_headers
+    defines: [IOMANX_OLD_NAME_COMPATIBILITY=0, IOMANX_OLD_NAME_ADDDELDRV=0]
     imports_lst: iop/mmce_stream/src/imports.lst
 
   - name: smap_udpbd
