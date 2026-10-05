@@ -321,14 +321,19 @@ int ps2_iop_mmce_prepare_runtime_stream(void)
     return 0;
 }
 
-static const char sLateSdrName[] __attribute__((section(".late_rodata"), used)) = "sdr";
-
-int __attribute__((section(".late_text"), noinline)) ps2_iop_load_audio_driver(void)
+int ps2_iop_load_audio_driver(void)
 {
-    if (ps2_iop_module_loaded(sLateSdrName))
+    /*
+     * Keep SDR out of early boot. On real hardware an unavailable SDR RPC
+     * endpoint previously left the EE client waiting forever and looked like
+     * a pink-screen boot hang. Storage, PAD and MC are already established
+     * before this late load is attempted.
+     */
+    if (ps2_iop_module_loaded("sdr"))
         return 0;
 
-    return load_irx(sLateSdrName, sdr_irx, size_sdr_irx, NULL, 0);
+    ps2_log("IOP: starting deferred sdr audio server");
+    return LOAD_IRX(sdr);
 }
 
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
