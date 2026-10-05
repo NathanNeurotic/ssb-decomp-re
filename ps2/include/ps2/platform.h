@@ -163,6 +163,7 @@ int ps2_file_open_read(const char *path);
 int ps2_file_read(int fd, void *dst, uint32_t size);
 int ps2_file_seek(int fd, uint32_t offset);
 int ps2_file_size(int fd);
+int ps2_file_mmce_enter_streaming(int fd);
 void ps2_file_close(int fd);
 
 /* ------------------------------------------------------------------ */
@@ -189,6 +190,7 @@ int ps2_iop_save_services_ready(void);
 /* Restore the SDR sound service after storage/controllers are proven. */
 int ps2_iop_prepare_audio_services(void);
 int ps2_iop_audio_services_ready(void);
+int ps2_iop_mmce_enter_streaming(void);
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 int  ps2_iop_module_loaded(const char *name);
 int  ps2_iop_module_count(void);
