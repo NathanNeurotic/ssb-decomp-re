@@ -264,17 +264,65 @@ int ps2_iop_mmce_prepare_runtime_stream(void)
     if (ps2_storage_data_device() != PS2_BOOT_MMCE)
         return -1;
 
-    /* Match wOPL's actual MMCE model: MMCEMAN stays resident for setup and
-     * the already-open file descriptor remains valid. MMCEDRV is then loaded
-     * alongside it for in-game reads. Do not unload or rebuild the MMCE/SIO2
-     * stack here. */
-    ps2_log("IOP: MMCE loading MMCEDRV alongside MMCEMAN");
+    /* Match RiptOPL/wOPL's real two-phase MMCE launch model.
+     *
+     * Setup phase (already complete here):
+     *   MMCEMAN -> open DAT -> ioctl2(0x80) -> retain card-side fd.
+     *
+     * Runtime phase:
+     *   clean IOP reboot -> normal game services -> MMCEDRV.
+     *
+     * Do NOT run MMCEMAN and MMCEDRV together. Both install the MMCE SIO2
+     * hook, while OPL deliberately crosses an IOP reset between the two. */
+    ps2_log("IOP: MMCE switching setup IOP to runtime IOP");
+
+    fileXioExit();
+    SifExitIopHeap();
+    SifLoadFileExit();
+
+    while (!SifIopReset("", 0))
+    {
+    }
+    while (!SifIopSync())
+    {
+    }
+
+    SifInitRpc(0);
+    SifLoadFileInit();
+    SifInitIopHeap();
+
+    sbv_patch_enable_lmb();
+    sbv_patch_disable_prefix_check();
+    sbv_patch_fileio();
+
+    sLoadedCount = 0;
+    sIopWasReset = 1;
+
+    if (LOAD_IRX(iomanx) < 0 || LOAD_IRX(filexio) < 0)
+        return -1;
+    if (fileXioInit() < 0)
+        return -1;
+
+    /* This is the same baseline runtime service set the port already uses.
+     * Audio's known-real-hardware blocker remains deferred: libsd is safe,
+     * sdrdrv is not started. */
+    if (LOAD_IRX(sio2man) < 0 ||
+        LOAD_IRX(mtapman) < 0 ||
+        LOAD_IRX(padman) < 0 ||
+        LOAD_IRX(mcman) < 0 ||
+        LOAD_IRX(mcserv) < 0 ||
+        LOAD_IRX(libsd) < 0)
+        return -1;
+
+    /* RiptOPL's EE core loads MMCEDRV only after the game-side IOP has been
+     * rebuilt. Our small bridge merely exposes those IOP exports to the EE
+     * asset reader; it does not own MMCE setup. */
     if (LOAD_IRX(mmcedrv) < 0)
         return -1;
     if (LOAD_IRX(ssb_mmce_stream) < 0)
         return -1;
 
-    ps2_log("IOP: MMCE runtime streaming bridge ready");
+    ps2_log("IOP: MMCE runtime IOP ready with MMCEDRV");
     return 0;
 }
 
