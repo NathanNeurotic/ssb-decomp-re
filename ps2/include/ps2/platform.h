@@ -131,7 +131,7 @@ int ps2_storage_requires_iop_preserve(void);
  * actual massN: filesystem that contains probe_name. Generic massN: paths
  * deliberately keep the inherited launcher IOP and are already usable. */
 int ps2_storage_resolve_data_root(const char *probe_name);
-int ps2_video_progressive(void);         /* 1 = native 240p default, 0 = explicit "480i" filename */
+int ps2_video_progressive(void);         /* 1 = 240p (ELF name contains "240p"), 0 = 480i */
 
 /* Boot-stage marker: shows a solid background colour (GS BGCOLOR with both
  * display circuits off) so a hang before any graphics identifies the stage.
