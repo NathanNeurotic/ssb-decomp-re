@@ -292,11 +292,13 @@ static int set_data_location(const char *path, int path_is_file)
     }
     else if (dev == PS2_BOOT_BDM)
     {
-        /* massN: names an already-mounted BDM filesystem but does not encode
-         * whether the transport is USB, ATA, MX4SIO, iLink, or network. Do
-         * not guess and destroy the correct stack with an IOP reset: inherit
-         * the launcher's mount exactly as supplied. */
-        sDataNeedsExistingIop = 1;
+        /* RiptOPL-style boot identity handling: a literal massN: token is the
+         * filesystem slot the launcher handed us. It is authoritative as a
+         * location, but it does not identify the backing transport. Keep the
+         * exact relative sidecar path and rebuild the BDM stack ourselves;
+         * boot.c then brings transports up in the same bounded order RiptOPL
+         * uses and accepts only the real SSB64.DAT as proof. */
+        sDataNeedsExistingIop = 0;
         sDataNeedsBdmResolve = 0;
         strncpy(tmp, path, sizeof(tmp) - 1);
         tmp[sizeof(tmp) - 1] = '\0';
@@ -377,13 +379,19 @@ void ps2_storage_set_boot_path(const char *argv0)
     }
     else
     {
-        /* Normal contract: SSB64.DAT is a sidecar beside the ELF. The launcher
-         * necessarily had this exact filesystem alive in order to load us, so
-         * keep that working mount instead of tearing it down and guessing how
-         * to reconstruct it. This is the same keep-IOP principle used by
-         * RiptOPL's sidecar-driven Ember handoff. */
-        sDataNeedsExistingIop = 1;
-        sDataNeedsBdmResolve = 0;
+        /* The sidecar path is authoritative, but the launcher's IOP state is
+         * not. RiptOPL itself resets the IOP on boot, loads the common
+         * iomanX/fileXio/SIO2/PAD stack, then brings up the transport implied
+         * by argv[0]. Do the same here so USB, MX4SIO and MMCE all begin from
+         * one known controller/storage environment instead of inheriting a
+         * launcher-specific mixture.
+         *
+         * Exceptions are the development host filesystem and a bare pfsN:
+         * path: neither contains enough information to reconstruct its source
+         * after a reset, so set_data_location() already marked those as
+         * requiring the inherited IOP. */
+        if (sDataDevice == PS2_BOOT_HOST)
+            sDataNeedsExistingIop = 1;
     }
 }
 
@@ -428,7 +436,9 @@ const char *ps2_storage_hdd_mount_source(void)
 
 int ps2_storage_requires_iop_preserve(void)
 {
-    return sSidecarMode || sDataNeedsExistingIop;
+    /* Sidecar mode describes WHERE the DAT lives, not WHO owns the IOP.
+     * Preserve only when the path genuinely cannot be reconstructed. */
+    return sDataNeedsExistingIop;
 }
 
 static int bdm_driver_matches(PS2BootDevice dev, const char *driver)
