@@ -30,7 +30,7 @@ extern void ps2_render_thread_init(void);
 extern void ps2_arena_init(void);
 extern void ps2_overlay_state_init(void);
 
-#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [UNIFIED-STORAGE]"
+#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [UNIFIED-STORAGE-V2]"
 
 int ps2_main(int argc, char *argv[])
 {
@@ -106,9 +106,10 @@ int ps2_main(int argc, char *argv[])
     ps2_overlay_state_init();
 
     /*
-     * Open and validate the persistent asset stream before starting controller
-     * clients. This is device-agnostic, and for MMCE it also avoids competing
-     * SIO2 traffic while the initial resident block is loaded.
+     * Open and validate the asset stream before starting controller clients.
+     * All devices share the same asset API. MMCE additionally converts its
+     * already-open setup handle to MMCEDRV here, while no EE pad client is
+     * bound yet; other devices simply keep their original handle.
      */
     if (!ps2_assets_init())
     {
