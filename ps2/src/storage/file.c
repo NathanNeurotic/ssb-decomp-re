@@ -7,6 +7,7 @@
  * its iomanX-backed operations without replacing the launcher's device
  * drivers or mounts.
  */
+#define NEWLIB_PORT_AWARE
 #include <ps2/platform.h>
 
 #include <delaythread.h>
