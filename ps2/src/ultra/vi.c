@@ -14,6 +14,7 @@
 /* Renderer hooks (ps2/src/renderer/gs.c, callable from interrupt context). */
 extern void ps2_gs_isr_display_framebuffer(void *n64_fb);
 extern void ps2_gs_isr_set_blackout(int black);
+extern int ps2_gs_is_framebuffer_drawing(const void *n64_fb);
 
 static OSMesgQueue *sViEventQueue;
 static OSMesg sViEventMsg;
@@ -34,8 +35,13 @@ void ps2_vi_init(void)
 /* Called from the VBlank-start interrupt handler (timing.c). */
 void ps2_vi_vblank_isr(void)
 {
-    if (sViSwapPending)
+    if (sViSwapPending && !ps2_gs_is_framebuffer_drawing(sViNextFramebuffer))
     {
+        /*
+         * Never expose a buffer while GS is actively writing it. This is
+         * deliberately narrower than the rejected whole-render-queue idle
+         * gate: unrelated queued work cannot starve presentation.
+         */
         sViSwapPending = 0;
         sViCurrentFramebuffer = sViNextFramebuffer;
         ps2_gs_isr_display_framebuffer(sViCurrentFramebuffer);
