@@ -78,6 +78,7 @@ static int sBatchCount;
 static SifRpcClientData_t sAudioRpc __attribute__((aligned(64)));
 static uint8_t sRpcSend[SSB_AUDIO_RPC_SIZE] __attribute__((aligned(64)));
 static uint32_t sRpcRecv[4] __attribute__((aligned(64)));
+static volatile int sRpcPending;
 static PS2SpuStats sStats;
 
 static int audio_rpc_bind(void)
@@ -98,11 +99,34 @@ static int audio_rpc_bind(void)
     return -1;
 }
 
+static void audio_rpc_complete(void *arg)
+{
+    (void)arg;
+    sRpcPending = 0;
+}
+
+static int audio_rpc_drain(void)
+{
+    if (!sRpcPending)
+        return (int)sRpcRecv[0];
+
+    while (sceSifCheckStatRpc(&sAudioRpc))
+        DelayThread(50);
+
+    sRpcPending = 0;
+    return (int)sRpcRecv[0];
+}
+
 static int audio_rpc_call(int cmd, const void *send, uint32_t send_size)
 {
     int rc;
 
     if (send_size > SSB_AUDIO_RPC_SIZE)
+        return -1;
+
+    /* Upload/init calls share the client and staging buffer with the
+     * per-frame batch. Finish any previous asynchronous batch first. */
+    if (sRpcPending && audio_rpc_drain() < 0)
         return -1;
 
     memset(sRpcRecv, 0, sizeof(sRpcRecv));
@@ -112,6 +136,37 @@ static int audio_rpc_call(int cmd, const void *send, uint32_t send_size)
     if (rc < 0)
         return rc;
     return (int)sRpcRecv[0];
+}
+
+static int audio_rpc_batch_async(const void *send, uint32_t send_size)
+{
+    int rc;
+
+    if (send_size > SSB_AUDIO_RPC_SIZE)
+        return -1;
+
+    /*
+     * The previous implementation blocked the audio/game thread on one SIF
+     * round-trip every 1/60 s. Keep only one request in flight, but overlap
+     * that request with the rest of the frame. Usually it has completed long
+     * before the next audio frame reaches this point; if not, only then do we
+     * wait before reusing the shared RPC buffer.
+     */
+    if (sRpcPending && audio_rpc_drain() < 0)
+        return -1;
+
+    memset(sRpcRecv, 0, sizeof(sRpcRecv));
+    FlushCache(0);
+    sRpcPending = 1;
+    rc = sceSifCallRpc(&sAudioRpc, SSB_AUDIO_CMD_BATCH, SIF_RPC_M_NOWAIT,
+                       (void *)send, (int)send_size,
+                       sRpcRecv, sizeof(sRpcRecv), audio_rpc_complete, NULL);
+    if (rc < 0)
+    {
+        sRpcPending = 0;
+        return rc;
+    }
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -140,7 +195,7 @@ static void batch_submit(void)
     memcpy(sRpcSend + 4, sBatch, (size_t)n * sizeof(sceSdBatch));
     bytes = 4u + (uint32_t)n * (uint32_t)sizeof(sceSdBatch);
 
-    if (audio_rpc_call(SSB_AUDIO_CMD_BATCH, sRpcSend, bytes) < 0)
+    if (audio_rpc_batch_async(sRpcSend, bytes) < 0)
     {
         sReady = 0;
         ps2_log("audio: batch RPC failed; disabling audio");
