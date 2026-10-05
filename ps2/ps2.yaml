@@ -86,6 +86,13 @@ targets:
     defines: [IOMANX_OLD_NAME_COMPATIBILITY=0, IOMANX_OLD_NAME_ADDDELDRV=0]
     imports_lst: iop/mmce_stream/src/imports.lst
 
+  - name: ssb_audio
+    type: iop
+    sources: [iop/audio_server/src/main.c]
+    include_dirs: [iop/audio_server/src]
+    headers: *iop_headers
+    imports_lst: iop/audio_server/src/imports.lst
+
   - name: ssb_platform
     type: ee_lib
     sources:
@@ -110,7 +117,6 @@ targets:
       - filexio
       - usbd
       - patches
-      - sdr
       - debug
     defines:
       - PLATFORM_PS2
@@ -299,7 +305,7 @@ targets:
       - mcman
       - mcserv
       - libsd
-      - sdr
+      - ssb_audio
       # Common BDM + physical transports.
       - bdm
       - bdmfs_fatfs
