@@ -157,6 +157,7 @@ int ps2_file_open_read(const char *path);
 int ps2_file_read(int fd, void *dst, uint32_t size);
 int ps2_file_seek(int fd, uint32_t offset);
 int ps2_file_size(int fd);
+int ps2_file_mmce_enter_runtime_stream(int fd);
 void ps2_file_close(int fd);
 
 /* ------------------------------------------------------------------ */
@@ -165,6 +166,7 @@ void ps2_file_close(int fd);
 
 void ps2_iop_init(void);                 /* reset IOP + load base modules */
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
+int ps2_iop_mmce_prepare_runtime_stream(void);
 int  ps2_iop_module_loaded(const char *name);
 int  ps2_iop_module_count(void);
 const char *ps2_iop_module_name(int i);
