@@ -17,6 +17,10 @@
 #define PACK_NAME "SSB64.DAT"
 
 static int sFd = -1;
+static char sPackPath[300];
+static int sLastSeekRc;
+static int sLastReadGot;
+static int sStreamReopens;
 static PS2PackHeader sHeader;
 static PS2PackRegion *sRegions;
 static uint8_t **sResidentPtr; /* per region: EE copy or NULL */
@@ -27,39 +31,66 @@ static uint32_t sBytesRead;
 static uint32_t sReads;
 static uint32_t sMisses;
 
+static int reopen_pack_stream(void)
+{
+    int new_fd;
+
+    if (sPackPath[0] == '\0')
+        return 0;
+
+    /*
+     * Reopen through the same public filesystem path. This is intentionally
+     * backend-agnostic: a removable/network/MMCE transport that loses one
+     * descriptor can recover without changing drivers or rebooting the IOP.
+     */
+    new_fd = ps2_file_open_read(sPackPath);
+    if (new_fd < 0)
+        return 0;
+
+    if (sFd >= 0)
+        ps2_file_close(sFd);
+    sFd = new_fd;
+    sStreamReopens++;
+    ps2_log("assets: reopened persistent pack stream (%d)", sStreamReopens);
+    return 1;
+}
+
 static int read_exact(void *dst, uint32_t offset, uint32_t size)
 {
     extern void ps2_delay_vblanks(int n);
     int attempt;
 
-    /*
-     * Every attempt starts from the absolute pack offset, so a transport that
-     * returns a short/error read cannot leave the next retry at an ambiguous
-     * file position. This is useful for removable/network storage as well as
-     * MMCE and keeps recovery below the asset mapping layer.
-     */
-    for (attempt = 0; attempt < 3; attempt++)
-    {
-        int seek_rc = ps2_file_seek(sFd, offset);
-        int got;
+    sLastSeekRc = 0;
+    sLastReadGot = 0;
 
-        if (seek_rc < 0)
+    /*
+     * Every attempt starts from the absolute pack offset. A failed descriptor
+     * is reopened through the same device/path before the next attempt; no
+     * backend swap, IOP reset, or MMCE-specific descriptor handoff occurs.
+     */
+    for (attempt = 0; attempt < 4; attempt++)
+    {
+        sLastSeekRc = ps2_file_seek(sFd, offset);
+        if (sLastSeekRc < 0)
         {
             ps2_log("assets: seek failed off=0x%08x rc=%d attempt=%d",
-                    (unsigned)offset, seek_rc, attempt + 1);
+                    (unsigned)offset, sLastSeekRc, attempt + 1);
         }
         else
         {
-            got = ps2_file_read(sFd, dst, size);
-            if (got == (int)size)
+            sLastReadGot = ps2_file_read(sFd, dst, size);
+            if (sLastReadGot == (int)size)
                 return 1;
 
             ps2_log("assets: short/read fail off=0x%08x want=%u got=%d attempt=%d",
-                    (unsigned)offset, (unsigned)size, got, attempt + 1);
+                    (unsigned)offset, (unsigned)size, sLastReadGot, attempt + 1);
         }
 
-        if (attempt + 1 < 3)
+        if (attempt + 1 < 4)
+        {
             ps2_delay_vblanks(2);
+            reopen_pack_stream();
+        }
     }
 
     return 0;
@@ -90,13 +121,15 @@ int ps2_assets_init(void)
         {
             ps2_storage_resolve_data_root(PACK_NAME);
             ps2_storage_path(path, sizeof(path), PACK_NAME);
-            sFd = ps2_file_open_read(path);
+            snprintf(sPackPath, sizeof(sPackPath), "%s", path);
+            sFd = ps2_file_open_read(sPackPath);
 
             /* PCSX2 Run ELF can lose argv[0]'s directory separators. */
             if (sFd < 0 && ps2_storage_boot_device() == PS2_BOOT_HOST)
             {
                 snprintf(path, sizeof(path), "host:%s", PACK_NAME);
-                sFd = ps2_file_open_read(path);
+                snprintf(sPackPath, sizeof(sPackPath), "%s", path);
+                sFd = ps2_file_open_read(sPackPath);
             }
 
             if (sFd >= 0)
@@ -144,20 +177,6 @@ int ps2_assets_init(void)
         sResidentPtr[i] = (sRegions[i].flags & PS2PACK_REGION_RESIDENT)
                               ? sResidentBlob + (sRegions[i].file_offset - sHeader.resident_offset)
                               : NULL;
-    }
-
-    /*
-     * MMCE is the only backend whose setup driver differs from its intended
-     * in-game streaming driver. Promote the already-open pack now, after all
-     * setup/resident reads but before boot.c initializes the EE pad client.
-     * The asset API itself remains unchanged after this point.
-     */
-    if (ps2_storage_data_device() == PS2_BOOT_MMCE)
-    {
-        int runtime_fd = ps2_file_mmce_enter_runtime_stream(sFd);
-        if (runtime_fd < 0)
-            ps2_panic("MMCE setup reads passed, but in-game DAT stream promotion failed");
-        sFd = runtime_fd;
     }
 
     ps2_log("assets: %s: %u regions, %u KiB resident, %u KiB total", path, (unsigned)sHeader.region_count,
@@ -229,8 +248,9 @@ void ps2_rom_read(uint32_t rom_addr, void *dst, uint32_t size)
             if (!read_exact(out, r->file_offset + off, n))
             {
                 SignalSema(sReadSema);
-                ps2_panic("asset read failed vrom=0x%08x file=0x%08x size=%u",
-                          (unsigned)rom_addr, (unsigned)(r->file_offset + off), (unsigned)n);
+                ps2_panic("asset read failed vrom=0x%08x file=0x%08x size=%u got=%d seek=%d reopens=%d",
+                          (unsigned)rom_addr, (unsigned)(r->file_offset + off), (unsigned)n,
+                          sLastReadGot, sLastSeekRc, sStreamReopens);
             }
             SignalSema(sReadSema);
             sBytesRead += n;
