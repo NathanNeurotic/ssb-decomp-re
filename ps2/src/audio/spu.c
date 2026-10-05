@@ -74,19 +74,6 @@ unsigned char g_libsdr_cb_data[256] __attribute__((aligned(64)));
 
 static void probe_hardware(void);
 
-static const char sSpuMagic[] __attribute__((section(".late_rodata"), used)) = "SPUS";
-static const char sSpuNoSet[] __attribute__((section(".late_rodata"), used)) =
-    "audio: no SPU sample set in the asset pack (rebuild it); audio stays silent";
-static const char sSpuNoEeMem[] __attribute__((section(".late_rodata"), used)) =
-    "audio: cannot allocate %u KiB for the sample set; audio stays silent";
-static const char sSpuNoIopMem[] __attribute__((section(".late_rodata"), used)) =
-    "audio: IOP heap allocation failed; audio stays silent";
-static const char sSpuNoRpc[] __attribute__((section(".late_rodata"), used)) =
-    "audio: sdrdrv RPC unavailable; audio stays silent";
-static const char sSpuReadyLog[] __attribute__((section(".late_rodata"), used)) =
-    "audio: SPU2 backend on core %d, %u samples (%u KiB PS-ADPCM in EE RAM), %u KiB SPU cache";
-
-
 /* ------------------------------------------------------------------ */
 
 static void batch_add(uint16_t func, uint16_t entry, uint32_t value)
@@ -231,16 +218,16 @@ static int make_resident(int sample)
 /* Public interface                                                    */
 /* ------------------------------------------------------------------ */
 
-int __attribute__((section(".late_text"), noinline)) ps2_spu_init(void)
+int ps2_spu_init(void)
 {
     PS2SpuSampleHeader head;
     uint32_t size, i;
     int v;
 
     ps2_rom_read(PS2_SPU_SAMPLES_VROM, &head, sizeof(head));
-    if (memcmp(head.magic, sSpuMagic, 4) != 0 || head.version != PS2_SPU_SAMPLES_VERSION)
+    if (memcmp(head.magic, PS2_SPU_SAMPLES_MAGIC, 4) != 0 || head.version != PS2_SPU_SAMPLES_VERSION)
     {
-        ps2_log("%s", sSpuNoSet);
+        ps2_log("audio: no SPU sample set in the asset pack (rebuild it); audio stays silent");
         return -1;
     }
     /* size = end of the last sample's data */
@@ -255,7 +242,7 @@ int __attribute__((section(".late_text"), noinline)) ps2_spu_init(void)
     sResidentOf = (int *)ps2_mem_alloc(PS2_MEM_AUDIO, head.count * sizeof(int), 16);
     if (sSet == NULL || sResidentOf == NULL)
     {
-        ps2_log(sSpuNoEeMem, (unsigned)(size / 1024));
+        ps2_log("audio: cannot allocate %u KiB for the sample set; audio stays silent", (unsigned)(size / 1024));
         return -1;
     }
     ps2_rom_read(PS2_SPU_SAMPLES_VROM, sSet, size);
@@ -270,12 +257,12 @@ int __attribute__((section(".late_text"), noinline)) ps2_spu_init(void)
     sIopRets = SifAllocIopHeap(MAX_BATCH * sizeof(uint32_t));
     if (sIopStage == NULL || sIopBatch == NULL || sIopRets == NULL)
     {
-        ps2_log("%s", sSpuNoIopMem);
+        ps2_log("audio: IOP heap allocation failed; audio stays silent");
         return -1;
     }
     if (sceSdRemoteInit() < 0)
     {
-        ps2_log("%s", sSpuNoRpc);
+        ps2_log("audio: sdrdrv RPC unavailable; audio stays silent");
         return -1;
     }
     sceSdRemote(1, rSdInit, 0);
@@ -305,7 +292,7 @@ int __attribute__((section(".late_text"), noinline)) ps2_spu_init(void)
     sStats.samples = sCount;
     sStats.spu_bytes_total = SPU_RAM_LIMIT - SPU_RAM_FIRST;
     sReady = 1;
-    ps2_log(sSpuReadyLog, SPU_CORE,
+    ps2_log("audio: SPU2 backend on core %d, %u samples (%u KiB PS-ADPCM in EE RAM), %u KiB SPU cache", SPU_CORE,
             (unsigned)sCount, (unsigned)(size / 1024), (unsigned)(sStats.spu_bytes_total / 1024));
     return 0;
 }
