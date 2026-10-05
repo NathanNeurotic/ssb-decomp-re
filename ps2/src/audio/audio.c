@@ -11,7 +11,7 @@
 static uint32_t sAiFrequency;
 static uint32_t sAiQueuedBytes;
 
-static void __attribute__((section(".late_text"), noinline)) ps2_audio_init_late(void)
+void __attribute__((section(".late_text"), noinline, used)) ps2_audio_init_late(void)
 {
     if (ps2_iop_load_audio_driver() >= 0)
         ps2_spu_init();
