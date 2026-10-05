@@ -30,39 +30,7 @@ extern void ps2_render_thread_init(void);
 extern void ps2_arena_init(void);
 extern void ps2_overlay_state_init(void);
 
-#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port"
-
-/* Physical/network storage can appear asynchronously after its drivers load.
- * Match launcHER's conservative real-hardware window: wait up to ~20 s. */
-static void wait_for_boot_file(const char *name)
-{
-    extern void ps2_delay_vblanks(int n);
-    char path[288];
-    int i, fd = -1;
-
-    for (i = 0; i < 200; i++)
-    {
-        /* Typed BDM paths (usb:/ata:/mx4sio:/ilink:/udpbd:) name the
-         * transport, not necessarily the mounted filesystem. Resolve them
-         * after the driver stack is resident, using this file as proof that
-         * we selected the right massN: volume. */
-        ps2_storage_resolve_data_root(name);
-        ps2_storage_path(path, sizeof(path), name);
-        fd = ps2_file_open_read(path);
-        if (fd >= 0)
-        {
-            ps2_file_close(fd);
-            ps2_log("boot: %s found after %d ms", path, i * 100);
-            return;
-        }
-        if (ps2_storage_data_device() == PS2_BOOT_HOST)
-        {
-            break; /* host: is there or not */
-        }
-        ps2_delay_vblanks(6);
-    }
-    ps2_log("boot: %s not found", path);
-}
+#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [UNIFIED-STORAGE]"
 
 int ps2_main(int argc, char *argv[])
 {
@@ -131,24 +99,31 @@ int ps2_main(int argc, char *argv[])
         ps2_panic("failed to initialize %s storage", ps2_storage_device_name(ps2_storage_data_device()));
 
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
-    wait_for_boot_file("SSB64.DAT");
-    if (ps2_storage_data_device() != PS2_BOOT_CDROM)
-    {
-        ps2_log_enable_save(1);
-        ps2_log_save();
-    }
+
     ps2_ultra_threads_init();
     ps2_vi_init();
     ps2_arena_init();
     ps2_overlay_state_init();
-    ps2_input_init();
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
+    /*
+     * Open and validate the persistent asset stream before starting controller
+     * clients. This is device-agnostic, and for MMCE it also avoids competing
+     * SIO2 traffic while the initial resident block is loaded.
+     */
     if (!ps2_assets_init())
     {
         ps2_panic("asset pack not found next to the ELF (%sSSB64.DAT). Run ps2/tools/prepare_assets.sh first.",
                   ps2_storage_boot_dir());
     }
+
+    if (ps2_storage_data_device() != PS2_BOOT_CDROM)
+    {
+        ps2_log_enable_save(1);
+        ps2_log_save();
+    }
+
+    ps2_input_init();
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
     ps2_save_init();
     ps2_audio_init();
     ps2_render_thread_init();
