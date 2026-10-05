@@ -18,15 +18,16 @@
 #include <strings.h>
 #include <unistd.h>
 
-#define PS2_FD_MMCE_SETUP_TAG  0x40000000
 #define PS2_FD_MMCE_STREAM_TAG 0x20000000
 #define PS2_FD_TAG_MASK         0x60000000
 #define PS2_FD_VALUE_MASK       0x1fffffff
 #define MMCE_IOCTL_GET_FD       0x80
 
+static char sMmceSetupPath[384];
+
 static int tagged_filexio_fd(int fd)
 {
-    return (fd & PS2_FD_TAG_MASK) != 0;
+    return (fd & PS2_FD_TAG_MASK) == PS2_FD_MMCE_STREAM_TAG;
 }
 
 static int raw_filexio_fd(int fd)
@@ -38,14 +39,15 @@ int ps2_file_open_read(const char *path)
 {
     int fd;
 
-    /* Keep MMCE descriptors in fileXio's native namespace. This lets us ask
-     * MMCEMAN for the card-side descriptor and hand it to MMCEDRV later,
-     * without depending on newlib's private descriptor translation. */
+    /* Boot-time MMCE access must stay on the exact POSIX/newlib path that is
+     * already proven on hardware. Remember the DAT pathname so the later
+     * MMCEDRV handoff can open a second native fileXio descriptor only after
+     * the pack has been validated. */
     if (ps2_storage_data_device() == PS2_BOOT_MMCE &&
         path != NULL && strncasecmp(path, "mmce", 4) == 0)
     {
-        fd = fileXioOpen(path, O_RDONLY, 0);
-        return (fd >= 0) ? (PS2_FD_MMCE_SETUP_TAG | fd) : fd;
+        strncpy(sMmceSetupPath, path, sizeof(sMmceSetupPath) - 1);
+        sMmceSetupPath[sizeof(sMmceSetupPath) - 1] = '\0';
     }
 
     fd = open(path, O_RDONLY);
@@ -178,21 +180,41 @@ int ps2_file_size(int fd)
 
 int ps2_file_mmce_enter_streaming(int fd)
 {
-    int rawfd;
+    int setup_native_fd;
     int remote_fd;
     int port = 2;
     int stream_fd;
     char stream_path[48];
     const char *boot_dir;
 
-    if ((fd & PS2_FD_TAG_MASK) != PS2_FD_MMCE_SETUP_TAG)
+    if (ps2_storage_data_device() != PS2_BOOT_MMCE)
         return fd;
 
-    rawfd = raw_filexio_fd(fd);
+    if (sMmceSetupPath[0] == '\0')
+    {
+        ps2_log("MMCE: no remembered DAT path for streaming handoff");
+        return -1;
+    }
+
+    /* Do not disturb the working POSIX descriptor used during boot. Initialise
+     * the native fileXio client here, then open a second MMCEMAN descriptor
+     * solely to obtain the card-side fd required by MMCEDRV. */
+    if (fileXioInit() < 0)
+    {
+        ps2_log("MMCE: native fileXio client init failed");
+        return -1;
+    }
+
+    setup_native_fd = fileXioOpen(sMmceSetupPath, O_RDONLY, 0);
+    if (setup_native_fd < 0)
+    {
+        ps2_log("MMCE: native handoff open failed for %s", sMmceSetupPath);
+        return -1;
+    }
 
     /* MMCEMAN exposes the MMCE device's own descriptor through ioctl 0x80.
      * That descriptor remains meaningful to MMCEDRV after MMCEMAN leaves. */
-    remote_fd = fileXioIoctl(rawfd, MMCE_IOCTL_GET_FD, NULL);
+    remote_fd = fileXioIoctl(setup_native_fd, MMCE_IOCTL_GET_FD, NULL);
     if (remote_fd < 0)
     {
         ps2_log("MMCE: could not obtain card-side DAT descriptor");
@@ -203,10 +225,12 @@ int ps2_file_mmce_enter_streaming(int fd)
     if (boot_dir != NULL && strncasecmp(boot_dir, "mmce1:", 6) == 0)
         port = 3;
 
-    ps2_log("MMCE: DAT setup fd=%d card fd=%d port=%d", rawfd, remote_fd, port);
+    ps2_log("MMCE: DAT POSIX fd=%d native fd=%d card fd=%d port=%d",
+            fd, setup_native_fd, remote_fd, port);
 
-    /* Do not close the MMCEMAN descriptor: close would tell the MMCE device to
-     * close the card-side fd we are deliberately handing to MMCEDRV. */
+    /* Deliberately do not close either MMCEMAN descriptor before unloading
+     * MMCEMAN: closing the native one would also close the card-side fd that
+     * is being handed to MMCEDRV. */
     if (ps2_iop_mmce_enter_streaming() < 0)
         return -1;
 
