@@ -30,17 +30,15 @@ extern void ps2_render_thread_init(void);
 extern void ps2_arena_init(void);
 extern void ps2_overlay_state_init(void);
 
-#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [MMCEDRV-IOCTL2]"
+#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port"
 
 /* Physical/network storage can appear asynchronously after its drivers load.
  * Match launcHER's conservative real-hardware window: wait up to ~20 s. */
-static int wait_for_boot_file(const char *name)
+static void wait_for_boot_file(const char *name)
 {
     extern void ps2_delay_vblanks(int n);
     char path[288];
     int i, fd = -1;
-    int promotion_checked = 0;
-    int next_bdm_stage_at = 10;
 
     for (i = 0; i < 200; i++)
     {
@@ -51,66 +49,12 @@ static int wait_for_boot_file(const char *name)
         ps2_storage_resolve_data_root(name);
         ps2_storage_path(path, sizeof(path), name);
         fd = ps2_file_open_read(path);
-        if (fd < 0 && ps2_storage_data_device() == PS2_BOOT_HOST)
-        {
-            /* PCSX2 Run ELF can pass a host argv[0] whose directory spelling
-             * is not reusable; host: itself maps to the ELF directory. */
-            snprintf(path, sizeof(path), "host:%s", name);
-            fd = ps2_file_open_read(path);
-        }
         if (fd >= 0)
         {
             ps2_file_close(fd);
             ps2_log("boot: %s found after %d ms", path, i * 100);
-            return 1;
+            return;
         }
-
-        /* massN: is only a mount slot, not a durable transport identity.
-         * Before rebuilding anything, look for the same relative DAT on any
-         * live mass slot. This also handles harmless slot renumbering. */
-        if (ps2_storage_data_device() == PS2_BOOT_BDM &&
-            ps2_storage_recover_mass_sidecar(name))
-        {
-            ps2_storage_path(path, sizeof(path), name);
-            fd = ps2_file_open_read(path);
-            if (fd >= 0)
-            {
-                ps2_file_close(fd);
-                ps2_log("boot: recovered %s after %d ms", path, i * 100);
-                return 1;
-            }
-        }
-
-        /* A legacy FileIO client cannot see an iomanX-only BDM/PFS/MMCE
-         * filesystem. On the first real DAT failure, promote the EE client to
-         * the launcher's existing fileXio service (or add that bridge only)
-         * and retry without touching the mounted storage stack. */
-        if (!promotion_checked)
-        {
-            int promoted = ps2_iop_promote_filesystem_client();
-            promotion_checked = 1;
-            if (promoted > 0)
-            {
-                ps2_log("boot: retrying %s through fileXio", path);
-                continue;
-            }
-        }
-
-        if (ps2_storage_data_device() == PS2_BOOT_BDM && i >= next_bdm_stage_at)
-        {
-            int recovered = ps2_iop_recover_generic_bdm_next();
-
-            if (recovered > 0)
-            {
-                next_bdm_stage_at = i + 40; /* ~4 s for each transport to enumerate */
-                ps2_log("boot: waiting for recovered BDM transport");
-            }
-            else if (recovered == 0)
-            {
-                next_bdm_stage_at = 1000;
-            }
-        }
-
         if (ps2_storage_data_device() == PS2_BOOT_HOST)
         {
             break; /* host: is there or not */
@@ -118,7 +62,6 @@ static int wait_for_boot_file(const char *name)
         ps2_delay_vblanks(6);
     }
     ps2_log("boot: %s not found", path);
-    return 0;
 }
 
 int ps2_main(int argc, char *argv[])
@@ -152,7 +95,6 @@ int ps2_main(int argc, char *argv[])
      * that get created along the way. */
     ChangeThreadPriority(GetThreadId(), 2);
 
-    ps2_log("build: MMCEDRV-IOCTL2 d5d6d01");
     ps2_log("boot: argv0=%s", (argc > 0 && argv[0] != NULL) ? argv[0] : "(none)");
     ps2_log("boot: launch=%s data=%s dir=%s",
             ps2_storage_device_name(ps2_storage_launch_device()),
@@ -172,16 +114,11 @@ int ps2_main(int argc, char *argv[])
         }
     }
 
-    /* Bring the GS up before any inherited IOP/RPC binding. Hardware boot
-     * failures are then visible as log text instead of an ambiguous solid
-     * color, and video initialization cannot be taken down by a launcher IOP. */
+    ps2_boot_stage("IOP reset + modules", 0x800080);
+    ps2_iop_init();
+    ps2_boot_stage("vblank + video init", 0x008080);
     ps2_vblank_init();
     ps2_gs_init();
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
-
-    ps2_log("boot: initializing IOP/RPC handoff");
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
-    ps2_iop_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
     if (bad_data_arg)
@@ -193,23 +130,8 @@ int ps2_main(int argc, char *argv[])
     if (ps2_iop_load_boot_device_drivers(ps2_storage_data_device()) < 0)
         ps2_panic("failed to initialize %s storage", ps2_storage_device_name(ps2_storage_data_device()));
 
-    if (ps2_iop_prepare_filesystem_client() < 0)
-    {
-        int promoted = ps2_iop_promote_filesystem_client();
-        if (promoted <= 0)
-            ps2_panic("no usable inherited filesystem RPC for %s", ps2_storage_boot_dir());
-    }
-
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
-    if (!wait_for_boot_file("SSB64.DAT"))
-        ps2_panic("asset pack is not reachable at %sSSB64.DAT", ps2_storage_boot_dir());
-
-    /* Only after the real data pack has opened may optional/secondary runtime
-     * services touch the inherited IOP. */
-    if (ps2_iop_prepare_runtime_services() < 0)
-        ps2_panic("required controller IOP services are unavailable");
-
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
+    wait_for_boot_file("SSB64.DAT");
     if (ps2_storage_data_device() != PS2_BOOT_CDROM)
     {
         ps2_log_enable_save(1);
@@ -220,7 +142,6 @@ int ps2_main(int argc, char *argv[])
     ps2_arena_init();
     ps2_overlay_state_init();
     ps2_input_init();
-    ps2_log("boot: input ready; starting asset index/resident load");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
     if (!ps2_assets_init())
@@ -228,31 +149,9 @@ int ps2_main(int argc, char *argv[])
         ps2_panic("asset pack not found next to the ELF (%sSSB64.DAT). Run ps2/tools/prepare_assets.sh first.",
                   ps2_storage_boot_dir());
     }
-    ps2_log("boot: assets ready");
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
-
-    ps2_log("boot: preparing memory-card modules");
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
-    ps2_iop_prepare_save_services();
-    ps2_log("boot: initializing saves");
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
     ps2_save_init();
-    ps2_log("boot: saves initialized");
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
-
-    ps2_log("boot: preparing audio modules");
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
-    ps2_iop_prepare_audio_services();
-    ps2_log("boot: initializing SPU audio");
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
     ps2_audio_init();
-    ps2_log("boot: audio initialization returned");
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
-
-    ps2_log("boot: initializing renderer");
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
     ps2_render_thread_init();
-    ps2_log("boot: renderer initialized");
 
     mem = ps2_mem_stats();
     ps2_log("mem: %u KiB committed (code/static %u KiB), budget %u KiB", (unsigned)(mem->total_used >> 10),
