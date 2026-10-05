@@ -135,9 +135,10 @@ int ps2_file_mmce_enter_runtime_stream(int fd)
         return -1;
     }
 
-    /* This is the exact handoff used by wOPL: open with MMCEMAN, ask ioctl2
-     * 0x80 for the MMCE-side descriptor, then pass that descriptor to
-     * MMCEDRV. MMCEMAN remains loaded and the setup descriptor remains open. */
+    /* First half of the RiptOPL/wOPL handoff: open with MMCEMAN and ask
+     * ioctl2 0x80 for the MMCE-side descriptor. The next step deliberately
+     * crosses a clean IOP reset; the card-side descriptor survives on the
+     * MMCE device and is then consumed by MMCEDRV in the runtime IOP. */
     sMmceSetupNativeFd = fileXioOpen(sMmceDatPath, O_RDONLY, 0);
     if (sMmceSetupNativeFd < 0)
     {
