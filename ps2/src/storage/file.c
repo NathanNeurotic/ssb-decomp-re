@@ -9,6 +9,7 @@
  */
 #include <ps2/platform.h>
 
+#include <delaythread.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -55,9 +56,20 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
          * comfortably below the transport ceiling is more important than
          * shaving a few RPCs from a 25 MiB asset pack, especially on USB 1.1.
          * Use the same conservative size for physical BDM transports. */
-        if (dev == PS2_BOOT_BDM || dev == PS2_BOOT_USB ||
-            dev == PS2_BOOT_ATA || dev == PS2_BOOT_MX4SIO ||
-            dev == PS2_BOOT_ILINK || dev == PS2_BOOT_UDPBD)
+        if (dev == PS2_BOOT_MMCE)
+        {
+            /* MMCEMAN's mmce_fs_read() owns the SIO2 lock for the entire
+             * requested size. Its low-level transfer loop is naturally
+             * grouped as 16 x 256-byte DMA elements (4 KiB), but a 64 KiB
+             * POSIX read keeps that lock across sixteen such groups. Once the
+             * game starts, PADMAN also needs SIO2 continuously. Keep each EE
+             * read to one native MMCE group so the IOP releases the bus after
+             * every 4 KiB and the pad thread gets scheduling opportunities. */
+            max_chunk = 0x1000u; /* 4 KiB */
+        }
+        else if (dev == PS2_BOOT_BDM || dev == PS2_BOOT_USB ||
+                 dev == PS2_BOOT_ATA || dev == PS2_BOOT_MX4SIO ||
+                 dev == PS2_BOOT_ILINK || dev == PS2_BOOT_UDPBD)
             max_chunk = 0x4000u; /* 16 KiB */
 
         {
@@ -69,6 +81,13 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
                 return (done > 0) ? (int)done : n;
             }
             done += (uint32_t)n;
+
+            /* A returned MMCE read means MMCEMAN has unlocked SIO2. Leave a
+             * short no-RPC window before the next chunk so PADMAN's IOP
+             * update thread can run instead of immediately losing the bus to
+             * another filesystem request. */
+            if (dev == PS2_BOOT_MMCE && done < size)
+                DelayThread(1000);
         }
 
     }
