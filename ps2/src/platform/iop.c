@@ -528,30 +528,24 @@ void ps2_iop_init(void)
     {
         extern void ps2_gs_boot_screen(const char *title);
         int libsd_ok;
-        int sdr_ok = -1;
 
-        ps2_log("IOP: AUDIO-EARLY loading embedded libsd");
-        ps2_gs_boot_screen("Super Smash Bros. 64 - PS2 native port [AUDIO-EARLY]");
+        /* Real-hardware isolation build: libsd itself is proven to load, but
+         * sdrdrv wedges inside SifExecModuleBuffer before returning. Do not
+         * let an optional audio RPC server take down an otherwise-working
+         * boot. Keep libsd resident, deliberately skip sdr, and mark audio
+         * unavailable so the EE audio backend never attempts sceSdRemoteInit.
+         *
+         * This is a diagnostic containment step, not the final audio backend. */
+        ps2_log("IOP: SDR-BYPASS loading embedded libsd only");
+        ps2_gs_boot_screen("Super Smash Bros. 64 - PS2 native port [SDR-BYPASS]");
         libsd_ok = LOAD_IRX(libsd);
-
         if (libsd_ok == 0)
-        {
-            ps2_log("IOP: AUDIO-EARLY libsd loaded; loading embedded sdr");
-            ps2_gs_boot_screen("Super Smash Bros. 64 - PS2 native port [AUDIO-EARLY]");
-            sdr_ok = LOAD_IRX(sdr);
-        }
-
-        if (libsd_ok == 0 && sdr_ok == 0)
-        {
-            sAudioServicesReady = 1;
-            ps2_log("IOP: upstream libsd + sdr resident before storage");
-        }
+            ps2_log("IOP: SDR-BYPASS libsd loaded; sdr intentionally skipped");
         else
-        {
-            sAudioServicesReady = 0;
-            ps2_log("IOP: upstream audio base unavailable; audio will stay silent");
-        }
-        ps2_gs_boot_screen("Super Smash Bros. 64 - PS2 native port [AUDIO-EARLY]");
+            ps2_log("IOP: SDR-BYPASS libsd unavailable");
+
+        sAudioServicesReady = 0;
+        ps2_gs_boot_screen("Super Smash Bros. 64 - PS2 native port [SDR-BYPASS]");
     }
 
     /* Memory-card services remain deferred: the ROM XMC pair is now hardware-
@@ -865,20 +859,16 @@ int ps2_iop_save_services_ready(void)
 
 int ps2_iop_prepare_audio_services(void)
 {
-    /* On an owned/rebuilt IOP the upstream libsd+sdr pair was loaded during
-     * ps2_iop_init(), before the storage driver. Do not re-enter
-     * SifLoadFile/IopHeap or execute another IRX here; simply report whether
-     * that known server was established. */
+    /* The current real-hardware test intentionally bypasses sdrdrv because
+     * its module start wedges on-console after libsd loads successfully.
+     * Report audio unavailable immediately; do not probe or bind a missing
+     * RPC server. */
     if (sIopWasReset)
     {
-        ps2_log("IOP: audio server already established before storage: %s",
-                sAudioServicesReady ? "yes" : "no");
-        return sAudioServicesReady;
+        ps2_log("IOP: SDR-BYPASS active; continuing without audio RPC");
+        return 0;
     }
 
-    /* host:/bare-pfs inherited-Iop fallback: avoid speculative ROM module
-     * names. If the launcher did not leave SDR available, audio may remain
-     * silent; this path is not the hardware MMCE/USB/MX4SIO path. */
     ps2_log("IOP: inherited IOP audio setup is not rebuilt");
     return sAudioServicesReady;
 }
