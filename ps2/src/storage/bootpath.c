@@ -318,7 +318,15 @@ void ps2_storage_set_boot_path(const char *argv0)
 {
     const char *p;
 
-    sProgressive = 0;
+    /*
+     * SSB64 renders a native 320x240 picture at ~60 Hz. Running that through
+     * GS interlaced FIELD mode makes the two television fields come from
+     * different 60 Hz game frames, which produces the hardware-visible
+     * vertical vibration and moving horizontal field seam. Use the native
+     * non-interlaced NTSC mode by default. Keep 480i as an explicit filename
+     * compatibility opt-in for displays/scalers that cannot lock to 240p.
+     */
+    sProgressive = 1;
     sHddMountSource[0] = '\0';
     sDataNeedsExistingIop = 0;
     sDataNeedsBdmResolve = 0;
@@ -338,8 +346,9 @@ void ps2_storage_set_boot_path(const char *argv0)
     for (p = argv0; p[0] != '\0'; p++)
     {
         if (p[1] != '\0' && p[2] != '\0' && p[3] != '\0' &&
-            p[0] == '2' && p[1] == '4' && p[2] == '0' && (p[3] == 'p' || p[3] == 'P'))
-            sProgressive = 1;
+            p[0] == '4' && p[1] == '8' && p[2] == '0' &&
+            (p[3] == 'i' || p[3] == 'I'))
+            sProgressive = 0;
     }
 
     sLaunchDevice = detect_device(argv0);
