@@ -318,7 +318,13 @@ void ps2_storage_set_boot_path(const char *argv0)
 {
     const char *p;
 
-    sProgressive = 0;
+    /*
+     * SSB64's N64 VI mode is 320x240 non-serrated. Match that directly on
+     * PS2 instead of converting it to alternating 480i fields, which can
+     * expose a moving/blinking field seam on real displays and capture gear.
+     * An ELF name containing "480i" remains an explicit compatibility opt-out.
+     */
+    sProgressive = 1;
     sHddMountSource[0] = '\0';
     sDataNeedsExistingIop = 0;
     sDataNeedsBdmResolve = 0;
@@ -337,9 +343,13 @@ void ps2_storage_set_boot_path(const char *argv0)
 
     for (p = argv0; p[0] != '\0'; p++)
     {
-        if (p[1] != '\0' && p[2] != '\0' && p[3] != '\0' &&
-            p[0] == '2' && p[1] == '4' && p[2] == '0' && (p[3] == 'p' || p[3] == 'P'))
-            sProgressive = 1;
+        if (p[1] != '\0' && p[2] != '\0' && p[3] != '\0')
+        {
+            if (strncasecmp(p, "480i", 4) == 0)
+                sProgressive = 0;
+            else if (strncasecmp(p, "240p", 4) == 0)
+                sProgressive = 1;
+        }
     }
 
     sLaunchDevice = detect_device(argv0);
