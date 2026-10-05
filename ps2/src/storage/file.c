@@ -10,6 +10,7 @@
 
 #include <ps2sdkapi.h>
 #include <fcntl.h>
+#include <kernel.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -44,18 +45,17 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
     uint8_t *out = (uint8_t *)dst;
     uint32_t done = 0;
     uint32_t max_chunk = 0x4000u;
+    int is_mmce = (ps2_storage_data_device() == PS2_BOOT_MMCE);
 
     /*
-     * MMCEMAN serializes access through SIO2 and holds that lock across the
-     * entire requested read. Its transfer routine naturally works in batches
-     * of at most 16 * 256 = 4096 bytes. Issue one batch per read() so padman
-     * and memory-card traffic can run between chunks instead of waiting behind
-     * the old large request. Other physical/network backends use a 16 KiB
-     * ceiling: small enough for conservative USB/BDM/network stacks without
-     * penalizing host/CD/DVD-style access with tiny transactions.
+     * Keep the API identical for every device. MMCE only needs a smaller
+     * transfer quantum because MMCEMAN owns SIO2 for the duration of each
+     * request. 2 KiB transactions plus a tiny EE-side yield give PAD/MC
+     * clients a scheduling window between storage bursts instead of letting a
+     * 64 KiB asset request immediately reacquire SIO2 over and over.
      */
-    if (ps2_storage_data_device() == PS2_BOOT_MMCE)
-        max_chunk = 0x1000u;
+    if (is_mmce)
+        max_chunk = 0x800u;
     else if (ps2_storage_data_device() == PS2_BOOT_HOST ||
              ps2_storage_data_device() == PS2_BOOT_CDROM)
         max_chunk = 0x10000u;
@@ -63,12 +63,26 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
     while (done < size)
     {
         uint32_t chunk = ((size - done) > max_chunk) ? max_chunk : (size - done);
-        int n = (int)read(fd, out + done, chunk);
+        int n = -1;
+        int retry;
+
+        for (retry = 0; retry < (is_mmce ? 3 : 1); retry++)
+        {
+            n = (int)read(fd, out + done, chunk);
+            if (n > 0)
+                break;
+
+            if (is_mmce && retry + 1 < 3)
+                DelayThread(1000);
+        }
 
         if (n <= 0)
             return (done > 0) ? (int)done : n;
 
         done += (uint32_t)n;
+
+        if (is_mmce && done < size)
+            DelayThread(500);
     }
     return (int)done;
 }
