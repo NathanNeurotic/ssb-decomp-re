@@ -519,9 +519,27 @@ void ps2_iop_init(void)
     LOAD_IRX(mtapman);
     LOAD_IRX(padman);
 
-    /* Memory-card and sound services are intentionally deferred until after
-     * SSB64.DAT and controller input are proven. This keeps optional service
-     * failures from taking storage or boot down with them. */
+    /* Upstream PS2 port ordering: establish the SPU2 RPC server while this is
+     * still the pristine post-reset module-load phase, BEFORE MMCE/BDM/USB
+     * storage is introduced. Real hardware reached the late audio stage with
+     * storage/input/saves intact but then wedged while re-entering the module
+     * loader to inject libsd/sdr. Loading these exactly where upstream does
+     * avoids that second loader-client lifecycle entirely. */
+    ps2_log("IOP: loading upstream audio base before storage");
+    if (LOAD_IRX(libsd) == 0 && LOAD_IRX(sdr) == 0)
+    {
+        sAudioServicesReady = 1;
+        ps2_log("IOP: upstream libsd + sdr resident before storage");
+    }
+    else
+    {
+        sAudioServicesReady = 0;
+        ps2_log("IOP: upstream audio base unavailable; audio will stay silent");
+    }
+
+    /* Memory-card services remain deferred: the ROM XMC pair is now hardware-
+     * proven after MMCE/DAT/input and does not disturb the working device
+     * handoff. */
     ps2_log("IOP: reset/rebuilt, %d base modules", sLoadedCount);
 }
 
@@ -830,38 +848,22 @@ int ps2_iop_save_services_ready(void)
 
 int ps2_iop_prepare_audio_services(void)
 {
-    int libsd_ok;
-    int sdr_ok;
-
-    sAudioServicesReady = 0;
-
-    /* Match the upstream PS2 port's proven audio stack exactly: it embeds
-     * FreeSD/libsd + sdrdrv and loads those modules directly. Do NOT try a
-     * speculative rom0:SDRDRV first -- ps2sdk's SDR client is designed for
-     * the embedded sdrdrv server, and real hardware was observed hanging in
-     * SifLoadModule("rom0:SDRDRV") before the call ever returned.
-     *
-     * recovery_load_irx() is used rather than a presence probe so an already
-     * resident compatible module is accepted without binding to arbitrary RPC
-     * IDs. Storage, pads and saves are already proven before this runs. */
-    ps2_log("IOP: loading upstream embedded libsd + sdr audio stack");
-    libsd_ok = recovery_load_irx("libsd", libsd_irx, size_libsd_irx);
-    if (libsd_ok < 0)
+    /* On an owned/rebuilt IOP the upstream libsd+sdr pair was loaded during
+     * ps2_iop_init(), before the storage driver. Do not re-enter
+     * SifLoadFile/IopHeap or execute another IRX here; simply report whether
+     * that known server was established. */
+    if (sIopWasReset)
     {
-        ps2_log("IOP: embedded libsd unavailable; audio stays silent");
-        return 0;
+        ps2_log("IOP: audio server already established before storage: %s",
+                sAudioServicesReady ? "yes" : "no");
+        return sAudioServicesReady;
     }
 
-    sdr_ok = recovery_load_irx("sdr", sdr_irx, size_sdr_irx);
-    if (sdr_ok < 0)
-    {
-        ps2_log("IOP: embedded sdr unavailable; audio stays silent");
-        return 0;
-    }
-
-    sAudioServicesReady = 1;
-    ps2_log("IOP: embedded libsd + sdr ready");
-    return 1;
+    /* host:/bare-pfs inherited-Iop fallback: avoid speculative ROM module
+     * names. If the launcher did not leave SDR available, audio may remain
+     * silent; this path is not the hardware MMCE/USB/MX4SIO path. */
+    ps2_log("IOP: inherited IOP audio setup is not rebuilt");
+    return sAudioServicesReady;
 }
 
 int ps2_iop_audio_services_ready(void)
