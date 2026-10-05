@@ -30,7 +30,7 @@ extern void ps2_render_thread_init(void);
 extern void ps2_arena_init(void);
 extern void ps2_overlay_state_init(void);
 
-#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [AUDIO-CURSOR1]"
+#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [UNIFIED-RECOVERY]"
 
 int ps2_main(int argc, char *argv[])
 {
