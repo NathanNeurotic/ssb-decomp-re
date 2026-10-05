@@ -93,7 +93,6 @@ static void render_one(const RenderJob *job)
         ps2_overlay_draw();
     }
     ps2_pkt_finish();
-    ps2_gs_framebuffers_draw_complete(ps2_gbi_color_targets_mask());
 
     gPS2RenderStats.gfx_us = ps2_time_us() - t0;
     memcpy(&gPS2RenderStatsLast, &gPS2RenderStats, sizeof(gPS2RenderStats));
