@@ -14,6 +14,7 @@
 /* Renderer hooks (ps2/src/renderer/gs.c, callable from interrupt context). */
 extern void ps2_gs_isr_display_framebuffer(void *n64_fb);
 extern void ps2_gs_isr_set_blackout(int black);
+extern int ps2_render_is_idle(void);
 
 static OSMesgQueue *sViEventQueue;
 static OSMesg sViEventMsg;
@@ -34,7 +35,14 @@ void ps2_vi_init(void)
 /* Called from the VBlank-start interrupt handler (timing.c). */
 void ps2_vi_vblank_isr(void)
 {
-    if (sViSwapPending)
+    /*
+     * Do not flip to a target the EE renderer is still modifying. The N64
+     * scheduler normally finishes RDP work before VI exposes the buffer; on
+     * PS2 a slower translated frame can overlap the next VBlank and otherwise
+     * show up as a horizontal tear line that walks through the picture.
+     * Deferring one retrace is preferable to ever scanning an active target.
+     */
+    if (sViSwapPending && ps2_render_is_idle())
     {
         sViSwapPending = 0;
         sViCurrentFramebuffer = sViNextFramebuffer;
