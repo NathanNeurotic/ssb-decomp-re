@@ -735,10 +735,37 @@ static void bind_texture(int tile_index, TexInfo *ti)
     key.fmt = t->fmt;
     key.siz = t->siz;
     key.line_bytes = (uint16_t)((t->line ? t->line : 1) * tmem_bytes);
-    if (R.loads[li].pitch != 0 && R.loads[li].siz == t->siz && t->line * tmem_bytes != R.loads[li].pitch)
+    if (R.loads[li].pitch != 0)
     {
-        /* LoadTile rows keep the DRAM image pitch. */
-        key.line_bytes = (uint16_t)R.loads[li].pitch;
+        uint32_t min_row_bytes;
+
+        switch (t->siz)
+        {
+        case G_IM_SIZ_4b: min_row_bytes = ((uint32_t)w + 1u) >> 1; break;
+        case G_IM_SIZ_8b: min_row_bytes = (uint32_t)w; break;
+        case G_IM_SIZ_16b: min_row_bytes = (uint32_t)w * 2u; break;
+        default: min_row_bytes = (uint32_t)w * 4u; break;
+        }
+
+        /*
+         * The CPU converter reads the original DRAM source directly rather
+         * than emulating TMEM. Preserve the DRAM row pitch reconstructed from
+         * LoadBlock/LoadTile whenever it is plausible.
+         *
+         * CI4 is the important special case: Nintendo's RDP macros load 4-bit
+         * textures through a 16-bit SETTIMG/LoadBlock path, then reinterpret
+         * that TMEM data with a 4-bit render tile. The previous size-equality
+         * check rejected the DXT-derived source pitch for exactly that case
+         * and fell back to the render-tile line value. Dynamic fighter
+         * materials (Mario cap, Pikachu face, Yoshi detail textures) all use
+         * this 16-bit-load -> CI4-render convention.
+         */
+        if (R.loads[li].pitch >= min_row_bytes &&
+            (R.loads[li].siz == t->siz ||
+             (t->siz == G_IM_SIZ_4b && R.loads[li].siz == G_IM_SIZ_16b)))
+        {
+            key.line_bytes = (uint16_t)R.loads[li].pitch;
+        }
     }
     key.mirror_s = (t->cms & G_TX_MIRROR) && ti->wrap_s_repeat;
     key.mirror_t = (t->cmt & G_TX_MIRROR) && ti->wrap_t_repeat;
