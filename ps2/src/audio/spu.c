@@ -96,7 +96,7 @@ static void batch_submit(void)
         return;
     FlushCache(0);
     sceSdTransToIOP(sBatch, sIopBatch, (uint32_t)((n * (int)sizeof(sceSdBatch) + 63) & ~63), 1);
-    sceSdRemote(1, rSdProcBatch, sIopBatch, sIopRets, n);
+    sceSdRemote(1, rSdProcBatch, sIopBatch, sIopRets, n, 0, 0, 0);
     sBatchCount = 0;
 }
 
@@ -113,8 +113,8 @@ static void spu_upload(const uint8_t *src, uint32_t addr, uint32_t size)
         if (n > IOP_STAGE_SIZE)
             n = IOP_STAGE_SIZE;
         sceSdTransToIOP((void *)(src + done), sIopStage, n, 1);
-        sceSdRemote(1, rSdVoiceTrans, 0, SD_TRANS_WRITE | SD_TRANS_MODE_DMA, sIopStage, addr + done, n);
-        sceSdRemote(1, rSdVoiceTransStatus, 0, 1);
+        sceSdRemote(1, rSdVoiceTrans, 0, SD_TRANS_WRITE | SD_TRANS_MODE_DMA, sIopStage, addr + done, n, 0);
+        sceSdRemote(1, rSdVoiceTransStatus, 0, 1, 0, 0, 0, 0);
         done += n;
     }
     sStats.uploads++;
@@ -224,6 +224,7 @@ int ps2_spu_init(void)
     uint32_t size, i;
     int v;
 
+    ps2_log("audio: SPU init stage 1/6 - reading sample header");
     ps2_rom_read(PS2_SPU_SAMPLES_VROM, &head, sizeof(head));
     if (memcmp(head.magic, PS2_SPU_SAMPLES_MAGIC, 4) != 0 || head.version != PS2_SPU_SAMPLES_VERSION)
     {
@@ -238,6 +239,8 @@ int ps2_spu_init(void)
                      sizeof(last));
         size = last.data_off + last.data_size;
     }
+    ps2_log("audio: SPU init stage 2/6 - sample set %u KiB, %u entries",
+            (unsigned)(size / 1024), (unsigned)head.count);
     sSet = (uint8_t *)ps2_mem_alloc(PS2_MEM_AUDIO, size, 64);
     sResidentOf = (int *)ps2_mem_alloc(PS2_MEM_AUDIO, head.count * sizeof(int), 16);
     if (sSet == NULL || sResidentOf == NULL)
@@ -245,12 +248,14 @@ int ps2_spu_init(void)
         ps2_log("audio: cannot allocate %u KiB for the sample set; audio stays silent", (unsigned)(size / 1024));
         return -1;
     }
+    ps2_log("audio: SPU init stage 3/6 - loading PS-ADPCM set");
     ps2_rom_read(PS2_SPU_SAMPLES_VROM, sSet, size);
     sEntries = (const PS2SpuSampleEntry *)(sSet + head.entries_offset);
     sCount = head.count;
     for (i = 0; i < sCount; i++)
         sResidentOf[i] = -1;
 
+    ps2_log("audio: SPU init stage 4/6 - allocating IOP staging");
     SifInitIopHeap();
     sIopStage = SifAllocIopHeap(IOP_STAGE_SIZE);
     sIopBatch = SifAllocIopHeap(MAX_BATCH * sizeof(sceSdBatch));
@@ -260,12 +265,14 @@ int ps2_spu_init(void)
         ps2_log("audio: IOP heap allocation failed; audio stays silent");
         return -1;
     }
+    ps2_log("audio: SPU init stage 5/6 - binding SDR RPC");
     if (sceSdRemoteInit() < 0)
     {
         ps2_log("audio: sdrdrv RPC unavailable; audio stays silent");
         return -1;
     }
-    sceSdRemote(1, rSdInit, 0);
+    ps2_log("audio: SPU init stage 6/6 - initializing SPU2 core");
+    sceSdRemote(1, rSdInit, 0, 0, 0, 0, 0, 0);
 
     /* core 1: all voices dry to the output, master volume full, no effects */
     batch_add(SD_BATCH_SETCORE, SPU_CORE | SD_CORE_EFFECT_ENABLE, 0);
@@ -449,10 +456,10 @@ static void probe_hardware(void)
 
     for (v = 0; v < PS2_SPU_VOICES; v++)
     {
-        if ((uint32_t)sceSdRemote(1, rSdGetParam, SD_VOICE(SPU_CORE, v) | SD_VPARAM_ENVX) & 0x7FFF)
+        if ((uint32_t)sceSdRemote(1, rSdGetParam, SD_VOICE(SPU_CORE, v) | SD_VPARAM_ENVX, 0, 0, 0, 0, 0) & 0x7FFF)
         {
             sounding++;
-            nax_sum += (uint32_t)sceSdRemote(1, rSdGetAddr, SD_VOICE(SPU_CORE, v) | SD_VADDR_NAX);
+            nax_sum += (uint32_t)sceSdRemote(1, rSdGetAddr, SD_VOICE(SPU_CORE, v) | SD_VADDR_NAX, 0, 0, 0, 0, 0);
         }
     }
     sStats.hw_sounding = sounding;
