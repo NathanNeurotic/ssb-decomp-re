@@ -303,26 +303,44 @@ int ps2_iop_mmce_prepare_runtime_stream(void)
     if (fileXioInit() < 0)
         return -1;
 
-    /* This is the same baseline runtime service set the port already uses.
-     * Audio's known-real-hardware blocker remains deferred: libsd is safe,
-     * sdrdrv is not started. */
-    if (LOAD_IRX(sio2man) < 0 ||
-        LOAD_IRX(mtapman) < 0 ||
-        LOAD_IRX(padman) < 0 ||
-        LOAD_IRX(mcman) < 0 ||
-        LOAD_IRX(mcserv) < 0 ||
-        LOAD_IRX(libsd) < 0)
+    /*
+     * Bring up the MMCE transport BEFORE pad/multitap/memory-card clients.
+     * RiptOPL's game-side core establishes MMCEDRV immediately after the
+     * reset, then the title later brings up its normal SIO2 clients. Our old
+     * ordering did the opposite: padman/mcman were already resident (and
+     * libpad had already been initialized on the EE) before MMCEDRV got its
+     * first transaction. On real hardware that leaves the shared SIO2 path in
+     * exactly the wrong state for the preserved MMCE file-id handoff.
+     */
+    if (LOAD_IRX(sio2man) < 0)
         return -1;
-
-    /* RiptOPL's EE core loads MMCEDRV only after the game-side IOP has been
-     * rebuilt. Our small bridge merely exposes those IOP exports to the EE
-     * asset reader; it does not own MMCE setup. */
     if (LOAD_IRX(mmcedrv) < 0)
         return -1;
     if (LOAD_IRX(ssb_mmce_stream) < 0)
         return -1;
 
-    ps2_log("IOP: MMCE runtime IOP ready with MMCEDRV");
+    ps2_log("IOP: MMCE transport ready; deferring pad/mc clients until DAT fd validates");
+    return 0;
+}
+
+int ps2_iop_mmce_finish_runtime_services(void)
+{
+    if (ps2_storage_data_device() != PS2_BOOT_MMCE)
+        return 0;
+
+    /*
+     * Only after ssbmmce has successfully opened the preserved MMCE file-id
+     * do we start the other SIO2 users. This also ensures the EE libpad client
+     * is initialized against the post-reset padman instance rather than the
+     * one that the MMCE transition destroyed.
+     */
+    if (LOAD_IRX(mtapman) < 0 ||
+        LOAD_IRX(padman) < 0 ||
+        LOAD_IRX(mcman) < 0 ||
+        LOAD_IRX(mcserv) < 0)
+        return -1;
+
+    ps2_log("IOP: MMCE runtime pad/mc services ready");
     return 0;
 }
 
