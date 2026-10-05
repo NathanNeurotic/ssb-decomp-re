@@ -40,7 +40,6 @@ static char sHddMountSource[HDD_SOURCE_MAX] = "";
 static int sProgressive;
 static int sDataNeedsExistingIop;
 static int sDataNeedsBdmResolve;
-static int sSidecarMode;
 
 static int starts_with_ci(const char *s, const char *prefix)
 {
@@ -350,7 +349,6 @@ void ps2_storage_set_boot_path(const char *argv0)
     sHddMountSource[0] = '\0';
     sDataNeedsExistingIop = 0;
     sDataNeedsBdmResolve = 0;
-    sSidecarMode = 1;
 
     if (argv0 == NULL || argv0[0] == '\0')
     {
@@ -405,7 +403,6 @@ int ps2_storage_set_data_path(const char *path)
      * destroy the valid inherited sidecar mode before boot can report it. */
     if (!set_data_location(path, 0))
         return 0;
-    sSidecarMode = 0;
     return 1;
 }
 
