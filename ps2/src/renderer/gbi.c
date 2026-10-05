@@ -747,59 +747,17 @@ static void bind_texture(int tile_index, TexInfo *ti)
     {
         uint16_t pal_tmem = (uint16_t)(256 + ((t->siz == G_IM_SIZ_4b) ? (t->palette * 16) : 0));
         int pl = find_load(pal_tmem, 1);
-        uint32_t delta = 0;
-        uint32_t max_entries = (t->siz == G_IM_SIZ_4b) ? 16u : 256u;
-
-        /*
-         * The SGI sprite library can load only nTLUT entries beginning at
-         * 256+startTLUT. CI8 still indexes the conceptual 256-entry palette
-         * from zero, so a valid partial palette need not cover TMEM word 256.
-         * Preserve the load's placement and let texcache construct the sparse
-         * GS CLUT instead of dropping the sprite or reading beyond the load.
-         */
-        if (pl < 0 && t->siz == G_IM_SIZ_8b)
-        {
-            int pi;
-
-            for (pi = R.load_count - 1; pi >= 0; pi--)
-            {
-                if (R.loads[pi].is_tlut && R.loads[pi].tmem >= 256 && R.loads[pi].tmem < 512)
-                {
-                    pl = pi;
-                    break;
-                }
-            }
-        }
 
         if (pl < 0)
-            return;
-
-        if (R.loads[pl].tmem <= pal_tmem)
         {
-            delta = (uint32_t)(pal_tmem - R.loads[pl].tmem);
-            key.tlut = R.loads[pl].src + delta * 2u;
-            key.tlut_start = 0;
-        }
-        else
-        {
-            key.tlut = R.loads[pl].src;
-            key.tlut_start = (uint16_t)(R.loads[pl].tmem - pal_tmem);
-        }
-
-        key.tlut_entries = (R.loads[pl].words > delta)
-                               ? (uint16_t)(R.loads[pl].words - delta)
-                               : 0;
-        if ((uint32_t)key.tlut_start + key.tlut_entries > max_entries)
-            key.tlut_entries = (uint16_t)(max_entries - key.tlut_start);
-        if (key.tlut_entries == 0)
             return;
-
+        }
+        key.tlut = R.loads[pl].src + (uint32_t)(pal_tmem - R.loads[pl].tmem) * 2u;
         if (gPS2TlutTrace > 0)
         {
             gPS2TlutTrace--;
-            ps2_log("ci bind tex %p tlut %p start=%u entries=%u (load tmem %u+%u cmd %p)", key.addr,
-                    key.tlut, (unsigned)key.tlut_start, (unsigned)key.tlut_entries,
-                    R.loads[pl].tmem, R.loads[pl].words, R.loads[pl].cmd);
+            ps2_log("ci bind tex %p tlut %p (tlut load cmd %p tmem %u+%u) tex load cmd %p at cmd %p", key.addr,
+                    key.tlut, R.loads[pl].cmd, R.loads[pl].tmem, R.loads[pl].words, R.loads[li].cmd, sCurCmd);
         }
         key.tlut_type = (uint8_t)((tlut_type == 3) ? 3 : 2);
         key.pal_index = t->palette;
@@ -1071,24 +1029,9 @@ static void make_outvtx(const GbiVtx *v, const DrawMode *dm, OutVtx *o)
         o->r = (co.rgb[0].k + co.rgb[0].c) * 128.0f;
         o->g = (co.rgb[1].k + co.rgb[1].c) * 128.0f;
         o->b = (co.rgb[2].k + co.rgb[2].c) * 128.0f;
-        float ss = v->s * ti->shift_s - ti->off_s;
-        float tt = v->t * ti->shift_t - ti->off_t;
-        uint32_t filt = (R.om_h >> 12) & 3;
-
         o->a = (co.a.k + co.a.c) * 128.0f;
-        /*
-         * RDP bilerp/average coordinates place an integer coordinate at the
-         * center of a texel. The GS places texel centers at N+0.5. Preserve
-         * the RDP sample location so small textures do not shimmer or bleed
-         * across tile edges. Point-sampled coordinates already match.
-         */
-        if (filt != 0)
-        {
-            ss += 0.5f;
-            tt += 0.5f;
-        }
-        o->s = ss / (float)ti->bind.gs_w;
-        o->t = tt / (float)ti->bind.gs_h;
+        o->s = (v->s * ti->shift_s - ti->off_s) / (float)ti->bind.gs_w;
+        o->t = (v->t * ti->shift_t - ti->off_t) / (float)ti->bind.gs_h;
     }
     else
     {
@@ -1451,18 +1394,6 @@ static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int fli
         v0 = t;
         u1 = s + (y1 - y0) * dsdx;
         v1 = t + (x1 - x0) * dtdy;
-    }
-    /*
-     * N64 bilerp/average treats integer S/T as texel centers while the GS
-     * centers texels at N+0.5. The old direct mapping sampled every sprite
-     * half a texel off, which shows up as seams, edge bleed and shimmering.
-     */
-    if (cyc != G_CYC_COPY && ((R.om_h >> 12) & 3) != 0)
-    {
-        u0 += 0.5f;
-        v0 += 0.5f;
-        u1 += 0.5f;
-        v1 += 0.5f;
     }
     if (dm.prim_depth)
     {
