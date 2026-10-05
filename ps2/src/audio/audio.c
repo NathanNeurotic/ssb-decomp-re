@@ -13,15 +13,6 @@ static uint32_t sAiQueuedBytes;
 
 void ps2_audio_init(void)
 {
-    /* Real-hardware containment: never enter libsdr's unbounded RPC bind when
-     * the IOP-side sdrdrv server was deliberately not started. The game can
-     * run silent while the transport-independent audio replacement is tested. */
-    if (!ps2_iop_audio_services_ready())
-    {
-        ps2_log("audio: SDR-BYPASS active; continuing silent");
-        return;
-    }
-
     ps2_spu_init();
 }
 
