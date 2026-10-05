@@ -121,6 +121,7 @@ static struct
 } R;
 
 static int sLastColorTarget = -1;
+static uint32_t sColorTargetsMask;
 int gPS2GbiTrace; /* debug: log this many upcoming commands */
 int gPS2CombTrace; /* debug: log distinct textured combiner setups */
 int gPS2TlutTrace; /* debug: log this many CI texture binds with their TLUT load */
@@ -1439,6 +1440,8 @@ static void set_color_image(const void *addr)
     {
         R.color_target = fb;
         sLastColorTarget = fb;
+        sColorTargetsMask |= 1u << fb;
+        ps2_gs_framebuffer_draw_begin(fb);
         ps2_gs_frame_setup(fb);
         sCurValid = 0;
     }
@@ -1487,6 +1490,11 @@ int ps2_gbi_last_color_target(void)
     return sLastColorTarget;
 }
 
+uint32_t ps2_gbi_color_targets_mask(void)
+{
+    return sColorTargetsMask;
+}
+
 #define DL_STACK 18
 
 void ps2_gbi_run(const void *dl_start)
@@ -1498,6 +1506,7 @@ void ps2_gbi_run(const void *dl_start)
 
     reset_state();
     sLastColorTarget = -1;
+    sColorTargetsMask = 0;
 
     while (dl != NULL)
     {
