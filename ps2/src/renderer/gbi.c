@@ -112,7 +112,7 @@ static struct
     int load_count;
 
     int color_target;  /* FB index, or -1 */
-    const void *zimg_addr; /* exact address last selected by G_SETZIMG */
+    int zimg_is_z;
     int cimg_is_z;
     int cimg_offscreen; /* unsupported non-display color image: suppress draws */
 
@@ -1445,27 +1445,12 @@ static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int fli
 /* Display list interpreter                                             */
 /* ------------------------------------------------------------------ */
 
-static int same_rdram_addr(const void *a, const void *b)
-{
-    if (a == NULL || b == NULL)
-        return 0;
-    return (((uintptr_t)a & 0x0FFFFFFFu) == ((uintptr_t)b & 0x0FFFFFFFu));
-}
-
 static void set_color_image(const void *addr)
 {
     int fb = ps2_gs_fb_index_for(addr);
 
     batch_close();
-    /*
-     * A Z clear on the N64 is expressed by selecting the Z image as the
-     * color image and filling it. Use the exact address supplied by
-     * G_SETZIMG. The previous broad "within 64 KiB of gSYZBuffer" heuristic
-     * could classify unrelated intermediate color images as Z, allowing
-     * their primitives to leak into the visible framebuffer instead of being
-     * suppressed as unsupported off-screen passes.
-     */
-    R.cimg_is_z = same_rdram_addr(addr, R.zimg_addr);
+    R.cimg_is_z = ps2_gs_is_zbuffer(addr);
     R.cimg_offscreen = 0;
     if (fb >= 0)
     {
@@ -1899,7 +1884,6 @@ void ps2_gbi_run(const void *dl_start)
             break;
 
         case G_SETZIMG:
-            R.zimg_addr = seg_addr(w1);
             break;
 
         case G_SETTIMG:
