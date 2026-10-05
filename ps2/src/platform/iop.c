@@ -260,6 +260,52 @@ int ps2_iop_promote_filesystem_client(void)
 
     if (!ps2_storage_requires_iop_preserve() || !device_prefers_iomanx(dev))
         return 0;
+
+    /* MMCE is different from a plain fileXio promotion. The launcher may
+     * successfully load the ELF from mmceN: and then reset/replace enough of
+     * the IOP stack that the child still has an EE filesystem client but no
+     * registered mmceN: device. A failed open of the real adjacent DAT is the
+     * authority here: rebuild only the MMCE prerequisites, without another
+     * IOP reset, then retry the exact sidecar path.
+     *
+     * MMCEMAN requires iomanX + fileXio to exist before it starts and uses
+     * SIO2. recovery_load_irx() treats already-resident modules as success,
+     * so this is also safe when only one layer of the inherited stack was
+     * missing. */
+    if (dev == PS2_BOOT_MMCE)
+    {
+        ps2_log("IOP: MMCE sidecar not visible; restoring MMCE stack without reset");
+
+        if (recovery_load_irx("iomanx", iomanx_irx, size_iomanx_irx) < 0)
+        {
+            ps2_log("IOP: MMCE recovery could not establish iomanX");
+            return -1;
+        }
+        if (recovery_load_irx("filexio", filexio_irx, size_filexio_irx) < 0)
+        {
+            ps2_log("IOP: MMCE recovery could not establish fileXio");
+            return -1;
+        }
+        if (activate_filexio_client() < 0)
+        {
+            ps2_log("IOP: MMCE recovery could not bind fileXio client");
+            return -1;
+        }
+        if (recovery_load_irx("sio2man", sio2man_irx, size_sio2man_irx) < 0)
+        {
+            ps2_log("IOP: MMCE recovery could not establish SIO2MAN");
+            return -1;
+        }
+        if (recovery_load_irx("mmceman", mmceman_irx, size_mmceman_irx) < 0)
+        {
+            ps2_log("IOP: MMCE recovery could not establish MMCEMAN");
+            return -1;
+        }
+
+        ps2_log("IOP: MMCE sidecar stack restored; retrying exact launch path");
+        return 1;
+    }
+
     if (sFsClient == PS2_FS_CLIENT_FILEXIO)
         return 0;
 
