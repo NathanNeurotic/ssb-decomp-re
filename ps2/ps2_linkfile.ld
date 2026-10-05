@@ -640,8 +640,8 @@ SECTIONS {
 		*libssb_game.a:scmanager.o(.data .data.*)
 		__ps2_scmanager_data_end = .;
 		__ps2_ovl_data_end = .;
-		*(.data)
-		*(.data.*)
+		*(EXCLUDE_FILE(*sdr_irx.o) .data)
+		*(EXCLUDE_FILE(*sdr_irx.o) .data.*)
 		*(.gnu.linkonce.d*)
 		SORT(CONSTRUCTORS)
 	}
@@ -1272,6 +1272,24 @@ SECTIONS {
 		*(COMMON)
 	}
 	_end_bss = .;
+
+	/*
+	 * Optional hardware services that were not part of the proven early
+	 * runtime image live after BSS. In particular, referencing embedded
+	 * sdr.irx used to insert ~6 KiB into .data and move every static/game
+	 * address even though audio had not executed yet.
+	 */
+	.late_text ALIGN(16) : {
+		*(.late_text)
+		*(.late_text.*)
+	}
+	.late_rodata ALIGN(16) : {
+		*(.late_rodata)
+		*(.late_rodata.*)
+	}
+	.late_irx ALIGN(128) : {
+		*sdr_irx.o(.data .data.*)
+	}
 
 	_end = . ;
 	PROVIDE(end = .);
