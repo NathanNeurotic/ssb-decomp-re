@@ -460,6 +460,7 @@ static int mount_hdd_partition(void)
 void ps2_iop_init(void)
 {
     int preserve_iop = ps2_storage_requires_iop_preserve();
+    PS2BootDevice dev = ps2_storage_data_device();
 
     sLoadedCount = 0;
     sIopWasReset = 0;
@@ -475,11 +476,43 @@ void ps2_iop_init(void)
 
     if (preserve_iop)
     {
-        /* Only genuinely unreconstructable paths reach this branch (host:
-         * and bare pfsN:). Physical launch devices follow RiptOPL's boot
-         * model below: reset once, build the common stack, then load exactly
-         * the transport identified by argv[0]. */
-        ps2_log("IOP: preserving unreconstructable inherited filesystem");
+        /* Match upstream for host:/PCSX2: preserve the host filesystem IOP,
+         * but still establish our own known common RPC stack. The previous
+         * fork code returned here and then tried to infer PADMAN later; that
+         * is the controller regression.
+         *
+         * Bare inherited PFS is different: its mounted filesystem may depend
+         * on the launcher's exact stack, so leave that one untouched. */
+        if (dev != PS2_BOOT_HOST)
+        {
+            ps2_log("IOP: preserving inherited non-host filesystem stack");
+            return;
+        }
+
+        ps2_log("IOP: upstream host mode; keeping IOP and loading common stack");
+
+        SifLoadFileInit();
+        SifInitIopHeap();
+        sbv_patch_enable_lmb();
+        sbv_patch_disable_prefix_check();
+
+        LOAD_IRX(iomanx);
+        if (LOAD_IRX(filexio) == 0)
+        {
+            if (fileXioInit() >= 0)
+                sFsClient = PS2_FS_CLIENT_FILEXIO;
+        }
+
+        LOAD_IRX(sio2man);
+        LOAD_IRX(mtapman);
+        LOAD_IRX(padman);
+
+        /* Keep the current real-hardware audio containment: libsd is safe,
+         * sdrdrv is intentionally skipped until its separate hang is fixed. */
+        LOAD_IRX(libsd);
+        sAudioServicesReady = 0;
+
+        ps2_log("IOP: upstream host common stack ready, %d modules", sLoadedCount);
         return;
     }
 
@@ -736,14 +769,16 @@ static int sio2_fallback_is_safe(void)
 
 int ps2_iop_prepare_runtime_services(void)
 {
-    /* Storage is already proven at this point because SSB64.DAT opened from
-     * the sidecar path. Only controller RPC is mandatory for gameplay.
-     *
-     * First try to consume whatever pad stack the launcher left behind. If it
-     * is absent, try PADMAN alone so launchers with a compatible live SIO2
-     * service keep complete ownership of that transport. Only when PADMAN
-     * still cannot register do we add SIO2MAN, and only for devices where
-     * replacing/adding SIO2 cannot disconnect the active storage path. */
+    /* For normal rebuilt-device boots, PADMAN/MTAPMAN were loaded before the
+     * transport exactly as upstream does. For host:/PCSX2, ps2_iop_init()
+     * now also loads that same common stack while preserving host:. Do not
+     * second-guess either known-good path with RPC-ID probes. */
+    if (!ps2_storage_requires_iop_preserve() ||
+        ps2_storage_data_device() == PS2_BOOT_HOST)
+        return 0;
+
+    /* Only truly inherited, non-host filesystems (currently bare PFS) retain
+     * the old guarded recovery path. */
     if (ps2_storage_requires_iop_preserve())
     {
         if (pad_rpc_ready())
