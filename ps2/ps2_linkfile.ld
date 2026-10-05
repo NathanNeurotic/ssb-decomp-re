@@ -11,10 +11,6 @@
 ENTRY(__start);
 
 PHDRS {
-  /*
-   * Real PS2 launchers used in the hardware path are only guaranteed to load
-   * the primary PT_LOAD. Keep deferred audio in that same segment.
-   */
   text PT_LOAD;
 }
 
@@ -22,11 +18,7 @@ SECTIONS {
 	.text 0x00100000: {
 		_ftext = . ;
 		*(.text)
-		/* Keep the functions present in the proven build in the early image,
-		 * but leave the newly-referenced blocking init entry for .late_text. */
-		*(EXCLUDE_FILE(*sdr_main.o) .text.*)
-		*sdr_main.o(.text.sceSdTransToIOP)
-		*sdr_main.o(.text.sceSdRemote)
+		*(.text.*)
 		*(.gnu.linkonce.t*)
 		KEEP(*(.init))
 		KEEP(*(.fini))
@@ -36,8 +28,7 @@ SECTIONS {
 	PROVIDE(_etext = .);
 	PROVIDE(etext = .);
 
-	/* Hardware-proven early image boundary from 13dffe8. */
-	.ctors 0x00276810: {
+	.ctors ALIGN(16): {
 		PROVIDE(__CTOR_LIST__ = .);
 		KEEP(*crtbegin*.o(.ctors))
 		KEEP(*(EXCLUDE_FILE(*crtend*.o) .ctors))
@@ -56,7 +47,7 @@ SECTIONS {
 
 	.reginfo : { *(.reginfo) }
 
-	.data 0x00276880: {
+	.data ALIGN(128): {
 		_fdata = . ;
 		__ps2_ovl_data_start = .;
 		. = ALIGN(16); __ps2_ovl0_data_start = .;
@@ -649,15 +640,15 @@ SECTIONS {
 		*libssb_game.a:scmanager.o(.data .data.*)
 		__ps2_scmanager_data_end = .;
 		__ps2_ovl_data_end = .;
-		*(EXCLUDE_FILE(*sdr_irx.o) .data)
-		*(EXCLUDE_FILE(*sdr_irx.o) .data.*)
+		*(.data)
+		*(.data.*)
 		*(.gnu.linkonce.d*)
 		SORT(CONSTRUCTORS)
 	}
 
-	.rodata 0x00312780: {
+	.rodata ALIGN(128): {
 		*(.rodata)
-		*(EXCLUDE_FILE(*spu.o) .rodata.*)
+		*(.rodata.*)
 		*(.gnu.linkonce.r*)
 	}
 
@@ -668,7 +659,7 @@ SECTIONS {
 	.lit4 ALIGN(128): { *(.lit4) }
 	.lit8 ALIGN(128): { *(.lit8) }
 
-	.sdata 0x0031d980: {
+	.sdata ALIGN(128): {
 		*(.sdata)
 		*(.sdata.*)
 		*(.gnu.linkonce.s*)
@@ -685,7 +676,7 @@ SECTIONS {
 		*(.scommon)
 	}
 
-	.bss 0x0031da00 : {
+	.bss ALIGN(128) : {
 		. = ALIGN(16); __ps2_ovl0_bss_start = .;
 		*libssb_game.a:lbcommon.o(.bss .bss.* COMMON)
 		*libssb_game.a:lbreloc.o(.bss .bss.* COMMON)
@@ -1281,26 +1272,6 @@ SECTIONS {
 		*(COMMON)
 	}
 	_end_bss = .;
-
-	/*
-	 * Deferred hardware services that were not part of the proven early
-	 * runtime image live after BSS. In particular, referencing embedded
-	 * sdr.irx used to insert ~6 KiB into .data and move every static/game
-	 * address even though audio had not executed yet.
-	 */
-	.late_text ALIGN(16) : {
-		*(.late_text)
-		*(.late_text.*)
-		*sdr_main.o(.text.sceSdRemoteInit)
-	} :text
-	.late_rodata ALIGN(16) : {
-		*(.late_rodata)
-		*(.late_rodata.*)
-		*spu.o(.rodata .rodata.*)
-	} :text
-	.late_irx ALIGN(128) : {
-		*sdr_irx.o(.data .data.*)
-	} :text
 
 	_end = . ;
 	PROVIDE(end = .);
