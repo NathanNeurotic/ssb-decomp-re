@@ -101,10 +101,11 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           cp ps2/build/bin/ssb64.elf artifacts/SSB64.ELF
-          # Native 240p is the default. Ship explicit aliases from the exact
-          # same binary so the only test variable is argv[0]/video mode.
+          # The executable selects native NTSC 240p when argv[0] contains
+          # "240p". Ship the exact same binary under that name so hardware
+          # tests can isolate interlaced-field presentation artifacts without
+          # changing renderer/audio code between candidates.
           cp ps2/build/bin/ssb64.elf artifacts/SSB64-240p.ELF
-          cp ps2/build/bin/ssb64.elf artifacts/SSB64-480i.ELF
 
           if [ -f ps2/build/obj/ssb64/ssb64.unstripped.elf ]; then
             cp ps2/build/obj/ssb64/ssb64.unstripped.elf artifacts/SSB64-unstripped.ELF
@@ -117,10 +118,9 @@ jobs:
           cat > artifacts/README.txt <<'EOF'
           SSB64 native PS2 port - automated ps2build artifact
 
-          SSB64.ELF is the native 320x240p bootable PS2 executable.
-          SSB64-240p.ELF is an explicit alias for the same native mode.
-          SSB64-480i.ELF is the exact same build with interlaced compatibility
-          output selected only by its filename.
+          SSB64.ELF is the standard 480i bootable PS2 executable.
+          SSB64-240p.ELF is the same build with native 240p selected by its
+          filename. It is intended for displays/capture chains that accept 240p.
 
           SSB64.DAT is intentionally NOT included. It contains data generated
           from a user's own Super Smash Bros. 64 US ROM and must be built
@@ -133,7 +133,6 @@ jobs:
 
           sha256sum artifacts/SSB64.ELF > artifacts/SHA256SUMS.txt
           sha256sum artifacts/SSB64-240p.ELF >> artifacts/SHA256SUMS.txt
-          sha256sum artifacts/SSB64-480i.ELF >> artifacts/SHA256SUMS.txt
           if [ -f artifacts/SSB64-unstripped.ELF ]; then
             sha256sum artifacts/SSB64-unstripped.ELF >> artifacts/SHA256SUMS.txt
           fi
