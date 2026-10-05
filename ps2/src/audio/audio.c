@@ -11,23 +11,21 @@
 static uint32_t sAiFrequency;
 static uint32_t sAiQueuedBytes;
 
-/*
- * Preserve the original build's rodata footprint while the actual audio
- * bring-up code lives after BSS. Keeping the proven early image layout stable
- * is important on hardware because large embedded IRX blobs otherwise move
- * every platform/game static address before audio is even called.
- */
-static const char sAudioBaselineLayoutString[] __attribute__((used)) =
-    "audio: deferred until hardware-safe SDR bring-up is restored";
-
 static void __attribute__((section(".late_text"), noinline)) ps2_audio_init_late(void)
 {
     if (ps2_iop_load_audio_driver() >= 0)
         ps2_spu_init();
+    else
+        ps2_log("audio: deferred until hardware-safe SDR bring-up is restored");
 }
 
 void ps2_audio_init(void)
 {
+    /*
+     * Keep this early wrapper the same instruction footprint as the proven
+     * silent build. The real work is in .late_text after the frozen BSS.
+     */
+    __asm__ volatile("nop");
     ps2_audio_init_late();
 }
 
