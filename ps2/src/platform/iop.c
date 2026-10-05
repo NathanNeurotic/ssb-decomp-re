@@ -525,16 +525,33 @@ void ps2_iop_init(void)
      * storage/input/saves intact but then wedged while re-entering the module
      * loader to inject libsd/sdr. Loading these exactly where upstream does
      * avoids that second loader-client lifecycle entirely. */
-    ps2_log("IOP: loading upstream audio base before storage");
-    if (LOAD_IRX(libsd) == 0 && LOAD_IRX(sdr) == 0)
     {
-        sAudioServicesReady = 1;
-        ps2_log("IOP: upstream libsd + sdr resident before storage");
-    }
-    else
-    {
-        sAudioServicesReady = 0;
-        ps2_log("IOP: upstream audio base unavailable; audio will stay silent");
+        extern void ps2_gs_boot_screen(const char *title);
+        int libsd_ok;
+        int sdr_ok = -1;
+
+        ps2_log("IOP: AUDIO-EARLY loading embedded libsd");
+        ps2_gs_boot_screen("Super Smash Bros. 64 - PS2 native port [AUDIO-EARLY]");
+        libsd_ok = LOAD_IRX(libsd);
+
+        if (libsd_ok == 0)
+        {
+            ps2_log("IOP: AUDIO-EARLY libsd loaded; loading embedded sdr");
+            ps2_gs_boot_screen("Super Smash Bros. 64 - PS2 native port [AUDIO-EARLY]");
+            sdr_ok = LOAD_IRX(sdr);
+        }
+
+        if (libsd_ok == 0 && sdr_ok == 0)
+        {
+            sAudioServicesReady = 1;
+            ps2_log("IOP: upstream libsd + sdr resident before storage");
+        }
+        else
+        {
+            sAudioServicesReady = 0;
+            ps2_log("IOP: upstream audio base unavailable; audio will stay silent");
+        }
+        ps2_gs_boot_screen("Super Smash Bros. 64 - PS2 native port [AUDIO-EARLY]");
     }
 
     /* Memory-card services remain deferred: the ROM XMC pair is now hardware-
