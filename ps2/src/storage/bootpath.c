@@ -157,34 +157,9 @@ static int normalise_hdd_path(const char *path, char *out, size_t out_size, int 
     const char *slash;
     const char *bslash;
     const char *pfs;
-    const char *runtime_pfs;
-    char pfs_mount[8] = "pfs0:";
     size_t part_len;
 
     sHddMountSource[0] = '\0';
-
-    /* A sidecar launch can include the launcher's already-mounted PFS slot
-     * (for example hdd0:+OPL:pfs2:/APPS/...). Preserve that runtime mount
-     * name instead of canonicalising it to pfs0:, because sidecar mode keeps
-     * the inherited IOP and does not remount the partition. Explicit --data
-     * directory paths still canonicalise to pfs0: for our own rebuilt stack. */
-    runtime_pfs = path_is_file ? find_pfs_token(path) : NULL;
-    if (runtime_pfs != NULL)
-    {
-        const char *end = runtime_pfs + 3;
-        size_t len;
-
-        while (*end >= '0' && *end <= '9')
-            end++;
-        if (*end == ':')
-            end++;
-        len = (size_t)(end - runtime_pfs);
-        if (len > 0 && len < sizeof(pfs_mount))
-        {
-            memcpy(pfs_mount, runtime_pfs, len);
-            pfs_mount[len] = '\0';
-        }
-    }
 
     if (starts_with_ci(p, "pfs"))
     {
@@ -253,11 +228,11 @@ static int normalise_hdd_path(const char *path, char *out, size_t out_size, int 
     }
 
     if (*sub == '\0')
-        snprintf(out, out_size, "%s/", pfs_mount);
+        snprintf(out, out_size, "pfs0:/");
     else if (*sub == '/' || *sub == '\\')
-        snprintf(out, out_size, "%s%s", pfs_mount, sub);
+        snprintf(out, out_size, "pfs0:%s", sub);
     else
-        snprintf(out, out_size, "%s/%s", pfs_mount, sub);
+        snprintf(out, out_size, "pfs0:/%s", sub);
 
     /* PFS accepts forward slashes consistently. */
     {
@@ -291,13 +266,11 @@ static int set_data_location(const char *path, int path_is_file)
     }
     else if (dev == PS2_BOOT_BDM)
     {
-        /* RiptOPL-style boot identity handling: a literal massN: token is the
-         * filesystem slot the launcher handed us. It is authoritative as a
-         * location, but it does not identify the backing transport. Keep the
-         * exact relative sidecar path and rebuild the BDM stack ourselves;
-         * boot.c then brings transports up in the same bounded order RiptOPL
-         * uses and accepts only the real SSB64.DAT as proof. */
-        sDataNeedsExistingIop = 0;
+        /* massN: names an already-mounted BDM filesystem but does not encode
+         * whether the transport is USB, ATA, MX4SIO, iLink, or network. Do
+         * not guess and destroy the correct stack with an IOP reset: inherit
+         * the launcher's mount exactly as supplied. */
+        sDataNeedsExistingIop = 1;
         sDataNeedsBdmResolve = 0;
         strncpy(tmp, path, sizeof(tmp) - 1);
         tmp[sizeof(tmp) - 1] = '\0';
@@ -375,35 +348,13 @@ void ps2_storage_set_boot_path(const char *argv0)
         sDataDevice = PS2_BOOT_UNKNOWN;
         sDataDir[0] = '\0';
     }
-    else
-    {
-        /* The sidecar path is authoritative, but the launcher's IOP state is
-         * not. RiptOPL itself resets the IOP on boot, loads the common
-         * iomanX/fileXio/SIO2/PAD stack, then brings up the transport implied
-         * by argv[0]. Do the same here so USB, MX4SIO and MMCE all begin from
-         * one known controller/storage environment instead of inheriting a
-         * launcher-specific mixture.
-         *
-         * Exceptions are the development host filesystem and a bare pfsN:
-         * path: neither contains enough information to reconstruct its source
-         * after a reset, so set_data_location() already marked those as
-         * requiring the inherited IOP. */
-        if (sDataDevice == PS2_BOOT_HOST)
-            sDataNeedsExistingIop = 1;
-    }
 }
 
 int ps2_storage_set_data_path(const char *path)
 {
     if (path == NULL || path[0] == '\0')
         return 0;
-
-    /* An explicit --data override opts out of the sidecar contract only after
-     * it has been parsed successfully. An invalid override must not silently
-     * destroy the valid inherited sidecar mode before boot can report it. */
-    if (!set_data_location(path, 0))
-        return 0;
-    return 1;
+    return set_data_location(path, 0);
 }
 
 PS2BootDevice ps2_storage_launch_device(void)
@@ -433,8 +384,6 @@ const char *ps2_storage_hdd_mount_source(void)
 
 int ps2_storage_requires_iop_preserve(void)
 {
-    /* Sidecar mode describes WHERE the DAT lives, not WHO owns the IOP.
-     * Preserve only when the path genuinely cannot be reconstructed. */
     return sDataNeedsExistingIop;
 }
 
@@ -459,98 +408,6 @@ static int bdm_driver_matches(PS2BootDevice dev, const char *driver)
         return 0;
     }
 }
-
-
-int ps2_storage_inherited_bdm_driver(char *out, size_t out_size)
-{
-    const char *colon;
-    char root[16];
-    int dfd, io;
-    size_t prefix_len;
-
-    if (out == NULL || out_size == 0 || sDataDevice != PS2_BOOT_BDM)
-        return 0;
-
-    out[0] = '\0';
-    colon = strchr(sDataDir, ':');
-    if (colon == NULL)
-        return 0;
-
-    prefix_len = (size_t)(colon - sDataDir) + 1;
-    if (prefix_len + 2 > sizeof(root))
-        return 0;
-
-    memcpy(root, sDataDir, prefix_len);
-    root[prefix_len] = '/';
-    root[prefix_len + 1] = '\0';
-
-    /* Called only after SSB64.DAT has opened successfully. At that point the
-     * exact massN: mount is proven live, so querying this one root cannot hit
-     * the empty-slot fault that motivated removing broad mass-slot probes. */
-    dfd = fileXioDopen(root);
-    if (dfd < 0)
-        return 0;
-
-    memset(out, 0, out_size);
-    io = fileXioIoctl2(dfd, USBMASS_IOCTL_GET_DRIVERNAME,
-                       NULL, 0, out, (unsigned int)(out_size - 1));
-    fileXioDclose(dfd);
-    if (io < 0)
-    {
-        out[0] = '\0';
-        return 0;
-    }
-
-    out[out_size - 1] = '\0';
-    return out[0] != '\0';
-}
-
-
-int ps2_storage_recover_mass_sidecar(const char *probe_name)
-{
-    char relative[PATH_BUF_MAX];
-    const char *colon;
-    int slot;
-
-    if (sDataDevice != PS2_BOOT_BDM || probe_name == NULL || probe_name[0] == '\0')
-        return 0;
-
-    colon = strchr(sDataDir, ':');
-    if (colon == NULL)
-        return 0;
-
-    snprintf(relative, sizeof(relative), "%s", colon + 1);
-    if (relative[0] == '\0')
-        snprintf(relative, sizeof(relative), "/");
-
-    for (slot = 0; slot < 10; slot++)
-    {
-        char dir[PATH_BUF_MAX];
-        char probe[PATH_BUF_MAX + 64];
-        int fd;
-
-        if (relative[0] == '/' || relative[0] == '\\')
-            snprintf(dir, sizeof(dir), "mass%d:%s", slot, relative);
-        else
-            snprintf(dir, sizeof(dir), "mass%d:/%s", slot, relative);
-        ensure_directory_suffix(dir, sizeof(dir), PS2_BOOT_BDM);
-        snprintf(probe, sizeof(probe), "%s%s", dir, probe_name);
-
-        /* The real sidecar is the only authority. No transport ioctl is
-         * issued until after this exact file has opened successfully. */
-        fd = open(probe, O_RDONLY);
-        if (fd < 0)
-            continue;
-        close(fd);
-
-        snprintf(sDataDir, sizeof(sDataDir), "%s", dir);
-        ps2_log("storage: recovered generic BDM sidecar at %s", sDataDir);
-        return 1;
-    }
-
-    return 0;
-}
-
 
 int ps2_storage_resolve_data_root(const char *probe_name)
 {
