@@ -50,7 +50,6 @@ int ps2_assets_init(void)
      * backslashes stripped, so for host: also try the host root, which
      * PCSX2 maps to the ELF's directory. */
     ps2_storage_path(path, sizeof(path), PACK_NAME);
-    ps2_log("assets: opening %s", path);
     sFd = ps2_file_open_read(path);
     if (sFd < 0 && ps2_storage_boot_device() == PS2_BOOT_HOST)
     {
@@ -63,7 +62,6 @@ int ps2_assets_init(void)
         ps2_log("assets: cannot open %s", path);
         return 0;
     }
-    ps2_log("assets: reading pack header");
     if (!read_exact(&sHeader, 0, sizeof(sHeader)) || memcmp(sHeader.magic, PS2PACK_MAGIC, 8) != 0 ||
         sHeader.version != PS2PACK_VERSION)
     {
@@ -72,12 +70,8 @@ int ps2_assets_init(void)
     }
 
     table_bytes = sHeader.region_count * sizeof(PS2PackRegion);
-    ps2_log("assets: header ok, %u regions, table %u bytes, resident %u KiB",
-            (unsigned)sHeader.region_count, (unsigned)table_bytes,
-            (unsigned)(sHeader.resident_bytes >> 10));
     sRegions = ps2_mem_alloc(PS2_MEM_GAME_HEAP, table_bytes, 64);
     sResidentPtr = ps2_mem_alloc(PS2_MEM_GAME_HEAP, sHeader.region_count * sizeof(uint8_t *), 64);
-    ps2_log("assets: reading region table");
     if (!read_exact(sRegions, sHeader.region_table_offset, table_bytes))
     {
         ps2_log("assets: region table read failed");
@@ -86,9 +80,6 @@ int ps2_assets_init(void)
 
     /* All resident regions are stored back to back: one read at boot. */
     sResidentBlob = ps2_mem_alloc(PS2_MEM_GAME_HEAP, sHeader.resident_bytes + 64, 64);
-    if (sHeader.resident_bytes != 0)
-        ps2_log("assets: reading %u KiB resident block in conservative chunks",
-                (unsigned)(sHeader.resident_bytes >> 10));
     if (sHeader.resident_bytes != 0 &&
         !read_exact(sResidentBlob, sHeader.resident_offset, sHeader.resident_bytes))
     {
@@ -101,26 +92,8 @@ int ps2_assets_init(void)
                               ? sResidentBlob + (sRegions[i].file_offset - sHeader.resident_offset)
                               : NULL;
     }
-
-    /* MMCEMAN is only the setup filesystem. The MMCE project's own guidance
-     * says in-game streaming belongs on MMCEDRV. Header/table/resident data
-     * are now safely resident, so hand the still-open DAT descriptor to the
-     * lightweight runtime driver before the first scene starts. */
-    if (ps2_storage_data_device() == PS2_BOOT_MMCE)
-    {
-        int stream_fd;
-
-        ps2_log("assets: handing open MMCE DAT to MMCEDRV for gameplay");
-        stream_fd = ps2_file_mmce_enter_streaming(sFd);
-        if (stream_fd < 0)
-        {
-            ps2_panic("MMCE DAT opened and loaded, but MMCEDRV runtime handoff failed");
-        }
-        sFd = stream_fd;
-    }
-
     ps2_log("assets: %s: %u regions, %u KiB resident, %u KiB total", path, (unsigned)sHeader.region_count,
-            (unsigned)(sHeader.resident_bytes >> 10), (unsigned)sHeader.total_size >> 10);
+            (unsigned)(sHeader.resident_bytes >> 10), (unsigned)(sHeader.total_size >> 10));
     return 1;
 }
 
