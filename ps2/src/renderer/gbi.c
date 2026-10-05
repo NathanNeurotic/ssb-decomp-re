@@ -936,6 +936,19 @@ static void build_mode(DrawMode *dm, int for_rect)
     {
         uint32_t filt = (R.om_h >> 12) & 3; /* 0 point, 2 bilerp, 3 average */
         int lin = (filt != 0) && cyc != G_CYC_COPY;
+
+        /*
+         * The N64 RDP's filtered mode is three-point interpolation; GS linear
+         * filtering is four-tap bilinear. On tiny CI4 model textures the
+         * extra GS tap blends palette texels the N64 never mixes, showing up
+         * as slightly wrong fighter details (faces, hats, body decals).
+         *
+         * Use nearest for CI4 triangle/model surfaces as a hardware-fidelity
+         * fallback. Keep rectangles/sprites and non-CI4 textures on their
+         * existing paths so the known-good cursor/UI behavior is untouched.
+         */
+        if (!for_rect && t->fmt == G_IM_FMT_CI && t->siz == G_IM_SIZ_4b)
+            lin = 0;
         const TexInfo *ti = &dm->tex;
         int wms = ti->wrap_s_repeat ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
         int wmt = ti->wrap_t_repeat ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
@@ -1027,34 +1040,12 @@ static void make_outvtx(const GbiVtx *v, const DrawMode *dm, OutVtx *o)
     {
         const TexInfo *ti = &dm->tex;
 
-        float ss = v->s * ti->shift_s - ti->off_s;
-        float tt = v->t * ti->shift_t - ti->off_t;
-        uint32_t filt = (R.om_h >> 12) & 3;
-
         o->r = (co.rgb[0].k + co.rgb[0].c) * 128.0f;
         o->g = (co.rgb[1].k + co.rgb[1].c) * 128.0f;
         o->b = (co.rgb[2].k + co.rgb[2].c) * 128.0f;
         o->a = (co.a.k + co.a.c) * 128.0f;
-
-        /*
-         * RDP filtered triangle coordinates address integer S/T at texel
-         * centers. GS STQ addresses texel centers at N+0.5. Without this
-         * half-texel translation every filtered model texture is sampled on
-         * a texel boundary, which subtly smears small CI4 details such as
-         * fighter face/hat/body decals. Keep point-filtered coordinates
-         * unchanged.
-         *
-         * Deliberately limit this to triangle/model rendering. Sprite
-         * rectangles use their own coordinate path and are already stable on
-         * the hardware milestone.
-         */
-        if (filt != 0)
-        {
-            ss += 0.5f;
-            tt += 0.5f;
-        }
-        o->s = ss / (float)ti->bind.gs_w;
-        o->t = tt / (float)ti->bind.gs_h;
+        o->s = (v->s * ti->shift_s - ti->off_s) / (float)ti->bind.gs_w;
+        o->t = (v->t * ti->shift_t - ti->off_t) / (float)ti->bind.gs_h;
     }
     else
     {
