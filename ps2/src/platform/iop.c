@@ -53,6 +53,8 @@ DECLARE_IRX(bdmfs_fatfs);
 DECLARE_IRX(usbd_mini);
 DECLARE_IRX(usbmass_bd_mini);
 DECLARE_IRX(mmceman);
+DECLARE_IRX(mmcedrv);
+DECLARE_IRX(ssb_mmce_stream);
 DECLARE_IRX(cdvd);
 
 DECLARE_IRX(ps2dev9);
@@ -86,6 +88,7 @@ static int sBdmRecoveryStage;
 static int sBdmRecoveryBaseReady;
 static int sSaveServicesReady;
 static int sAudioServicesReady;
+static int sMmceManModuleId = -1;
 
 static int load_irx(const char *name, void *buf, unsigned int size, const char *args, int args_len)
 {
@@ -97,6 +100,9 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
         ps2_log("IOP: %s failed (id=%d res=%d)", name, id, result);
         return -1;
     }
+    if (strcmp(name, "mmceman") == 0)
+        sMmceManModuleId = id;
+
     if (sLoadedCount < MAX_TRACKED_MODULES)
         sLoaded[sLoadedCount++] = name;
     ps2_log("IOP: loaded %s (%u bytes)", name, size);
@@ -933,6 +939,45 @@ int ps2_iop_prepare_audio_services(void)
 int ps2_iop_audio_services_ready(void)
 {
     return sAudioServicesReady;
+}
+
+int ps2_iop_mmce_enter_streaming(void)
+{
+    int stop_result = 0;
+    int rv;
+
+    if (ps2_storage_data_device() != PS2_BOOT_MMCE)
+        return -1;
+
+    /* MMCEMAN is the setup/filesystem driver. MMCEDRV is the MMCE project's
+     * intended in-game streaming driver. The DAT has already been opened and
+     * its card-side fd captured before this transition. Stop MMCEMAN so its
+     * iomanX filesystem and SIO2 hook are no longer in the gameplay path,
+     * then install MMCEDRV plus SSB's tiny iomanX bridge. */
+    ps2_log("IOP: MMCE switching from MMCEMAN setup to MMCEDRV streaming");
+
+    if (sMmceManModuleId > 0)
+    {
+        rv = SifStopModule(sMmceManModuleId, 0, NULL, &stop_result);
+        ps2_log("IOP: MMCEMAN stop returned id=%d res=%d", rv, stop_result);
+        if (rv < 0)
+            return -1;
+
+        rv = SifUnloadModule(sMmceManModuleId);
+        ps2_log("IOP: MMCEMAN unload returned %d", rv);
+        if (rv < 0)
+            return -1;
+
+        sMmceManModuleId = -1;
+    }
+
+    if (LOAD_IRX(mmcedrv) < 0)
+        return -1;
+    if (LOAD_IRX(ssb_mmce_stream) < 0)
+        return -1;
+
+    ps2_log("IOP: MMCEDRV gameplay streaming stack ready");
+    return 0;
 }
 
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
