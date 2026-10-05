@@ -175,6 +175,13 @@ int ps2_file_mmce_enter_runtime_stream(int fd)
         return -1;
     }
 
+    if (ps2_iop_mmce_finish_runtime_services() < 0)
+    {
+        ps2_log("MMCE: DAT fd valid, but post-MMCE pad/mc services failed");
+        fileXioClose(stream_fd);
+        return -1;
+    }
+
     ps2_log("MMCE: runtime DAT reads switched to MMCEDRV");
     return PS2_FD_MMCE_STREAM_TAG | stream_fd;
 }
