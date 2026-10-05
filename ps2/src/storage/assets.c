@@ -103,7 +103,7 @@ int ps2_assets_init(void)
         ps2_log("assets: switching MMCE DAT to MMCEDRV runtime reads");
         stream_fd = ps2_file_mmce_enter_runtime_stream(sFd);
         if (stream_fd < 0)
-            ps2_panic("MMCE DAT loaded, but MMCEDRV runtime setup failed");
+            ps2_panic("MMCE runtime handoff failed: %s", ps2_file_mmce_last_error());
         sFd = stream_fd;
     }
 
