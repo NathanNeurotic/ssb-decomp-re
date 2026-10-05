@@ -44,12 +44,21 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
 {
     uint8_t *out = (uint8_t *)dst;
     uint32_t done = 0;
+    PS2BootDevice dev = ps2_storage_data_device();
+    off_t base_pos = -1;
+
+    /* MMCE runtime reads share SIO2 with PADMAN. Capture the expected file
+     * position once so a timed-out MMCEMAN transaction can be resumed exactly
+     * instead of turning a recoverable bus collision into a fatal short read. */
+    if (dev == PS2_BOOT_MMCE)
+        base_pos = lseek(fd, 0, SEEK_CUR);
 
     /* Large reads are split so a single request never blocks too long. */
     while (done < size)
     {
         uint32_t max_chunk = 0x10000u;
-        PS2BootDevice dev = ps2_storage_data_device();
+        uint32_t chunk;
+        int n;
 
         /* PS2SDK's USB mass driver already caps SCSI requests at 128 sectors
          * (64 KiB) because some real drives freeze above that range. Staying
@@ -58,39 +67,51 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
          * Use the same conservative size for physical BDM transports. */
         if (dev == PS2_BOOT_MMCE)
         {
-            /* MMCEMAN's mmce_fs_read() owns the SIO2 lock for the entire
-             * requested size. Its low-level transfer loop is naturally
-             * grouped as 16 x 256-byte DMA elements (4 KiB), but a 64 KiB
-             * POSIX read keeps that lock across sixteen such groups. Once the
-             * game starts, PADMAN also needs SIO2 continuously. Keep each EE
-             * read to one native MMCE group so the IOP releases the bus after
-             * every 4 KiB and the pad thread gets scheduling opportunities. */
-            max_chunk = 0x1000u; /* 4 KiB */
+            /* MMCEMAN owns the SIO2 lock for an entire read request. Keep each
+             * request to one 2 KiB MMCE sector so PADMAN gets frequent chances
+             * to run between filesystem transactions. */
+            max_chunk = 0x800u; /* 2 KiB */
         }
         else if (dev == PS2_BOOT_BDM || dev == PS2_BOOT_USB ||
                  dev == PS2_BOOT_ATA || dev == PS2_BOOT_MX4SIO ||
                  dev == PS2_BOOT_ILINK || dev == PS2_BOOT_UDPBD)
             max_chunk = 0x4000u; /* 16 KiB */
 
+        chunk = ((size - done) > max_chunk) ? max_chunk : (size - done);
+        n = (int)read(fd, out + done, chunk);
+
+        if (n <= 0 && dev == PS2_BOOT_MMCE && base_pos >= 0)
         {
-            uint32_t chunk = ((size - done) > max_chunk) ? max_chunk : (size - done);
-            int n = (int)read(fd, out + done, chunk);
+            int attempt;
 
-            if (n <= 0)
+            /* MMCEMAN has bounded transfer timeouts. A timeout here is often
+             * transient SIO2 contention with PADMAN, not EOF or corrupt data.
+             * Re-seek to the exact expected byte and retry after yielding the
+             * bus. */
+            for (attempt = 1; attempt <= 3 && n <= 0; attempt++)
             {
-                return (done > 0) ? (int)done : n;
-            }
-            done += (uint32_t)n;
+                DelayThread(4000);
+                if (lseek(fd, base_pos + (off_t)done, SEEK_SET) < 0)
+                    break;
 
-            /* A returned MMCE read means MMCEMAN has unlocked SIO2. Leave a
-             * short no-RPC window before the next chunk so PADMAN's IOP
-             * update thread can run instead of immediately losing the bus to
-             * another filesystem request. */
-            if (dev == PS2_BOOT_MMCE && done < size)
-                DelayThread(1000);
+                ps2_log("MMCE: retrying asset read at 0x%08x (attempt %d)",
+                        (unsigned)(base_pos + (off_t)done), attempt);
+                n = (int)read(fd, out + done, chunk);
+            }
         }
 
+        if (n <= 0)
+            return (done > 0) ? (int)done : n;
+
+        done += (uint32_t)n;
+
+        /* A returned MMCE read means MMCEMAN has unlocked SIO2. Leave a short
+         * no-RPC window before the next chunk so PADMAN's IOP update thread
+         * can actually acquire the bus. */
+        if (dev == PS2_BOOT_MMCE && done < size)
+            DelayThread(2000);
     }
+
     return (int)done;
 }
 
