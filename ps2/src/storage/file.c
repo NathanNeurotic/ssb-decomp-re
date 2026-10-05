@@ -214,10 +214,19 @@ int ps2_file_mmce_enter_streaming(int fd)
 
     /* MMCEMAN exposes the MMCE device's own descriptor through ioctl 0x80.
      * That descriptor remains meaningful to MMCEDRV after MMCEMAN leaves. */
-    remote_fd = fileXioIoctl(setup_native_fd, MMCE_IOCTL_GET_FD, NULL);
+    {
+        int dummy = 0;
+
+        /* MMCEMAN implements MMCE_CMD_IOCTL_GET_FD in its ioctl2 handler,
+         * not ioctl. The previous handoff used fileXioIoctl(), so the DAT was
+         * successfully opened and validated and then we asked the wrong IOP
+         * operation for its card-side descriptor. */
+        remote_fd = fileXioIoctl2(setup_native_fd, MMCE_IOCTL_GET_FD,
+                                  &dummy, 0, &dummy, 0);
+    }
     if (remote_fd < 0)
     {
-        ps2_log("MMCE: could not obtain card-side DAT descriptor");
+        ps2_log("MMCE: ioctl2 GET_FD failed (%d)", remote_fd);
         return -1;
     }
 
