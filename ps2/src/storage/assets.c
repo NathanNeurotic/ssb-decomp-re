@@ -46,16 +46,40 @@ int ps2_assets_init(void)
     sema.max_count = 1;
     sReadSema = CreateSema(&sema);
 
-    /* Next to the ELF first. PCSX2's "Run ELF" passes argv[0] with its
-     * backslashes stripped, so for host: also try the host root, which
-     * PCSX2 maps to the ELF's directory. */
-    ps2_storage_path(path, sizeof(path), PACK_NAME);
-    sFd = ps2_file_open_read(path);
-    if (sFd < 0 && ps2_storage_boot_device() == PS2_BOOT_HOST)
+    /*
+     * Wait for the real pack by opening the handle we will keep for the
+     * entire run. Do not probe-open/close it in boot.c and then reopen it:
+     * removable/network/MMCE transports can still be settling, and MMCE in
+     * particular should not be forced through redundant file-open traffic.
+     */
     {
-        ps2_log("assets: %s not found, trying host:%s", path, PACK_NAME);
-        snprintf(path, sizeof(path), "host:%s", PACK_NAME);
-        sFd = ps2_file_open_read(path);
+        extern void ps2_delay_vblanks(int n);
+        int attempt;
+
+        sFd = -1;
+        for (attempt = 0; attempt < 200; attempt++)
+        {
+            ps2_storage_resolve_data_root(PACK_NAME);
+            ps2_storage_path(path, sizeof(path), PACK_NAME);
+            sFd = ps2_file_open_read(path);
+
+            /* PCSX2 Run ELF can lose argv[0]'s directory separators. */
+            if (sFd < 0 && ps2_storage_boot_device() == PS2_BOOT_HOST)
+            {
+                snprintf(path, sizeof(path), "host:%s", PACK_NAME);
+                sFd = ps2_file_open_read(path);
+            }
+
+            if (sFd >= 0)
+            {
+                ps2_log("assets: persistent %s opened after %d ms", path, attempt * 100);
+                break;
+            }
+
+            if (ps2_storage_data_device() == PS2_BOOT_HOST)
+                break;
+            ps2_delay_vblanks(6);
+        }
     }
     if (sFd < 0)
     {
