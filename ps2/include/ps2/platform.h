@@ -123,20 +123,14 @@ PS2BootDevice ps2_storage_data_device(void);
 PS2BootDevice ps2_storage_boot_device(void);
 const char *ps2_storage_launch_path(void);
 const char *ps2_storage_hdd_mount_source(void);
-/* True when the active data path must retain the launcher's live filesystem.
- * The normal sidecar contract (SSB64.DAT beside the ELF) always does this;
- * explicit --data= can opt into a separately reconstructed device stack. */
+/* True when the selected data path depends on an inherited IOP filesystem
+ * (host:, generic massN:, or a bare pfsN: mount whose transport/source
+ * cannot be reconstructed from argv[0]). */
 int ps2_storage_requires_iop_preserve(void);
 /* Resolve typed BDM launch identities (usb/ata/mx4sio/ilink/udpbd) to the
  * actual massN: filesystem that contains probe_name. Generic massN: paths
  * deliberately keep the inherited launcher IOP and are already usable. */
 int ps2_storage_resolve_data_root(const char *probe_name);
-/* For a generic massN: sidecar, probe the same relative file on every live
- * mass slot and adopt the one that actually opens. */
-int ps2_storage_recover_mass_sidecar(const char *probe_name);
-/* Query the transport token for the already-proven inherited massN: mount.
- * This is intentionally unavailable before the real sidecar DAT has opened. */
-int ps2_storage_inherited_bdm_driver(char *out, size_t out_size);
 int ps2_video_progressive(void);         /* 1 = 240p (ELF name contains "240p"), 0 = 480i */
 
 /* Boot-stage marker: shows a solid background colour (GS BGCOLOR with both
@@ -163,34 +157,13 @@ int ps2_file_open_read(const char *path);
 int ps2_file_read(int fd, void *dst, uint32_t size);
 int ps2_file_seek(int fd, uint32_t offset);
 int ps2_file_size(int fd);
-int ps2_file_mmce_enter_streaming(int fd);
 void ps2_file_close(int fd);
 
 /* ------------------------------------------------------------------ */
 /* IOP modules (ps2/src/platform/iop.c)                                */
 /* ------------------------------------------------------------------ */
 
-void ps2_iop_init(void);                 /* preserve sidecar stack or rebuild explicit --data stack */
-/* Bounded, non-destructive probe for an inherited IOP RPC service. */
-int ps2_iop_rpc_available(uint32_t rpc_id);
-/* Select the launcher's live FileIO/fileXio bridge without replacing storage. */
-int ps2_iop_prepare_filesystem_client(void);
-/* After a real DAT-open failure, add/switch to fileXio only when iomanX media
- * requires it. Returns >0 when the client was promoted, 0 when not applicable,
- * and <0 when promotion was required but failed. */
-int ps2_iop_promote_filesystem_client(void);
-/* Recovery path for launchers that reset the IOP after loading a generic
- * massN: ELF. Adds one BDM transport family per call, without another reset. */
-int ps2_iop_recover_generic_bdm_next(void);
-int ps2_iop_prepare_runtime_services(void);
-/* Restore XMCMAN/XMCSERV after storage/controllers are proven, without
- * replacing the active SIO2 transport. */
-int ps2_iop_prepare_save_services(void);
-int ps2_iop_save_services_ready(void);
-/* Restore the SDR sound service after storage/controllers are proven. */
-int ps2_iop_prepare_audio_services(void);
-int ps2_iop_audio_services_ready(void);
-int ps2_iop_mmce_enter_streaming(void);
+void ps2_iop_init(void);                 /* reset IOP + load base modules */
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 int  ps2_iop_module_loaded(const char *name);
 int  ps2_iop_module_count(void);
