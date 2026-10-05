@@ -8,115 +8,33 @@
 #include <ps2/platform.h>
 #include <ps2/spu.h>
 
-#include <delaythread.h>
-#include <libsdr-common.h>
-#include <kernel.h>
-#include <sifrpc.h>
-#include <string.h>
 
 static uint32_t sAiFrequency;
 static uint32_t sAiQueuedBytes;
-static int sAudioThreadId = -1;
-static uint8_t sAudioThreadStack[16 * 1024] __attribute__((aligned(64)));
-
-static int sdr_rpc_ready(void)
+void ps2_audio_init(void)
 {
-    SifRpcClientData_t probe;
-    int i;
-
-    memset(&probe, 0, sizeof(probe));
-    for (i = 0; i < 100; i++)
-    {
-        int rc = sceSifBindRpc(&probe, sce_SDR_DEV, 0);
-
-        if (rc < 0)
-        {
-            ps2_log("audio: SDR RPC probe failed (%d)", rc);
-            return 0;
-        }
-        if (probe.server != NULL)
-            return 1;
-
-        DelayThread(10000); /* bounded to about one second total */
-    }
-    return 0;
-}
-
-static void audio_init_thread(void *arg)
-{
-    (void)arg;
     ps2_log("audio: init begin");
 
     /*
-     * ps2sdk's sceSdRemoteInit() waits indefinitely for sce_SDR_DEV. Probe
-     * the service first so a bad/missing IOP audio server can never turn
-     * sound initialization into another hardware boot hang.
+     * The original SDR/sdrdrv transport is intentionally gone here. Hardware
+     * proved that path can wedge the shared SIF RPC fabric after the N64 logo.
+     * Load the dedicated minimal server, then initialize the SPU2 backend
+     * synchronously before gameplay so storage and audio never race each other
+     * during the 4 MiB sample-set preload.
      */
-    if (!sdr_rpc_ready())
+    if (ps2_iop_load_audio_driver() < 0)
     {
-        ps2_log("audio: SDR RPC absent; loading server");
-        if (ps2_iop_load_audio_driver() < 0)
-        {
-            ps2_log("audio: SDR module failed to start; continuing silent");
-            return;
-        }
-        ps2_log("audio: SDR module load returned; probing RPC");
-        if (!sdr_rpc_ready())
-        {
-            ps2_log("audio: SDR RPC server not ready after bounded wait; continuing silent");
-            return;
-        }
+        ps2_log("audio: dedicated IOP server failed to start; continuing silent");
+        return;
     }
 
-    ps2_log("audio: SDR RPC ready; initializing SPU2 backend");
     if (ps2_spu_init() < 0)
+    {
         ps2_log("audio: SPU2 backend unavailable; continuing silent");
-    else
-        ps2_log("audio: init complete");
-}
-
-void ps2_audio_init(void)
-{
-    ee_thread_t th = { 0 };
-    extern void *_gp;
-
-    /*
-     * Hardware isolation build: do not touch SDR/libsd RPC at all.
-     * Moving SDR onto a worker kept the EE boot thread alive, but SIF RPC is
-     * shared with filesystem services. A wedged audio RPC can therefore let
-     * the resident Nintendo logo render and then starve the next streamed
-     * scene. This one build establishes a genuinely audio-free baseline.
-     */
-    ps2_log("audio: HARD DISABLED for SIF isolation test");
-    return;
-
-    if (sAudioThreadId >= 0)
-        return;
-
-    /*
-     * SDR/libsd RPC is optional to getting the game on screen. Keep it off
-     * the boot thread: a real IOP/server fault must never wedge storage,
-     * input, rendering, or the game itself. The synthesizer already treats
-     * an unready SPU backend as silent and begins using it once sReady is set.
-     */
-    th.func = (void *)audio_init_thread;
-    th.stack = sAudioThreadStack;
-    th.stack_size = sizeof(sAudioThreadStack);
-    th.gp_reg = &_gp;
-    th.initial_priority = 109;
-
-    sAudioThreadId = CreateThread(&th);
-    if (sAudioThreadId < 0)
-    {
-        ps2_log("audio: could not create init thread (%d); continuing silent", sAudioThreadId);
         return;
     }
-    if (StartThread(sAudioThreadId, NULL) < 0)
-    {
-        ps2_log("audio: could not start init thread; continuing silent");
-        return;
-    }
-    ps2_log("audio: initialization scheduled off the boot path");
+
+    ps2_log("audio: init complete");
 }
 
 int32_t ps2_audio_ai_set_frequency(uint32_t frequency)
