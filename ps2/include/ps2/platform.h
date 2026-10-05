@@ -158,6 +158,7 @@ int ps2_file_read(int fd, void *dst, uint32_t size);
 int ps2_file_seek(int fd, uint32_t offset);
 int ps2_file_size(int fd);
 int ps2_file_mmce_enter_runtime_stream(int fd);
+const char *ps2_file_mmce_last_error(void);
 void ps2_file_close(int fd);
 
 /* ------------------------------------------------------------------ */
