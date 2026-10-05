@@ -53,6 +53,8 @@ DECLARE_IRX(bdmfs_fatfs);
 DECLARE_IRX(usbd_mini);
 DECLARE_IRX(usbmass_bd_mini);
 DECLARE_IRX(mmceman);
+DECLARE_IRX(mmcedrv);
+DECLARE_IRX(ssb_mmce_stream);
 DECLARE_IRX(cdvd);
 
 DECLARE_IRX(ps2dev9);
@@ -256,6 +258,67 @@ void ps2_iop_init(void)
 
     ps2_log("IOP: %s, %d base modules",
             sIopWasReset ? "reset" : "kept (inherited filesystem)", sLoadedCount);
+}
+
+int ps2_iop_mmce_prepare_runtime_stream(void)
+{
+    if (ps2_storage_data_device() != PS2_BOOT_MMCE)
+        return -1;
+
+    /*
+     * MMCEMAN is the setup/filesystem driver. MMCEDRV is explicitly the MMCE
+     * project's in-game streaming driver. Preserve the card-side DAT handle
+     * across one deliberate reset, then rebuild the final IOP before the EE
+     * controller client is initialized.
+     *
+     * Loading MMCEDRV beside MMCEMAN is not safe: both install SIO2MAN hooks.
+     * The reset is what discards MMCEMAN's hook without issuing FS_CLOSE to
+     * the card-side descriptor.
+     */
+    ps2_log("IOP: MMCE setup complete; rebuilding final in-game IOP");
+
+    fileXioExit();
+    SifExitIopHeap();
+    SifLoadFileExit();
+
+    while (!SifIopReset("", 0)) {}
+    while (!SifIopSync()) {}
+
+    SifInitRpc(0);
+    SifLoadFileInit();
+    SifInitIopHeap();
+
+    sbv_patch_enable_lmb();
+    sbv_patch_disable_prefix_check();
+    sbv_patch_fileio();
+
+    sLoadedCount = 0;
+    sIopWasReset = 1;
+
+    if (LOAD_IRX(iomanx) < 0 || LOAD_IRX(filexio) < 0)
+        return -1;
+    if (fileXioInit() < 0)
+        return -1;
+
+    /*
+     * MMCEDRV must hook SIO2MAN before PAD/MEMCARD modules import it. The
+     * bridge then exposes MMCEDRV through the same file-like API used by the
+     * asset manager. Normal controller/save clients are loaded afterwards.
+     */
+    if (LOAD_IRX(sio2man) < 0 ||
+        LOAD_IRX(mmcedrv) < 0 ||
+        LOAD_IRX(ssb_mmce_stream) < 0)
+        return -1;
+
+    if (LOAD_IRX(mtapman) < 0 ||
+        LOAD_IRX(padman) < 0 ||
+        LOAD_IRX(mcman) < 0 ||
+        LOAD_IRX(mcserv) < 0 ||
+        LOAD_IRX(libsd) < 0)
+        return -1;
+
+    ps2_log("IOP: final MMCE game stack ready (MMCEDRV before PAD/MC)");
+    return 0;
 }
 
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
