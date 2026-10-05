@@ -3,6 +3,7 @@
 #include <irx.h>
 #include <loadcore.h>
 #include <stdio.h>
+#include <thbase.h>
 #include <types.h>
 
 IRX_ID("ssbmmce", 1, 0);
@@ -12,6 +13,7 @@ typedef struct {
     void **exports;
 } modinfo_t;
 
+static s64 (*mmcedrv_get_size_fn)(int fd);
 static int (*mmcedrv_read_fn)(int fd, int size, void *ptr);
 static int (*mmcedrv_lseek_fn)(int fd, int offset, int whence);
 static void (*mmcedrv_config_set_fn)(int setting, int value);
@@ -68,7 +70,7 @@ static int stream_init(iomanX_iop_device_t *d)
     mmcedrv_read_fn = (void *)info.exports[7];
     mmcedrv_lseek_fn = (void *)info.exports[9];
 
-    if (!mmcedrv_config_set_fn || !mmcedrv_read_fn || !mmcedrv_lseek_fn)
+    if (!mmcedrv_get_size_fn || !mmcedrv_config_set_fn || !mmcedrv_read_fn || !mmcedrv_lseek_fn)
         return -ENODEV;
 
     return 0;
@@ -83,6 +85,8 @@ static int stream_open(iomanX_iop_file_t *f, const char *name, int flags, int mo
     const char *p = name;
     int port;
     int fd;
+    int tries;
+    s64 size = -1;
 
     (void)flags;
     (void)mode;
@@ -98,9 +102,29 @@ static int stream_open(iomanX_iop_file_t *f, const char *name, int flags, int mo
 
     mmcedrv_config_set_fn(MMCEDRV_SETTING_PORT, port);
     mmcedrv_config_set_fn(MMCEDRV_SETTING_USE_ALARMS, 1);
-    f->privdata = (void *)(u32)fd;
 
-    printf("ssbmmce: MMCEDRV fd %d on SIO2 port %d\n", fd, port);
+    /*
+     * Mirror RiptOPL's DeviceFSInit readiness gate. The 0x80 descriptor is
+     * owned by the MMCE card, but after the IOP reset the new MMCEDRV/SIO2
+     * stack can come up before that descriptor answers again. Declaring the
+     * stream ready without proving the descriptor is live defers the failure
+     * until the first non-resident DAT read, which looks exactly like a black
+     * screen after the N64 logo.
+     */
+    for (tries = 0; tries < 100; tries++) {
+        size = mmcedrv_get_size_fn(fd);
+        if (size > 0)
+            break;
+        DelayThread(100 * 1000);
+    }
+    if (size <= 0) {
+        printf("ssbmmce: MMCEDRV fd %d did not become ready on port %d\n", fd, port);
+        return -EIO;
+    }
+
+    f->privdata = (void *)(u32)fd;
+    printf("ssbmmce: MMCEDRV fd %d ready on SIO2 port %d after %d poll(s)\n",
+           fd, port, tries + 1);
     return 0;
 }
 
