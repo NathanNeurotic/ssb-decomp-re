@@ -1,5 +1,6 @@
 #include <irx.h>
 #include <libsd.h>
+#include <loadcore.h>
 #include <sifrpc.h>
 #include <stdio.h>
 #include <thbase.h>
@@ -105,7 +106,7 @@ static void rpc_thread(void *arg)
     (void)arg;
     sceSifInitRpc(0);
     sceSifSetRpcQueue(&sQueue, GetThreadId());
-    sceSifRegisterRpc(&sServer, SSB_AUDIO_RPC_ID, rpc_server,
+    sceSifRegisterRpc(&sServer, SSB_AUDIO_RPC_ID, (void *)rpc_server,
                       sRpcBuffer, NULL, NULL, &sQueue);
     printf("ssbaudio: RPC server ready\n");
     sceSifRpcLoop(&sQueue);
