@@ -1367,8 +1367,16 @@ static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int fli
         dm.gs.prim &= ~((uint64_t)1 << 6); /* no blending in copy mode */
     }
     dm.gs.use_fog = 0;
-    dm.gs.nreg = 3; /* UV, RGBAQ, XYZ2 */
-    dm.gs.prim |= (uint64_t)1 << 8; /* FST: UV in texel units */
+    dm.gs.nreg = 3; /* STQ, RGBAQ, XYZ2 */
+    /*
+     * Texture rectangles can carry small negative S/T offsets when a sprite
+     * moves by a fractional pixel. GS UV is unsigned fixed point, so encoding
+     * those values wrapped them to the far edge of the texture and made
+     * moving sprites (notably the CSS hand cursor) disappear. Use floating
+     * STQ here instead; it preserves signed sub-texel coordinates and lets the
+     * existing CLAMP state do the right thing.
+     */
+    dm.gs.prim &= ~((uint64_t)1 << 8); /* FST=0: STQ */
 
     /* Texel coordinates relative to the bound tile origin. */
     s = s * dm.tex.shift_s - dm.tex.off_s;
@@ -1395,8 +1403,6 @@ static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int fli
     {
         GsState st = dm.gs;
 
-        /* A separate state signature (UV sprites) so they never merge into
-         * STQ triangle batches. */
         batch_close();
         if (!sCurValid || memcmp(&sCur, &st, sizeof(st)) != 0)
         {
@@ -1405,12 +1411,12 @@ static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int fli
         ps2_pkt_reserve(8);
         p = gPS2Pkt.ptr;
         p[0] = GIFTAG_LO(2, 0, 1, st.prim, GIF_FLG_PACKED, 3);
-        p[1] = (uint64_t)GSR_UV | ((uint64_t)GSR_RGBAQ << 4) | ((uint64_t)GSR_XYZ2 << 8);
+        p[1] = (uint64_t)GSR_ST | ((uint64_t)GSR_RGBAQ << 4) | ((uint64_t)GSR_XYZ2 << 8);
         p += 2;
-        gs_packed_uv(p, (uint32_t)(int32_t)(u0 * 16.0f), (uint32_t)(int32_t)(v0 * 16.0f));
+        gs_packed_stq(p, u0 / (float)dm.tex.bind.gs_w, v0 / (float)dm.tex.bind.gs_h, 1.0f);
         gs_packed_rgba(p + 2, clamp_u8(o.r), clamp_u8(o.g), clamp_u8(o.b), clamp_u8(o.a));
         gs_packed_xyz2(p + 4, (uint32_t)((2048.0f + x0) * 16.0f), (uint32_t)((2048.0f + y0) * 16.0f), z);
-        gs_packed_uv(p + 6, (uint32_t)(int32_t)(u1 * 16.0f), (uint32_t)(int32_t)(v1 * 16.0f));
+        gs_packed_stq(p + 6, u1 / (float)dm.tex.bind.gs_w, v1 / (float)dm.tex.bind.gs_h, 1.0f);
         gs_packed_rgba(p + 8, clamp_u8(o.r), clamp_u8(o.g), clamp_u8(o.b), clamp_u8(o.a));
         gs_packed_xyz2(p + 10, (uint32_t)((2048.0f + x1) * 16.0f), (uint32_t)((2048.0f + y1) * 16.0f), z);
         gPS2Pkt.ptr = p + 12;
