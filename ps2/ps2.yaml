@@ -61,6 +61,13 @@ targets:
     imports_lst: iop/udpfs_ioman/src/imports.lst
     exports_tab: iop/udpfs_ioman/src/exports.tab
 
+  - name: ssb_mmce_stream
+    type: iop
+    sources: [iop/mmce_stream/src/main.c]
+    include_dirs: [iop/mmce_stream/src]
+    headers: *iop_headers
+    imports_lst: iop/mmce_stream/src/imports.lst
+
   - name: ssb_platform
     type: ee_lib
     sources:
@@ -302,3 +309,5 @@ targets:
       - cdfs:cdvd
 
       - mmceman
+      - mmcedrv
+      - ssb_mmce_stream
