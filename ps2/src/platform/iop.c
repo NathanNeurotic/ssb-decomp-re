@@ -830,55 +830,38 @@ int ps2_iop_save_services_ready(void)
 
 int ps2_iop_prepare_audio_services(void)
 {
-    int rom_libsd;
-    int rom_sdr;
-    int emb_sdr;
-    int emb_libsd;
+    int libsd_ok;
+    int sdr_ok;
 
     sAudioServicesReady = 0;
 
-    /* Same rule as memory cards: do not "test-bind" the optional service.
-     * Start the canonical modules first, then allow the real libsdr client to
-     * bind once there is a concrete server that should answer. */
-    ps2_log("IOP: preparing audio modules directly");
-    rom_libsd = load_rom_service("LIBSD", "rom0:LIBSD");
-    rom_sdr = load_rom_service("SDRDRV", "rom0:SDRDRV");
-
-    if (rom_sdr >= 0)
+    /* Match the upstream PS2 port's proven audio stack exactly: it embeds
+     * FreeSD/libsd + sdrdrv and loads those modules directly. Do NOT try a
+     * speculative rom0:SDRDRV first -- ps2sdk's SDR client is designed for
+     * the embedded sdrdrv server, and real hardware was observed hanging in
+     * SifLoadModule("rom0:SDRDRV") before the call ever returned.
+     *
+     * recovery_load_irx() is used rather than a presence probe so an already
+     * resident compatible module is accepted without binding to arbitrary RPC
+     * IDs. Storage, pads and saves are already proven before this runs. */
+    ps2_log("IOP: loading upstream embedded libsd + sdr audio stack");
+    libsd_ok = recovery_load_irx("libsd", libsd_irx, size_libsd_irx);
+    if (libsd_ok < 0)
     {
-        sAudioServicesReady = 1;
-        ps2_log("IOP: ROM SDRDRV started");
-        return 1;
+        ps2_log("IOP: embedded libsd unavailable; audio stays silent");
+        return 0;
     }
 
-    /* If LIBSD is already resident (or its duplicate load returned an error),
-     * an embedded SDR server can still use it. recovery_load_irx accepts an
-     * already-resident SDR module as ready as well. */
-    ps2_log("IOP: ROM SDRDRV not conclusively started; trying embedded SDR");
-    emb_sdr = recovery_load_irx("sdr", sdr_irx, size_sdr_irx);
-    if (emb_sdr >= 0)
+    sdr_ok = recovery_load_irx("sdr", sdr_irx, size_sdr_irx);
+    if (sdr_ok < 0)
     {
-        sAudioServicesReady = 1;
-        ps2_log("IOP: SDR server ready");
-        return 1;
+        ps2_log("IOP: embedded sdr unavailable; audio stays silent");
+        return 0;
     }
 
-    /* Final compatibility path for BIOSes without a usable LIBSD. */
-    if (rom_libsd < 0)
-    {
-        ps2_log("IOP: trying FreeSD + embedded SDR fallback");
-        emb_libsd = recovery_load_irx("libsd", libsd_irx, size_libsd_irx);
-        emb_sdr = recovery_load_irx("sdr", sdr_irx, size_sdr_irx);
-        if (emb_libsd >= 0 && emb_sdr >= 0)
-        {
-            sAudioServicesReady = 1;
-            ps2_log("IOP: FreeSD/SDR fallback ready");
-            return 1;
-        }
-    }
-
-    ps2_log("IOP: no audio service could be started; audio stays silent");
-    return 0;
+    sAudioServicesReady = 1;
+    ps2_log("IOP: embedded libsd + sdr ready");
+    return 1;
 }
 
 int ps2_iop_audio_services_ready(void)
