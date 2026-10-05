@@ -114,6 +114,7 @@ static struct
     int color_target;  /* FB index, or -1 */
     int zimg_is_z;
     int cimg_is_z;
+    int cimg_offscreen; /* unsupported non-display color image: suppress draws */
 
     uint32_t rdphalf1, rdphalf2;
     int rect_tile;
@@ -1172,6 +1173,15 @@ static void tri_pass(const GbiVtx *a, const GbiVtx *b, const GbiVtx *c, const Dr
 
 static void tri(int i0, int i1, int i2)
 {
+    /*
+     * The N64 sometimes renders intermediate effects into color images that
+     * are not one of the three VI framebuffers. We do not emulate those
+     * off-screen render targets yet. Drawing those commands into the last
+     * on-screen framebuffer is worse than omitting the unsupported effect:
+     * it produces stray full-width strips/panels and apparent "jitter".
+     */
+    if (R.cimg_offscreen)
+        return;
     if (i0 >= MAX_VTX || i1 >= MAX_VTX || i2 >= MAX_VTX)
         return;
     if (sModeDirty)
@@ -1251,6 +1261,9 @@ static void unpack_fill_color(uint8_t *rgba)
 static void fill_rect(int ulx, int uly, int lrx, int lry)
 {
     uint32_t cyc = R.om_h & (3u << 20);
+
+    if (R.cimg_offscreen)
+        return;
     float x0 = ulx * 0.25f, y0 = uly * 0.25f, x1 = lrx * 0.25f, y1 = lry * 0.25f;
     uint64_t *p;
 
@@ -1330,6 +1343,9 @@ static void fill_rect(int ulx, int uly, int lrx, int lry)
 static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int flip)
 {
     uint32_t cyc = R.om_h & (3u << 20);
+
+    if (R.cimg_offscreen)
+        return;
     int lrx = (w0 >> 12) & 0xFFF, lry = w0 & 0xFFF;
     int tile = (w1 >> 24) & 7;
     int ulx = (w1 >> 12) & 0xFFF, uly = w1 & 0xFFF;
@@ -1435,6 +1451,7 @@ static void set_color_image(const void *addr)
 
     batch_close();
     R.cimg_is_z = ps2_gs_is_zbuffer(addr);
+    R.cimg_offscreen = 0;
     if (fb >= 0)
     {
         R.color_target = fb;
@@ -1444,8 +1461,15 @@ static void set_color_image(const void *addr)
     }
     else if (!R.cimg_is_z)
     {
-        /* Off-screen targets are not supported yet; keep drawing into the
-         * current framebuffer (see PS2_PORT_STATUS.md). */
+        /*
+         * Off-screen render targets are not implemented yet. Previously we
+         * silently left FRAME pointing at the last display framebuffer, so
+         * every draw intended for the intermediate image corrupted the
+         * visible frame. Suppress those primitives until the display list
+         * selects a real framebuffer again. State/TMEM commands still run,
+         * so returning to the screen target keeps normal RDP state flow.
+         */
+        R.cimg_offscreen = 1;
     }
     sModeDirty = 1;
 }
