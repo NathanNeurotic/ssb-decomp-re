@@ -321,6 +321,16 @@ int ps2_iop_mmce_prepare_runtime_stream(void)
     return 0;
 }
 
+static const char sLateSdrName[] __attribute__((section(".late_rodata"), used)) = "sdr";
+
+int __attribute__((section(".late_text"), noinline)) ps2_iop_load_audio_driver(void)
+{
+    if (ps2_iop_module_loaded(sLateSdrName))
+        return 0;
+
+    return load_irx(sLateSdrName, sdr_irx, size_sdr_irx, NULL, 0);
+}
+
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
 {
     char ip_arg[24];
