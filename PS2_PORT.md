@@ -24,44 +24,6 @@ Current state is tracked in [PS2_PORT_STATUS.md](PS2_PORT_STATUS.md).
   PS2Build, each under its own open-source licence (see the packages). `ps2/ps2_linkfile.ld` is derived from the
   ps2sdk default linkfile (AFL 2.0, credited in the file).
 
-## Sidecar boot contract
-
-The normal hardware contract is simple: `SSB64.DAT` lives in the same directory as
-`SSB64.ELF`. The port therefore keeps the launcher's live filesystem/IOP stack for
-ordinary launches instead of rebooting the IOP and trying to rediscover the device.
-
-Examples:
-
-```text
-mass0:/APPS/SSB64/SSB64.ELF
-mass0:/APPS/SSB64/SSB64.DAT
-
-mmce0:/APPS/SSB64/SSB64.ELF
-mmce0:/APPS/SSB64/SSB64.DAT
-
-udpfs:/APPS/SSB64/SSB64.ELF
-udpfs:/APPS/SSB64/SSB64.DAT
-```
-
-This intentionally follows the keep-IOP model used by sidecar-driven PS2 homebrew:
-if the launcher was able to load the ELF from that filesystem, the child keeps that
-same mounted filesystem alive for its adjacent DAT. The first storage authority is an actual open of SSB64.DAT through the
-launcher's live filesystem service. The EE client now distinguishes legacy
-FileIO/ioman (notably host-style launches) from fileXio/iomanX
-(BDM/PFS/MMCE). If an iomanX sidecar is live but its fileXio RPC bridge is
-missing, only that bridge is added lazily after the real DAT open fails; the
-storage drivers and mounts are left untouched. Controller/card/audio services are considered only after the DAT
-has opened, and storage drivers are never blindly duplicated in sidecar mode.
-Controller recovery is similarly conservative: an inherited PAD RPC is used
-as-is; otherwise PADMAN is tried on the launcher's live SIO2 service. SIO2MAN
-is added only when the active storage transport is known not to depend on
-SIO2 (for example PCSX2 host, USB, ATA, iLink, UDP or HDD). Generic massN:
-launches identify their already-proven BDM transport only after the DAT opens,
-so MX4SIO is never disconnected just to obtain controller support.
-
-`--data=<directory>` remains an advanced override. Using it opts out of the normal
-sidecar contract and allows the port to rebuild a separate typed data-device stack.
-
 ## Building
 
 Requirements: the PS2Build SDK (`ps2build` on PATH), Python 3, and for asset preparation the decomp's own
@@ -78,13 +40,9 @@ The boot layer derives the launch/data device from `argv[0]` and supports
 `host:`, generic `massN:` BDM mounts, explicit USB, internal ATA/exFAT BDM,
 MX4SIO, iLink, MMCE, APA/PFS HDD, UDPBD, UDPFS, memory card and `cdrom0:`.
 
-For launchers that expose a BDM device only as `massN:`, the port first
+For launchers that expose a BDM device only as `massN:`, the port deliberately
 **keeps the inherited IOP/filesystem alive instead of guessing that `mass:`
-means USB**. If the launcher reset the IOP after loading the ELF, the child
-detects that the sidecar mount is gone, rebuilds the BDM core without another
-IOP reset, adds USB/MX4SIO/iLink/ATA transports in stages, and rediscovers
-`SSB64.DAT` by its relative path across the new `massN:` mounts. The old
-slot number is never trusted after recovery. Explicit transport identities such as `usb0:`, `ata0:`,
+means USB**. Explicit transport identities such as `usb0:`, `ata0:`,
 `mx4sio0:`, `ilink0:` and `udpbd:` are rebuilt from a clean IOP and then
 resolved to the actual `massN:` filesystem containing `SSB64.DAT`.
 
@@ -205,10 +163,7 @@ prepended) and the loop body is unrolled and resampled by a factor ~1 so it
 spans whole 28-sample blocks; the runtime multiplies the pitch by that
 factor. The 4.1 MiB set lives in EE RAM and samples are copied to SPU RAM
 (1.9 MiB cache, LRU) on first use. All register changes of a frame go to the
-IOP as one `sceSdProcBatch` via sdrdrv. Keep-IOP launches restore the SDR
-service only after storage and controllers are proven: BIOS `LIBSD` +
-`SDRDRV` are tried first, then the embedded SDR server against BIOS LIBSD,
-and embedded FreeSD + SDR is the final old-BIOS fallback.
+IOP as one `sceSdProcBatch` via sdrdrv.
 
 ### Input (`ps2/src/input/pad.c`)
 libpad + libmtap, up to four players (multitap on port 1, or port 1 + a
@@ -260,11 +215,8 @@ The embedded IOP stacks are:
 | `mcN:` | base mcman/mcserv stack |
 | `cdrom0:` | cdfs, with ISO9660 `;1` fallback for `SSB64.DAT` |
 
-Real-device BDM files are read in conservative 16 KiB requests. PS2SDK's USB
-mass driver documents a 64 KiB/128-sector ceiling because some drives freeze
-on larger transfers; staying well below that limit trades a few more RPCs for
-better hardware tolerance. The boot path allows up to roughly 20 seconds for
-asynchronous BDM/network media to become ready.
+Real-device files are read in bounded 64 KiB requests and the boot path allows
+up to roughly 20 seconds for asynchronous BDM/network media to become ready.
 
 ### Game-source changes
 - `include/PR/rcp.h`: register reads/writes go through the platform layer.
@@ -290,34 +242,3 @@ globals can be poked from the PCSX2 debugger (addresses via `nm` on
 | `gPS2TexTrace = N` + `gPS2TexFlush = 1` | re-convert all textures and log N conversions with tile state |
 | `gPS2CombTrace = 1` | log each distinct textured combiner setup once |
 | `gPS2TlutTrace = N` | log N CI texture binds with the commands that loaded texel/TLUT data |
-
-
-### Late runtime services
-
-After the real `SSB64.DAT` and controller stack are proven, the port restores
-optional runtime services without resetting the IOP or replacing storage.
-
-- Memory-card persistence first reuses an inherited MCSERV RPC. If it is absent,
-  SSB64 loads `rom0:XMCMAN` + `rom0:XMCSERV` on the already-working SIO2
-  manager, then falls back to the embedded PS2SDK XMC modules. The save thread
-  is hard-gated unless `mcInit()` succeeds, so a missing card service can
-  never turn into a later background RPC hang.
-- Audio first reuses an inherited SDR RPC. If absent, real hardware uses the
-  canonical BIOS `rom0:LIBSD` + `rom0:SDRDRV` sequence used by native PS2
-  software. The embedded FreeSD/SDR pair is retained only as a fallback for
-  BIOS revisions that do not provide those modules.
-
-Both services degrade independently: save failure leaves SRAM in RAM and audio
-failure leaves the game silent; neither is allowed to break the proven game
-storage path.
-
-
-### Optional-service initialization rule
-
-Memory-card and audio bring-up no longer use speculative RPC-ID probes. Real
-hardware showed that even an asynchronous SIF bind can wedge depending on the
-current launcher/recovery state. These services now follow a stronger rule:
-first start a concrete IOP implementation (ROM XMCMAN/XMCSERV or
-LIBSD/SDRDRV, with PS2SDK fallbacks), then call the subsystem's actual client
-initializer exactly once. If module startup cannot be established, the feature
-is disabled instead of attempting a bind that might never return.
