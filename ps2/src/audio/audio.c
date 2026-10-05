@@ -80,6 +80,16 @@ void ps2_audio_init(void)
     ee_thread_t th = { 0 };
     extern void *_gp;
 
+    /*
+     * Hardware isolation build: do not touch SDR/libsd RPC at all.
+     * Moving SDR onto a worker kept the EE boot thread alive, but SIF RPC is
+     * shared with filesystem services. A wedged audio RPC can therefore let
+     * the resident Nintendo logo render and then starve the next streamed
+     * scene. This one build establishes a genuinely audio-free baseline.
+     */
+    ps2_log("audio: HARD DISABLED for SIF isolation test");
+    return;
+
     if (sAudioThreadId >= 0)
         return;
 
