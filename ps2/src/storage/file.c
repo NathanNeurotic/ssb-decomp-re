@@ -17,7 +17,9 @@
 #include <unistd.h>
 
 #define PS2_FD_MMCE_STREAM_TAG 0x40000000
-#define PS2_FD_VALUE_MASK      0x3fffffff
+#define PS2_FD_MMCE_SETUP_TAG  0x20000000
+#define PS2_FD_TAG_MASK        0x60000000
+#define PS2_FD_VALUE_MASK      0x1fffffff
 #define MMCE_IOCTL_GET_FD      0x80
 
 static char sMmceDatPath[384];
@@ -26,10 +28,20 @@ static char sMmceRuntimeError[160];
 
 static int is_mmce_stream_fd(int fd)
 {
-    return (fd & PS2_FD_MMCE_STREAM_TAG) != 0;
+    return (fd & PS2_FD_TAG_MASK) == PS2_FD_MMCE_STREAM_TAG;
 }
 
-static int raw_stream_fd(int fd)
+static int is_mmce_setup_fd(int fd)
+{
+    return (fd & PS2_FD_TAG_MASK) == PS2_FD_MMCE_SETUP_TAG;
+}
+
+static int is_mmce_native_fd(int fd)
+{
+    return is_mmce_stream_fd(fd) || is_mmce_setup_fd(fd);
+}
+
+static int raw_mmce_fd(int fd)
 {
     return fd & PS2_FD_VALUE_MASK;
 }
@@ -38,14 +50,23 @@ int ps2_file_open_read(const char *path)
 {
     int fd;
 
-    /* Keep the proven POSIX/newlib MMCE open path for setup. Only remember the
-     * path here; the native fileXio descriptor used for MMCEDRV handoff is
-     * opened later, after SSB64.DAT has already been validated. */
+    /*
+     * MMCE must use one native fileXio/MMCEMAN handle from first open through
+     * ioctl2(0x80). RiptOPL does exactly that. The previous implementation
+     * read the DAT through newlib/POSIX, then attempted a second fileXioOpen
+     * solely for the handoff; real hardware returned -1 on that duplicate
+     * open even though the already-open DAT was valid.
+     */
     if (path != NULL && ps2_storage_data_device() == PS2_BOOT_MMCE &&
         strncasecmp(path, "mmce", 4) == 0)
     {
         strncpy(sMmceDatPath, path, sizeof(sMmceDatPath) - 1);
         sMmceDatPath[sizeof(sMmceDatPath) - 1] = '\0';
+
+        fd = fileXioOpen(path, O_RDONLY, 0);
+        if (fd < 0)
+            return fd;
+        return PS2_FD_MMCE_SETUP_TAG | fd;
     }
 
     fd = open(path, O_RDONLY);
@@ -81,8 +102,8 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
         /* Keep individual RPCs modest. 64 KiB avoids long/fragile 256 KiB
          * transfers on real BDM/network stacks while remaining efficient. */
         uint32_t chunk = ((size - done) > 0x10000u) ? 0x10000u : (size - done);
-        int n = is_mmce_stream_fd(fd)
-                    ? fileXioRead(raw_stream_fd(fd), out + done, (int)chunk)
+        int n = is_mmce_native_fd(fd)
+                    ? fileXioRead(raw_mmce_fd(fd), out + done, (int)chunk)
                     : (int)read(fd, out + done, chunk);
 
         if (n <= 0)
@@ -96,8 +117,8 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
 
 int ps2_file_seek(int fd, uint32_t offset)
 {
-    if (is_mmce_stream_fd(fd))
-        return fileXioLseek(raw_stream_fd(fd), (int)offset, SEEK_SET);
+    if (is_mmce_native_fd(fd))
+        return fileXioLseek(raw_mmce_fd(fd), (int)offset, SEEK_SET);
 
     return (int)lseek(fd, (off_t)offset, SEEK_SET);
 }
@@ -106,9 +127,9 @@ int ps2_file_size(int fd)
 {
     int size;
 
-    if (is_mmce_stream_fd(fd))
+    if (is_mmce_native_fd(fd))
     {
-        int rawfd = raw_stream_fd(fd);
+        int rawfd = raw_mmce_fd(fd);
         size = fileXioLseek(rawfd, 0, SEEK_END);
         fileXioLseek(rawfd, 0, SEEK_SET);
         return size;
@@ -143,17 +164,20 @@ int ps2_file_mmce_enter_runtime_stream(int fd)
         return -1;
     }
 
-    /* First half of the RiptOPL/wOPL handoff: open with MMCEMAN and ask
-     * ioctl2 0x80 for the MMCE-side descriptor. The next step deliberately
-     * crosses a clean IOP reset; the card-side descriptor survives on the
-     * MMCE device and is then consumed by MMCEDRV in the runtime IOP. */
-    sMmceSetupNativeFd = fileXioOpen(sMmceDatPath, O_RDONLY, 0);
-    if (sMmceSetupNativeFd < 0)
+    if (!is_mmce_setup_fd(fd))
     {
-        snprintf(sMmceRuntimeError, sizeof(sMmceRuntimeError), "native MMCEMAN open failed (%d)", sMmceSetupNativeFd);
+        snprintf(sMmceRuntimeError, sizeof(sMmceRuntimeError),
+                 "DAT was not opened through native MMCEMAN (fd=0x%x)", fd);
         ps2_log("MMCE: %s", sMmceRuntimeError);
         return -1;
     }
+
+    /*
+     * First half of the RiptOPL/wOPL handoff: use the SAME MMCEMAN handle
+     * that loaded and validated SSB64.DAT, then ask ioctl2(0x80) for the
+     * card-side descriptor. Do not reopen the file here.
+     */
+    sMmceSetupNativeFd = raw_mmce_fd(fd);
 
     remote_fd = fileXioIoctl2(sMmceSetupNativeFd, MMCE_IOCTL_GET_FD,
                               NULL, 0, NULL, 0);
@@ -204,8 +228,8 @@ void ps2_file_close(int fd)
     if (fd < 0)
         return;
 
-    if (is_mmce_stream_fd(fd))
-        fileXioClose(raw_stream_fd(fd));
+    if (is_mmce_native_fd(fd))
+        fileXioClose(raw_mmce_fd(fd));
     else
         close(fd);
 }
