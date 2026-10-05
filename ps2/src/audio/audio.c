@@ -8,28 +8,60 @@
 #include <ps2/platform.h>
 #include <ps2/spu.h>
 
+#include <delaythread.h>
+#include <libsdr-common.h>
+#include <sifrpc.h>
+#include <string.h>
+
 static uint32_t sAiFrequency;
 static uint32_t sAiQueuedBytes;
 
-void __attribute__((section(".late_text"), noinline, used)) ps2_audio_init_late(void)
+static int sdr_rpc_ready(void)
 {
-    if (ps2_iop_load_audio_driver() >= 0)
-        ps2_spu_init();
-    else
-        ps2_log("audio: deferred until hardware-safe SDR bring-up is restored");
+    SifRpcClientData_t probe;
+    int i;
+
+    memset(&probe, 0, sizeof(probe));
+    for (i = 0; i < 100; i++)
+    {
+        int rc = sceSifBindRpc(&probe, sce_SDR_DEV, 0);
+
+        if (rc < 0)
+        {
+            ps2_log("audio: SDR RPC probe failed (%d)", rc);
+            return 0;
+        }
+        if (probe.server != NULL)
+            return 1;
+
+        DelayThread(10000); /* bounded to about one second total */
+    }
+    return 0;
 }
 
-void __attribute__((naked, noinline)) ps2_audio_init(void)
+void ps2_audio_init(void)
 {
     /*
-     * Exactly three MIPS instructions (12 bytes), matching the proven silent
-     * build's wrapper footprint so every following early text symbol keeps its
-     * hardware-tested address. The real work is beyond BSS in .late_text.
+     * ps2sdk's sceSdRemoteInit() waits indefinitely for sce_SDR_DEV. Probe
+     * the service first so a bad/missing IOP audio server can never turn
+     * sound initialization into another hardware boot hang.
      */
-    __asm__ volatile(
-        "nop\n"
-        "j ps2_audio_init_late\n"
-        "nop\n");
+    if (!sdr_rpc_ready())
+    {
+        if (ps2_iop_load_audio_driver() < 0)
+        {
+            ps2_log("audio: SDR module failed to start; continuing silent");
+            return;
+        }
+        if (!sdr_rpc_ready())
+        {
+            ps2_log("audio: SDR RPC server not ready after bounded wait; continuing silent");
+            return;
+        }
+    }
+
+    ps2_log("audio: SDR RPC ready; initializing SPU2 backend");
+    ps2_spu_init();
 }
 
 int32_t ps2_audio_ai_set_frequency(uint32_t frequency)
