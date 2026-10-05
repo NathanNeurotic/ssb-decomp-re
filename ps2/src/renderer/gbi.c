@@ -935,6 +935,7 @@ static void build_mode(DrawMode *dm, int for_rect)
     if (dm->textured)
     {
         uint32_t filt = (R.om_h >> 12) & 3; /* 0 point, 2 bilerp, 3 average */
+        const GbiTile *t = &R.tiles[(for_rect ? R.rect_tile : R.tex_tile) & 7];
         int lin = (filt != 0) && cyc != G_CYC_COPY;
 
         /*
@@ -952,7 +953,6 @@ static void build_mode(DrawMode *dm, int for_rect)
         const TexInfo *ti = &dm->tex;
         int wms = ti->wrap_s_repeat ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
         int wmt = ti->wrap_t_repeat ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
-        const GbiTile *t = &R.tiles[(for_rect ? R.rect_tile : R.tex_tile) & 7];
         int maxu = ((t->lrs - t->uls) >> 2);
         int maxv = ((t->lrt - t->ult) >> 2);
 
