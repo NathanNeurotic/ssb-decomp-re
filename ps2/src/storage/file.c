@@ -9,6 +9,7 @@
 #include <ps2/platform.h>
 
 #include <ps2sdkapi.h>
+#include <delaythread.h>
 #include <fcntl.h>
 #include <kernel.h>
 #include <stdio.h>
