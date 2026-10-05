@@ -30,7 +30,7 @@ extern void ps2_render_thread_init(void);
 extern void ps2_arena_init(void);
 extern void ps2_overlay_state_init(void);
 
-#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [POLISH-AUDIO-GFX2]"
+#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [AUDIO-CURSOR1]"
 
 int ps2_main(int argc, char *argv[])
 {
@@ -123,22 +123,11 @@ int ps2_main(int argc, char *argv[])
         ps2_log_save();
     }
 
-    ps2_log("boot: input init");
     ps2_input_init();
-    ps2_log("boot: input ready");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
-
-    ps2_log("boot: save init");
     ps2_save_init();
-    ps2_log("boot: save ready");
-
-    ps2_log("boot: audio init");
     ps2_audio_init();
-    ps2_log("boot: audio ready");
-
-    ps2_log("boot: renderer init");
     ps2_render_thread_init();
-    ps2_log("boot: renderer ready");
 
     mem = ps2_mem_stats();
     ps2_log("mem: %u KiB committed (code/static %u KiB), budget %u KiB", (unsigned)(mem->total_used >> 10),
