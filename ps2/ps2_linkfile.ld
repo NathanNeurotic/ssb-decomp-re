@@ -1274,7 +1274,7 @@ SECTIONS {
 	_end_bss = .;
 
 	/*
-	 * Optional hardware services that were not part of the proven early
+	 * Deferred hardware services that were not part of the proven early
 	 * runtime image live after BSS. In particular, referencing embedded
 	 * sdr.irx used to insert ~6 KiB into .data and move every static/game
 	 * address even though audio had not executed yet.
