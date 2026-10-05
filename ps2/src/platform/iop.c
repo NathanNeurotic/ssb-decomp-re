@@ -53,6 +53,8 @@ DECLARE_IRX(bdmfs_fatfs);
 DECLARE_IRX(usbd_mini);
 DECLARE_IRX(usbmass_bd_mini);
 DECLARE_IRX(mmceman);
+DECLARE_IRX(mmcedrv);
+DECLARE_IRX(ssb_mmce_stream);
 DECLARE_IRX(cdvd);
 
 DECLARE_IRX(ps2dev9);
@@ -255,6 +257,25 @@ void ps2_iop_init(void)
 
     ps2_log("IOP: %s, %d base modules",
             sIopWasReset ? "reset" : "kept (inherited filesystem)", sLoadedCount);
+}
+
+int ps2_iop_mmce_prepare_runtime_stream(void)
+{
+    if (ps2_storage_data_device() != PS2_BOOT_MMCE)
+        return -1;
+
+    /* Match wOPL's actual MMCE model: MMCEMAN stays resident for setup and
+     * the already-open file descriptor remains valid. MMCEDRV is then loaded
+     * alongside it for in-game reads. Do not unload or rebuild the MMCE/SIO2
+     * stack here. */
+    ps2_log("IOP: MMCE loading MMCEDRV alongside MMCEMAN");
+    if (LOAD_IRX(mmcedrv) < 0)
+        return -1;
+    if (LOAD_IRX(ssb_mmce_stream) < 0)
+        return -1;
+
+    ps2_log("IOP: MMCE runtime streaming bridge ready");
+    return 0;
 }
 
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
