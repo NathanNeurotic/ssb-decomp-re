@@ -13,7 +13,11 @@ static uint32_t sAiQueuedBytes;
 
 void ps2_audio_init(void)
 {
-    ps2_spu_init();
+    /*
+     * Deliberately silent while the real-hardware SDR startup wedge is
+     * isolated. Do not call ps2_spu_init()/sceSdRemoteInit without sdrdrv.
+     */
+    ps2_log("audio: deferred until hardware-safe SDR bring-up is restored");
 }
 
 int32_t ps2_audio_ai_set_frequency(uint32_t frequency)
