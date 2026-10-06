@@ -812,7 +812,6 @@ typedef struct DrawMode
     int fog_blend;  /* use GS fog with vertex fog factor */
     int prim_depth; /* G_ZS_PRIM */
     int decal;      /* two passes: untextured base, then texel-alpha blended texels */
-    int decal_tex_alpha; /* second pass must blend by raw TEXEL0 alpha */
     GsState decal_gs;
     TexInfo tex;
 } DrawMode;
@@ -1031,15 +1030,7 @@ static void make_outvtx(const GbiVtx *v, const DrawMode *dm, OutVtx *o)
         o->r = (co.rgb[0].k + co.rgb[0].c) * 128.0f;
         o->g = (co.rgb[1].k + co.rgb[1].c) * 128.0f;
         o->b = (co.rgb[2].k + co.rgb[2].c) * 128.0f;
-        /*
-         * The fighter decal pass implements (T - X) * TEXEL0_ALPHA + X
-         * as a normal source-over blend.  Its blend factor must therefore
-         * be TEXEL0 alpha itself.  With GS TCC=RGBA + MODULATE the source
-         * alpha is texture_alpha * vertex_alpha, so use unity vertex alpha
-         * for that pass instead of multiplying in the N64 alpha combiner a
-         * second time.
-         */
-        o->a = dm->decal_tex_alpha ? 128.0f : (co.a.k + co.a.c) * 128.0f;
+        o->a = (co.a.k + co.a.c) * 128.0f;
         o->s = (v->s * ti->shift_s - ti->off_s) / (float)ti->bind.gs_w;
         o->t = (v->t * ti->shift_t - ti->off_t) / (float)ti->bind.gs_h;
     }
@@ -1207,7 +1198,6 @@ static void tri(int i0, int i1, int i2)
         tri_pass(&R.vtx[i0], &R.vtx[i1], &R.vtx[i2], &sMode);
         sMode.textured = 1;
         tex_pass.gs = tex_pass.decal_gs;
-        tex_pass.decal_tex_alpha = 1;
         sTexAlphaIn = 1.0f;
         tri_pass(&R.vtx[i0], &R.vtx[i1], &R.vtx[i2], &tex_pass);
         return;
