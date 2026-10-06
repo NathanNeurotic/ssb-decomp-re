@@ -237,11 +237,30 @@ void ps2_iop_init(void)
     if (sIopWasReset)
         sbv_patch_fileio();
 
-    LOAD_IRX(iomanx);
-    LOAD_IRX(filexio);
-    /* Even when the inherited IOP already had fileXio loaded and the duplicate
-     * module load is rejected, bind the EE RPC client to the live service. */
-    fileXioInit();
+    if (sIopWasReset)
+    {
+        LOAD_IRX(iomanx);
+        LOAD_IRX(filexio);
+    }
+    else
+    {
+        /*
+         * host:, generic massN:, and bare inherited PFS paths depend on the
+         * launcher's live filesystem stack. Do not load another iomanX or
+         * fileXio instance over it: the inherited mass/pfs drivers registered
+         * their devices with that exact server instance.
+         *
+         * Real-hardware symptom when this contract is violated: argv[0] and
+         * the derived mass0:/.../SSB64.DAT path are correct, but open() can no
+         * longer see the already-mounted mass volume after ps2_iop_init().
+         */
+        ps2_log("IOP: preserving inherited iomanX/fileXio filesystem");
+    }
+
+    /* Bind the EE newlib file calls to whichever fileXio server is live:
+     * ours after a reset, or the launcher's when preserving its filesystem. */
+    if (fileXioInit() < 0)
+        ps2_log("IOP: fileXioInit bind failed");
 
     LOAD_IRX(sio2man);
     LOAD_IRX(mtapman);
