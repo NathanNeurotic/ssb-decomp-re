@@ -61,7 +61,7 @@ typedef struct TmemLoad
     uint32_t pitch;     /* DRAM bytes per row as loaded */
     uint8_t siz;
     uint8_t is_tlut;
-    uint8_t odd_swap; /* LoadBlock with dxt 0: RAM holds TMEM's odd-row word swap */
+    uint8_t odd_swap; /* LoadBlock with dxt: RDP swaps odd rows for TMEM interleave */
     const void *cmd;  /* debug: the load command */
 } TmemLoad;
 
@@ -1936,7 +1936,7 @@ void ps2_gbi_run(const void *dl_start)
             const uint8_t *src = R.timg_addr + ((ult * R.timg_width + uls) * bpp) / 8;
             uint32_t row_words = dxt ? (2048 + dxt - 1) / dxt : 0;
 
-            record_load(t->tmem, (uint16_t)words, src, row_words * 8, R.timg_siz, 0, dxt == 0);
+            record_load(t->tmem, (uint16_t)words, src, row_words * 8, R.timg_siz, 0, dxt != 0);
             sModeDirty = 1;
             break;
         }
