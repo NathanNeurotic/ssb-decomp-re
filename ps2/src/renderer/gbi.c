@@ -741,26 +741,6 @@ static void bind_texture(int tile_index, TexInfo *ti)
         key.line_bytes = (uint16_t)R.loads[li].pitch;
     }
 
-    /*
-     * The tile clamp extent and the physical TMEM row width are independent.
-     * Fighter MObj materials use that deliberately: their CI4 render tile can
-     * be wider than the row loaded into TMEM, with gSPTexture scaling keeping
-     * sampling inside the populated row.  Because this renderer converts
-     * straight from DRAM instead of materialising TMEM, using the clamp extent
-     * as the source width walks into the next row and misassembles the image.
-     *
-     * For non-repeating CI4 tiles, cap the staged source span to the row width
-     * encoded by SetTile.line (8 bytes per TMEM word, two CI4 texels/byte).
-     * Keep the tile extent itself in R.tiles[] for coordinate/clamp semantics.
-     */
-    if (t->fmt == G_IM_FMT_CI && t->siz == G_IM_SIZ_4b && t->line != 0 && !ti->wrap_s_repeat)
-    {
-        int row_texels = (int)key.line_bytes * 2;
-
-        if (key.width > row_texels)
-            key.width = (uint16_t)row_texels;
-    }
-
     key.mirror_s = (t->cms & G_TX_MIRROR) && ti->wrap_s_repeat;
     key.mirror_t = (t->cmt & G_TX_MIRROR) && ti->wrap_t_repeat;
     key.odd_swap = R.loads[li].odd_swap;
@@ -1602,8 +1582,19 @@ void ps2_gbi_run(const void *dl_start)
                 }
                 else if (where == G_MWO_POINT_ST)
                 {
-                    v->s = (float)(int16_t)(w1 >> 16) / 32.0f;
-                    v->t = (float)(int16_t)(w1 & 0xFFFF) / 32.0f;
+                    /*
+                     * ModifyVtx writes raw s10.5 texture coordinates into the
+                     * RSP vertex cache. Keep them in the same representation as
+                     * coordinates loaded through G_VTX: apply the currently
+                     * active gSPTexture scale before storing them.
+                     *
+                     * Without this, a display list that patches ST after a
+                     * material's gSPTexture command samples a different part of
+                     * the texture than an otherwise identical freshly-loaded
+                     * vertex.
+                     */
+                    v->s = (float)(int16_t)(w1 >> 16) * R.tex_scale_s / 32.0f;
+                    v->t = (float)(int16_t)(w1 & 0xFFFF) * R.tex_scale_t / 32.0f;
                 }
             }
             break;
