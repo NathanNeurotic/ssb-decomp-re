@@ -124,8 +124,7 @@ typedef struct PS2TexKey
 {
     const void *addr;      /* N64 texel source (typed relocData / heap) */
     const void *tlut;      /* palette source for CI, else NULL */
-    uint16_t width, height;/* source mask period / texel extent */
-    uint16_t material_width, material_height; /* 0 = one wrap period; else exact clamped tile extent */
+    uint16_t width, height;/* texels loaded (tile extent) */
     uint16_t line_bytes;   /* source row pitch in bytes */
     uint8_t fmt, siz;      /* G_IM_FMT_*, G_IM_SIZ_* */
     uint8_t tlut_type;     /* 0 none, 2 RGBA16, 3 IA16 (G_TT_* >> 14) */
