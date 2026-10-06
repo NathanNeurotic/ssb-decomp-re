@@ -35,6 +35,13 @@ ps2/tools/prepare_assets.sh          # once per ROM / asset change -> ps2/build/
 cd ps2 && ps2build build             # -> ps2/build/bin/ssb64.elf
 ```
 
+The normal `ps2build build` is the production configuration. For a hardware-debug
+build, add `- PS2_DEBUG=1` to the `defines` of the `ssb_platform` target in
+`ps2/ps2.yaml`. That enables the Select + R3 debug overlay, Select + L3
+frame-clear diagnostic, Select + R1 row-coverage capture, and extra framebuffer
+scan-out diagnostics. The final audio path uses the dedicated `ssb_audio` IOP
+server rather than SDR/sdrdrv.
+
 Copy `ssb64.elf` and `SSB64.DAT` to the same directory and run the ELF.
 The boot layer derives the launch/data device from `argv[0]` and supports
 `host:`, generic `massN:` BDM mounts, explicit USB, internal ATA/exFAT BDM,

@@ -80,6 +80,28 @@ static void render_one(const RenderJob *job)
 
         (void)gPS2GbiTrace; /* debug: set > 0 to log the next N GBI commands */
     }
+#if PS2_DEBUG
+    if (ps2_input_clear_toggle_pressed())
+    {
+        /* off -> magenta -> black -> off (the magenta sets bit 31 so a
+         * black clear is still "on") */
+        extern uint32_t gPS2FrameClearColor;
+
+        gPS2FrameClearColor = (gPS2FrameClearColor == 0)            ? 0x80FF00FFu
+                              : (gPS2FrameClearColor == 0x80FF00FFu) ? 0x80000000u
+                                                                     : 0;
+        ps2_log("diag: frame clear %s", gPS2FrameClearColor == 0 ? "off"
+                                        : (gPS2FrameClearColor & 0xFFFFFF) ? "magenta" : "black");
+    }
+    if (ps2_input_capture_pressed())
+    {
+        extern int gPS2DiagCaptureFrames;
+
+        /* three frames: one per rotating framebuffer */
+        gPS2DiagCaptureFrames = 3;
+        ps2_log("diag: capturing row coverage for 3 frames");
+    }
+#endif
     ps2_gbi_run(job->dl);
 
     if (ps2_input_overlay_toggle_pressed())
@@ -104,6 +126,14 @@ static void render_one(const RenderJob *job)
                 (unsigned)gPS2RenderStats.dl_commands, (unsigned)gPS2RenderStats.triangles,
                 (unsigned)gPS2RenderStats.rects, (unsigned)gPS2RenderStats.tex_uploads,
                 (unsigned)gPS2RenderStats.unknown_cmds, (unsigned)gPS2RenderStats.gfx_us);
+#if PS2_DEBUG
+        {
+            extern uint32_t gPS2FbDrawDisplayed, gPS2FbDrawPending;
+
+            ps2_log("vsync: drew into on-screen fb %u, into queued fb %u", (unsigned)gPS2FbDrawDisplayed,
+                    (unsigned)gPS2FbDrawPending);
+        }
+#endif
         if (sTasksDone > 3)
         {
             const PS2MemStats *ms = ps2_mem_stats();

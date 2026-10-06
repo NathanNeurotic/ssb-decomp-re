@@ -20,8 +20,18 @@ extern "C" {
 /* Build configuration                                                 */
 /* ------------------------------------------------------------------ */
 
+/* PS2_DEBUG = 1 builds the hardware-debugging aids in: the debug overlay
+ * (Select + R3), the frame-clear and row-coverage diagnostics (Select + L3,
+ * Select + R1), framebuffer scan-out counters, and SSB64.LOG written at
+ * boot.  Production builds leave it 0 (the default); a crash or fatal
+ * error still writes SSB64.LOG either way.  Enable it by adding
+ * "- PS2_DEBUG=1" to the ssb_platform defines in ps2/ps2.yaml. */
+#ifndef PS2_DEBUG
+#define PS2_DEBUG 0
+#endif
+
 #ifndef PS2_DEBUG_OVERLAY
-#define PS2_DEBUG_OVERLAY 1 /* compile the debug overlay in (toggle at runtime) */
+#define PS2_DEBUG_OVERLAY PS2_DEBUG /* compile the debug overlay in (toggle at runtime) */
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -168,6 +178,7 @@ void ps2_iop_init(void);                 /* reset IOP + load base modules */
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 int ps2_iop_load_audio_driver(void); /* deferred SDR server; safe to call after storage/input */
 int ps2_iop_mmce_prepare_runtime_stream(void);
+int  ps2_iop_load_audio_drivers(void);    /* libsd + sdr; 0 on success */
 int  ps2_iop_module_loaded(const char *name);
 int  ps2_iop_module_count(void);
 const char *ps2_iop_module_name(int i);

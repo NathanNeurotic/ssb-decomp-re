@@ -1,6 +1,10 @@
 [submodule "tools/splat"]
 	path = tools/splat
 	url = https://github.com/ethteck/splat.git
+	# Splat is a build/decomp tool. Local Python caches, editable installs, or
+	# developer changes inside the submodule must not make the superproject
+	# appear modified or block normal branch updates.
+	ignore = dirty
 [submodule "tools/asm-processor"]
 	path = tools/asm-processor
 	url = https://github.com/simonlindholm/asm-processor

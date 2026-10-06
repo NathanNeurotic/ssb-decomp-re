@@ -53,9 +53,9 @@ int ps2_main(int argc, char *argv[])
                 bad_data_arg = 1;
         }
     }
-    /* Stage colours (troubleshooting on hardware, see PS2_PORT.md):
-     * dark blue = started, purple = IOP modules, cyan = video init,
-     * after that the boot screen with the log is shown. */
+    /* Stage colours (troubleshooting on hardware, see PS2_PORT.md): navy =
+     * started, half-intensity colours subdivide IOP reset/module bring-up,
+     * blue enters GS init, and after GS init the boot log is shown as text. */
     ps2_boot_stage("started", 0x000080);
     ps2_mem_init();
 
@@ -84,9 +84,12 @@ int ps2_main(int argc, char *argv[])
 
     ps2_boot_stage("IOP reset + modules", 0x800080);
     ps2_iop_init();
-    ps2_boot_stage("vblank + video init", 0x008080);
-    ps2_vblank_init();
+    /* Initialize the GS before installing the game-side VBlank ISR. gsKit
+     * reprograms GS state during bring-up, so no VBlank callback should run
+     * across that hardware transition. */
+    ps2_boot_stage("GS video init", 0x0000FF);
     ps2_gs_init();
+    ps2_vblank_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
     if (bad_data_arg)
