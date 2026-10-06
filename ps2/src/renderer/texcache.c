@@ -292,20 +292,67 @@ static inline int src_coord(int x, int size, int mirror)
     return x % size;
 }
 
+static inline uint32_t hash_byte(uint32_t h, uint8_t v)
+{
+    return (h ^ v) * 16777619u;
+}
+
 static uint32_t hash_source(const PS2TexKey *k)
 {
-    const uint8_t *p = (const uint8_t *)k->addr;
+    const uint8_t *src = (const uint8_t *)k->addr;
     uint32_t h = 2166136261u;
-    int i;
+    uint32_t bpp = 4u << k->siz;
+    uint32_t row_bytes = ((uint32_t)k->width * bpp + 7u) >> 3;
+    uint32_t pitch = k->line_bytes ? k->line_bytes : row_bytes;
+    uint64_t logical_bytes = (uint64_t)row_bytes * k->height;
+    uint32_t y, x;
 
-    for (i = 0; i < 32; i++)
-        h = (h ^ p[i]) * 16777619u;
+    /*
+     * Relocatable scene/fighter data is routinely reloaded into the same EE
+     * heap addresses.  The cache key therefore cannot rely on source pointers
+     * alone.  The old guard hashed only the first 32 texel bytes and first 16
+     * palette bytes; two different small fighter textures/palettes often share
+     * those leading transparent/common bytes, so stale VRAM content could be
+     * reused indefinitely.
+     *
+     * Fully hash ordinary N64 textures (the dynamic fighter materials are only
+     * a few hundred bytes).  For unusually large images, sample evenly across
+     * the whole logical image so per-bind validation stays bounded.
+     */
+    if (logical_bytes <= 16384u)
+    {
+        for (y = 0; y < k->height; y++)
+        {
+            const uint8_t *row = src + (uint64_t)y * pitch;
+
+            for (x = 0; x < row_bytes; x++)
+                h = hash_byte(h, row[x]);
+        }
+    }
+    else
+    {
+        uint32_t samples = 1024;
+        uint64_t n;
+
+        for (n = 0; n < samples; n++)
+        {
+            uint64_t logical = (n * logical_bytes) / samples;
+            uint32_t sy = (uint32_t)(logical / row_bytes);
+            uint32_t sx = (uint32_t)(logical % row_bytes);
+
+            h = hash_byte(h, src[(uint64_t)sy * pitch + sx]);
+        }
+    }
+
     if (k->tlut != NULL)
     {
         const uint8_t *t = (const uint8_t *)k->tlut;
+        uint32_t entries = (k->fmt == FMT_CI && k->siz == SIZ_8) ? 256u : 16u;
+        uint32_t bytes = entries * 2u;
 
-        for (i = 0; i < 16; i++)
-            h = (h ^ t[i]) * 16777619u;
+        /* Hash the complete palette. CI4 is only 32 bytes and CI8 512 bytes. */
+        for (x = 0; x < bytes; x++)
+            h = hash_byte(h, t[x]);
     }
     return h;
 }
