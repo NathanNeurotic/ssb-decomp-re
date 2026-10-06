@@ -52,6 +52,23 @@ jobs:
           "$PS2BUILD_HOME/ps2build" --version
           "$PS2BUILD_HOME/toolchain/ee/bin/mips64r5900el-ps2-elf-gcc" --version | head -1
 
+      - name: Package source and EE toolchain for local asset build
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --exclude=.git --exclude=.ps2dev -czf /tmp/ssb64-source.tar.gz .
+          tar -C "$PS2BUILD_HOME/toolchain" -czf /tmp/ssb64-ee-toolchain.tar.gz ee
+
+      - name: Upload local asset-build kit
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssb64-local-asset-build-kit-${{ github.sha }}
+          path: |
+            /tmp/ssb64-source.tar.gz
+            /tmp/ssb64-ee-toolchain.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Generate ROM-independent linker symbols
         shell: bash
         run: |
