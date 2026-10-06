@@ -679,6 +679,7 @@ typedef struct TexInfo
     float off_s, off_t; /* tile origin in texels */
     float shift_s, shift_t;
     int wrap_s_repeat, wrap_t_repeat;
+    int clamp_s_materialized, clamp_t_materialized;
 } TexInfo;
 
 static int tile_shift_mul(int shift, float *mul)
@@ -702,27 +703,52 @@ static void bind_texture(int tile_index, TexInfo *ti)
     uint32_t tlut_type = (R.om_h >> 14) & 3;
 
     ti->valid = 0;
+    ti->clamp_s_materialized = 0;
+    ti->clamp_t_materialized = 0;
     if (li < 0)
     {
         return;
     }
     memset(&key, 0, sizeof(key));
 
-    /* The RDP clamps to the tile extent first, then wraps with the mask.
-     * When the mask period is smaller than the extent the result is the
-     * mask-sized texture repeated (or mirrored) across the region, so that
-     * is what gets uploaded; clamping only matters when the extent fits. */
+    /*
+     * Masking/mirroring happens inside the legal tile extent, while CLAMP
+     * stops coordinates at SH/TH.  A clamp+mask tile therefore cannot always
+     * be represented by one repeated GS period: e.g. a 32-texel tile with an
+     * 8-texel mirrored mask must repeat/mirror up to texel 31, then clamp.
+     *
+     * Keep the mask period as the source width/height, but ask texcache to
+     * materialize the complete legal tile extent for clamped axes.  The GS
+     * can then REGION_CLAMP that exact image.  Unclamped axes retain the
+     * existing one-period upload + REPEAT path.
+     */
     w = ((t->lrs - t->uls) >> 2) + 1;
     h = ((t->lrt - t->ult) >> 2) + 1;
-    ti->wrap_s_repeat = t->masks && (!(t->cms & G_TX_CLAMP) || w > (1 << t->masks));
-    ti->wrap_t_repeat = t->maskt && (!(t->cmt & G_TX_CLAMP) || h > (1 << t->maskt));
-    if (ti->wrap_s_repeat)
-        w = 1 << t->masks;
-    if (ti->wrap_t_repeat)
-        h = 1 << t->maskt;
     if (w <= 0 || h <= 0 || w > 1024 || h > 1024)
     {
         return;
+    }
+
+    ti->wrap_s_repeat = t->masks && (!(t->cms & G_TX_CLAMP) || w > (1 << t->masks));
+    ti->wrap_t_repeat = t->maskt && (!(t->cmt & G_TX_CLAMP) || h > (1 << t->maskt));
+
+    if (ti->wrap_s_repeat)
+    {
+        if (t->cms & G_TX_CLAMP)
+        {
+            key.material_width = (uint16_t)w;
+            ti->clamp_s_materialized = 1;
+        }
+        w = 1 << t->masks;
+    }
+    if (ti->wrap_t_repeat)
+    {
+        if (t->cmt & G_TX_CLAMP)
+        {
+            key.material_height = (uint16_t)h;
+            ti->clamp_t_materialized = 1;
+        }
+        h = 1 << t->maskt;
     }
 
     /* 32-bit texels are split across TMEM's two halves (RG low, BA high), so
@@ -937,8 +963,8 @@ static void build_mode(DrawMode *dm, int for_rect)
         uint32_t filt = (R.om_h >> 12) & 3; /* 0 point, 2 bilerp, 3 average */
         int lin = (filt != 0) && cyc != G_CYC_COPY;
         const TexInfo *ti = &dm->tex;
-        int wms = ti->wrap_s_repeat ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
-        int wmt = ti->wrap_t_repeat ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
+        int wms = (ti->wrap_s_repeat && !ti->clamp_s_materialized) ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
+        int wmt = (ti->wrap_t_repeat && !ti->clamp_t_materialized) ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
         const GbiTile *t = &R.tiles[(for_rect ? R.rect_tile : R.tex_tile) & 7];
         int maxu = ((t->lrs - t->uls) >> 2);
         int maxv = ((t->lrt - t->ult) >> 2);
