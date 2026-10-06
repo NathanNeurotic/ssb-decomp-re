@@ -28,14 +28,15 @@
 #include <io_common.h>
 #include <kernel.h>
 #include <loadfile.h>
+#include <malloc.h>
 #include <sbv_patches.h>
 #include <sifrpc.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
-#define DECLARE_IRX(name)                 \
-    extern unsigned char name##_irx[];    \
+#define DECLARE_IRX(name)                                      \
+    extern unsigned char name##_irx[] __attribute__((aligned(16))); \
     extern unsigned int size_##name##_irx
 
 DECLARE_IRX(iomanx);
@@ -80,9 +81,31 @@ static int sIopWasReset;
 static int load_irx(const char *name, void *buf, unsigned int size, const char *args, int args_len)
 {
     int result = 0;
-    int id = SifExecModuleBuffer(buf, size, (u32)args_len, args, &result);
+    int id;
+    void *src = buf;
+    void *bounce = NULL;
 
-    if (id < 0 || result == 1 /* NO_RESIDENT_END */)
+    /* SifExecModuleBuffer sends the module image through SIF DMA. Real
+     * hardware requires the referenced image to be quadword aligned; PCSX2
+     * can hide a misaligned embedded blob. Bounce only when necessary. */
+    if (((uintptr_t)buf & 15u) != 0)
+    {
+        bounce = memalign(64, (size + 63u) & ~63u);
+        if (bounce == NULL)
+        {
+            ps2_log("IOP: %s: no memory for aligned module copy", name);
+            return -1;
+        }
+        memcpy(bounce, buf, size);
+        src = bounce;
+        ps2_log("IOP: %s realigned from %p", name, buf);
+    }
+
+    id = SifExecModuleBuffer(src, size, (u32)args_len, args, &result);
+    if (bounce != NULL)
+        free(bounce);
+
+    if (id < 0 || result < 0 || result == 1 /* NO_RESIDENT_END */)
     {
         ps2_log("IOP: %s failed (id=%d res=%d)", name, id, result);
         return -1;
@@ -95,6 +118,9 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
 
 #define LOAD_IRX(name) load_irx(#name, name##_irx, size_##name##_irx, NULL, 0)
 #define LOAD_IRX_ARGS(name, args, len) load_irx(#name, name##_irx, size_##name##_irx, args, len)
+#define LOAD_IRX_STAGE(name, rgb) \
+    (ps2_boot_stage("IOP: loading " #name, (rgb)), LOAD_IRX(name))
+
 
 static int load_bdm_core(void)
 {
@@ -215,20 +241,26 @@ void ps2_iop_init(void)
 
     SifInitRpc(0);
 
-    /* host: and bare pfsN: data paths depend on services/mounts owned by the
-     * launcher.  Everything else is rebuilt from a known IOP state. */
+    /* host:, inherited massN:, and bare inherited pfsN: paths depend on
+     * launcher-owned IOP state. Every reconstructible transport starts from
+     * a clean IOP. Disable stdout mirroring before that reset so a stale
+     * console RPC cannot deadlock real hardware. */
     if (!preserve_iop)
     {
+        ps2_log_console(0);
+        ps2_boot_stage("IOP: reset request", 0x800080);
         while (!SifIopReset("", 0))
         {
         }
         while (!SifIopSync())
         {
         }
+        ps2_boot_stage("IOP: reset synced", 0x804000);
         SifInitRpc(0);
         sIopWasReset = 1;
     }
 
+    ps2_boot_stage("IOP: RPC + loader", 0x808000);
     SifLoadFileInit();
     SifInitIopHeap();
 
@@ -237,28 +269,59 @@ void ps2_iop_init(void)
     if (sIopWasReset)
         sbv_patch_fileio();
 
-    LOAD_IRX(iomanx);
-    LOAD_IRX(filexio);
-    /* Even when the inherited IOP already had fileXio loaded and the duplicate
-     * module load is rejected, bind the EE RPC client to the live service. */
-    fileXioInit();
+    if (sIopWasReset)
+    {
+        if (LOAD_IRX_STAGE(iomanx, 0x406000) < 0 ||
+            LOAD_IRX_STAGE(filexio, 0x408000) < 0)
+            goto module_failure;
+    }
+    else
+    {
+        /* Duplicate module loads can be rejected when preserving a launcher
+         * IOP; that is not fatal because the inherited services may already
+         * be resident. */
+        LOAD_IRX_STAGE(iomanx, 0x406000);
+        LOAD_IRX_STAGE(filexio, 0x408000);
+    }
 
-    LOAD_IRX(sio2man);
-    LOAD_IRX(mtapman);
-    LOAD_IRX(padman);
-    LOAD_IRX(mcman);
-    LOAD_IRX(mcserv);
-    LOAD_IRX(libsd);
-    /*
-     * Real hardware has already proven the embedded sdr server can wedge this
-     * port during startup. Storage work must not be masked by an unrelated
-     * audio RPC hang, so keep SDR deferred until the common storage path is
-     * stable on hardware.
-     */
-    ps2_log("IOP: sdr deferred for hardware-safe storage validation");
+    ps2_boot_stage("IOP: fileXio RPC", 0x60A000);
+    if (fileXioInit() < 0 && sIopWasReset)
+        goto module_failure;
+
+    if (sIopWasReset)
+    {
+        if (LOAD_IRX_STAGE(sio2man, 0x008000) < 0 ||
+            LOAD_IRX_STAGE(mtapman, 0x006020) < 0 ||
+            LOAD_IRX_STAGE(padman, 0x404040) < 0 ||
+            LOAD_IRX_STAGE(mcman, 0x804040) < 0 ||
+            LOAD_IRX_STAGE(mcserv, 0x402000) < 0)
+            goto module_failure;
+    }
+    else
+    {
+        LOAD_IRX_STAGE(sio2man, 0x008000);
+        LOAD_IRX_STAGE(mtapman, 0x006020);
+        LOAD_IRX_STAGE(padman, 0x404040);
+        LOAD_IRX_STAGE(mcman, 0x804040);
+        LOAD_IRX_STAGE(mcserv, 0x402000);
+    }
+
+    /* libsd is required by the dedicated ssb_audio server but audio itself
+     * is optional. Do not fail the whole boot if the sound driver is absent. */
+    LOAD_IRX_STAGE(libsd, 0x008060);
+
+    if (!sIopWasReset)
+        ps2_log_console(1);
 
     ps2_log("IOP: %s, %d base modules",
             sIopWasReset ? "reset" : "kept (inherited filesystem)", sLoadedCount);
+    return;
+
+module_failure:
+    ps2_log_console(0);
+    ps2_boot_stage("IOP: module failure", 0x800000);
+    for (;;)
+        SleepThread();
 }
 
 int ps2_iop_mmce_prepare_runtime_stream(void)
@@ -335,7 +398,7 @@ int ps2_iop_load_audio_driver(void)
         return 0;
 
     ps2_log("IOP: starting dedicated ssb_audio server");
-    return LOAD_IRX(ssb_audio);
+    return LOAD_IRX_STAGE(ssb_audio, 0x006080);
 }
 
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
