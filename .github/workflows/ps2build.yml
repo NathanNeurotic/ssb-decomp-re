@@ -52,20 +52,28 @@ jobs:
           "$PS2BUILD_HOME/ps2build" --version
           "$PS2BUILD_HOME/toolchain/ee/bin/mips64r5900el-ps2-elf-gcc" --version | head -1
 
-      - name: Package source and EE toolchain for local asset build
+      - name: Package offline local asset-build kit
         shell: bash
         run: |
           set -euo pipefail
-          tar --exclude=.git --exclude=.ps2dev -czf /tmp/ssb64-source.tar.gz .
+          git submodule update --init --recursive
+          python3 -m pip install -r tools/splat/requirements.txt -t /tmp/ssb64-pydeps
+          python3 -m pip install --upgrade --force-reinstall "spimdisasm==1.35.0" -t /tmp/ssb64-pydeps
+          curl -L https://github.com/santaclose/vpk0cmd/releases/download/0.1/vpk0cmd_linux_x86_64 -o tools/vpk0cmd
+          curl -L https://github.com/santaclose/halAssetTool/releases/download/0.15/halAssetTool -o tools/halAssetTool
+          chmod +x tools/vpk0cmd tools/halAssetTool
+          tar --exclude-vcs --exclude=.ps2dev -czf /tmp/ssb64-source.tar.gz .
           tar -C "$PS2BUILD_HOME/toolchain" -czf /tmp/ssb64-ee-toolchain.tar.gz ee
+          tar -C /tmp -czf /tmp/ssb64-pydeps.tar.gz ssb64-pydeps
 
-      - name: Upload local asset-build kit
+      - name: Upload offline local asset-build kit
         uses: actions/upload-artifact@v4
         with:
-          name: ssb64-local-asset-build-kit-${{ github.sha }}
+          name: ssb64-offline-asset-build-kit-${{ github.sha }}
           path: |
             /tmp/ssb64-source.tar.gz
             /tmp/ssb64-ee-toolchain.tar.gz
+            /tmp/ssb64-pydeps.tar.gz
           if-no-files-found: error
           retention-days: 1
 
