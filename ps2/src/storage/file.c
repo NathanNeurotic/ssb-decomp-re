@@ -8,6 +8,10 @@
  */
 #include <ps2/platform.h>
 
+#ifndef NEWLIB_PORT_AWARE
+#define NEWLIB_PORT_AWARE
+#endif
+#include <fileXio_rpc.h>
 #include <ps2sdkapi.h>
 #include <delaythread.h>
 #include <fcntl.h>
@@ -17,9 +21,22 @@
 #include <strings.h>
 #include <unistd.h>
 
+static int use_filexio_backend(void)
+{
+    /*
+     * Generic massN: launches preserve the launcher's BDM/iomanX filesystem.
+     * PS2SDK's POSIX open() path currently goes through fioOpen(), not
+     * fileXioOpen(), so it can miss devices registered only on the inherited
+     * iomanX/fileXio stack. Use fileXio directly for this one inherited BDM
+     * case; every reconstructed/typed backend keeps the normal POSIX path.
+     */
+    return ps2_storage_data_device() == PS2_BOOT_BDM;
+}
+
 int ps2_file_open_read(const char *path)
 {
-    int fd = open(path, O_RDONLY);
+    int fd = use_filexio_backend() ? fileXioOpen(path, O_RDONLY, 0)
+                                   : open(path, O_RDONLY);
 
     /* ISO9660 paths on real hardware commonly require the ;1 version suffix,
      * while PCSX2 and some launchers accept the unversioned spelling. Keep
@@ -69,7 +86,9 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
 
         for (retry = 0; retry < (is_mmce ? 3 : 1); retry++)
         {
-            n = (int)read(fd, out + done, chunk);
+            n = use_filexio_backend()
+                    ? fileXioRead(fd, out + done, (int)chunk)
+                    : (int)read(fd, out + done, chunk);
             if (n > 0)
                 break;
 
@@ -90,15 +109,27 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
 
 int ps2_file_seek(int fd, uint32_t offset)
 {
-    return (int)lseek(fd, (off_t)offset, SEEK_SET);
+    return use_filexio_backend()
+               ? fileXioLseek(fd, (int)offset, SEEK_SET)
+               : (int)lseek(fd, (off_t)offset, SEEK_SET);
 }
 
 int ps2_file_size(int fd)
 {
-    int size = (int)lseek(fd, 0, SEEK_END);
+    int size;
 
-    if (size >= 0)
-        lseek(fd, 0, SEEK_SET);
+    if (use_filexio_backend())
+    {
+        size = fileXioLseek(fd, 0, SEEK_END);
+        if (size >= 0)
+            fileXioLseek(fd, 0, SEEK_SET);
+    }
+    else
+    {
+        size = (int)lseek(fd, 0, SEEK_END);
+        if (size >= 0)
+            lseek(fd, 0, SEEK_SET);
+    }
     return size;
 }
 
@@ -167,6 +198,11 @@ int ps2_file_mmce_enter_runtime_stream(int fd)
 
 void ps2_file_close(int fd)
 {
-    if (fd >= 0)
+    if (fd < 0)
+        return;
+
+    if (use_filexio_backend())
+        fileXioClose(fd);
+    else
         close(fd);
 }
