@@ -740,6 +740,27 @@ static void bind_texture(int tile_index, TexInfo *ti)
         /* LoadTile rows keep the DRAM image pitch. */
         key.line_bytes = (uint16_t)R.loads[li].pitch;
     }
+
+    /*
+     * The tile clamp extent and the physical TMEM row width are independent.
+     * Fighter MObj materials use that deliberately: their CI4 render tile can
+     * be wider than the row loaded into TMEM, with gSPTexture scaling keeping
+     * sampling inside the populated row.  Because this renderer converts
+     * straight from DRAM instead of materialising TMEM, using the clamp extent
+     * as the source width walks into the next row and misassembles the image.
+     *
+     * For non-repeating CI4 tiles, cap the staged source span to the row width
+     * encoded by SetTile.line (8 bytes per TMEM word, two CI4 texels/byte).
+     * Keep the tile extent itself in R.tiles[] for coordinate/clamp semantics.
+     */
+    if (t->fmt == G_IM_FMT_CI && t->siz == G_IM_SIZ_4b && t->line != 0 && !ti->wrap_s_repeat)
+    {
+        int row_texels = (int)key.line_bytes * 2;
+
+        if (key.width > row_texels)
+            key.width = (uint16_t)row_texels;
+    }
+
     key.mirror_s = (t->cms & G_TX_MIRROR) && ti->wrap_s_repeat;
     key.mirror_t = (t->cmt & G_TX_MIRROR) && ti->wrap_t_repeat;
     key.odd_swap = R.loads[li].odd_swap;
