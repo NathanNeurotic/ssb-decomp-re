@@ -943,6 +943,25 @@ static void build_mode(DrawMode *dm, int for_rect)
         int maxu = ((t->lrs - t->uls) >> 2);
         int maxv = ((t->lrt - t->ult) >> 2);
 
+        /*
+         * RDP clamps in tile space before applying mask/mirror.  A masked
+         * mirrored tile can therefore need the mirrored half inside the
+         * legal clamp extent, while coordinates outside that extent must
+         * still stop at the edge.  texcache already materializes the full
+         * mirror period.  When that physical GS image covers the complete
+         * N64 tile extent, REGION_CLAMP reproduces both operations exactly;
+         * leaving GS in REPEAT would wrap out-of-range coordinates back into
+         * the texture (visible on Mario's face/cap material).
+         *
+         * If the clamp extent is larger than the materialized image we must
+         * retain REPEAT for now, because another mask period is still needed
+         * inside the legal N64 tile extent.
+         */
+        if ((t->cms & G_TX_CLAMP) && maxu >= 0 && maxu < ti->bind.gs_w)
+            wms = GSWRAP_REGION_CLAMP;
+        if ((t->cmt & G_TX_CLAMP) && maxv >= 0 && maxv < ti->bind.gs_h)
+            wmt = GSWRAP_REGION_CLAMP;
+
         if (maxu < 0 || maxu >= ti->bind.gs_w) maxu = ti->bind.gs_w - 1;
         if (maxv < 0 || maxv >= ti->bind.gs_h) maxv = ti->bind.gs_h - 1;
 
