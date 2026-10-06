@@ -740,7 +740,6 @@ static void bind_texture(int tile_index, TexInfo *ti)
         /* LoadTile rows keep the DRAM image pitch. */
         key.line_bytes = (uint16_t)R.loads[li].pitch;
     }
-
     key.mirror_s = (t->cms & G_TX_MIRROR) && ti->wrap_s_repeat;
     key.mirror_t = (t->cmt & G_TX_MIRROR) && ti->wrap_t_repeat;
     key.odd_swap = R.loads[li].odd_swap;
