@@ -36,6 +36,7 @@ int ps2_main(int argc, char *argv[])
 {
     const PS2MemStats *mem;
     int bad_data_arg = 0;
+    int bdm_discovery_failed = 0;
     int i;
 
     ps2_log_init();
@@ -84,6 +85,21 @@ int ps2_main(int argc, char *argv[])
 
     ps2_boot_stage("IOP reset + modules", 0x800080);
     ps2_iop_init();
+
+    /*
+     * OPL/RiptOPL massN: is a connection-order alias, not a transport name.
+     * Follow launcHER's proven path: temporarily bring up the local BDM
+     * candidates, identify which driver owns the directory containing our
+     * DAT, then reset once more and continue with only that exact stack.
+     */
+    if (ps2_storage_data_device() == PS2_BOOT_BDM)
+    {
+        if (ps2_iop_discover_bdm_device("SSB64.DAT") < 0)
+            bdm_discovery_failed = 1;
+        else
+            ps2_iop_init();
+    }
+
     ps2_boot_stage("vblank + video init", 0x008080);
     ps2_vblank_init();
     ps2_gs_init();
@@ -94,6 +110,10 @@ int ps2_main(int argc, char *argv[])
 
     if (ps2_storage_data_device() == PS2_BOOT_UNKNOWN)
         ps2_panic("unsupported or ambiguous launch/data path: %s", ps2_storage_launch_path());
+
+    if (bdm_discovery_failed || ps2_storage_data_device() == PS2_BOOT_BDM)
+        ps2_panic("could not identify the transport behind %s; use an explicit usb:/ata:/mx4sio:/ilink: data path",
+                  ps2_storage_boot_dir());
 
     if (ps2_iop_load_boot_device_drivers(ps2_storage_data_device()) < 0)
         ps2_panic("failed to initialize %s storage", ps2_storage_device_name(ps2_storage_data_device()));

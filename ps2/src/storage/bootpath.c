@@ -40,6 +40,7 @@ static char sHddMountSource[HDD_SOURCE_MAX] = "";
 static int sProgressive;
 static int sDataNeedsExistingIop;
 static int sDataNeedsBdmResolve;
+static int sBdmDriverOrdinal = -1;
 
 static int starts_with_ci(const char *s, const char *prefix)
 {
@@ -257,6 +258,8 @@ static int set_data_location(const char *path, int path_is_file)
     if (dev == PS2_BOOT_UNKNOWN)
         return 0;
 
+    sBdmDriverOrdinal = -1;
+
     if (dev == PS2_BOOT_HDD)
     {
         sDataNeedsExistingIop = 0;
@@ -266,11 +269,14 @@ static int set_data_location(const char *path, int path_is_file)
     }
     else if (dev == PS2_BOOT_BDM)
     {
-        /* massN: names an already-mounted BDM filesystem but does not encode
-         * whether the transport is USB, ATA, MX4SIO, iLink, or network. Do
-         * not guess and destroy the correct stack with an IOP reset: inherit
-         * the launcher's mount exactly as supplied. */
-        sDataNeedsExistingIop = 1;
+        /*
+         * OPL/RiptOPL expose every BDM transport as connection-order massN:.
+         * The name alone does NOT mean USB.  Do not inherit that launcher IOP
+         * indefinitely and do not guess USB: boot.c performs the same
+         * driver-name discovery used by launcHER, then rebuilds exactly the
+         * discovered transport stack.
+         */
+        sDataNeedsExistingIop = 0;
         sDataNeedsBdmResolve = 0;
         strncpy(tmp, path, sizeof(tmp) - 1);
         tmp[sizeof(tmp) - 1] = '\0';
@@ -409,11 +415,137 @@ static int bdm_driver_matches(PS2BootDevice dev, const char *driver)
     }
 }
 
+static PS2BootDevice bdm_driver_device(const char *driver)
+{
+    if (driver == NULL)
+        return PS2_BOOT_UNKNOWN;
+    if (strcmp(driver, "usb") == 0)
+        return PS2_BOOT_USB;
+    if (strcmp(driver, "ata") == 0)
+        return PS2_BOOT_ATA;
+    if (strcmp(driver, "sdc") == 0 || strcmp(driver, "mx4sio") == 0)
+        return PS2_BOOT_MX4SIO;
+    if (strcmp(driver, "sd") == 0 || strcmp(driver, "ilink") == 0)
+        return PS2_BOOT_ILINK;
+    if (strcmp(driver, "udp") == 0)
+        return PS2_BOOT_UDPBD;
+    return PS2_BOOT_UNKNOWN;
+}
+
+static int mass_slot_driver(int slot, char *driver, size_t driver_size)
+{
+    char root[16];
+    int dfd;
+    int io;
+
+    snprintf(root, sizeof(root), "mass%d:/", slot);
+    dfd = fileXioDopen(root);
+    if (dfd < 0)
+        return 0;
+
+    memset(driver, 0, driver_size);
+    io = fileXioIoctl2(dfd, USBMASS_IOCTL_GET_DRIVERNAME,
+                       NULL, 0, driver, driver_size - 1);
+    fileXioDclose(dfd);
+    return io >= 0 && driver[0] != '\0';
+}
+
+static void mass_build_dir(char *out, size_t out_size, int slot, const char *relative)
+{
+    if (relative[0] == '/' || relative[0] == '\\')
+        snprintf(out, out_size, "mass%d:%s", slot, relative);
+    else
+        snprintf(out, out_size, "mass%d:/%s", slot, relative);
+    ensure_directory_suffix(out, out_size, sDataDevice);
+}
+
+/*
+ * Called only while the temporary all-BDM discovery stack is live.
+ * This mirrors launcHER's resolveMassPath(): massN: is a connection-order
+ * alias, so locate the actual volume by its relative path, ask bdmfs which
+ * driver owns that slot, and remember the driver's ordinal for the clean
+ * exact-stack rebuild that follows.
+ */
+int ps2_storage_discover_mass_device(const char *probe_name)
+{
+    char relative[PATH_BUF_MAX];
+    const char *colon;
+    int requested = 0;
+    int pass;
+
+    if (sDataDevice != PS2_BOOT_BDM || probe_name == NULL || probe_name[0] == '\0')
+        return 0;
+
+    colon = strchr(sDataDir, ':');
+    if (colon == NULL)
+        return 0;
+    snprintf(relative, sizeof(relative), "%s", colon + 1);
+    if (relative[0] == '\0')
+        snprintf(relative, sizeof(relative), "/");
+
+    if (starts_with_ci(sDataDir, "mass"))
+    {
+        const char *p = sDataDir + 4;
+        if (*p >= '0' && *p <= '9')
+            requested = *p - '0';
+    }
+
+    /* Prefer the slot handed to us. If driver load order changed after the
+     * reset, fall back to every mass slot and identify our volume by the same
+     * relative SSB64.DAT path. */
+    for (pass = -1; pass < 10; pass++)
+    {
+        int slot = (pass < 0) ? requested : pass;
+        char dir[PATH_BUF_MAX];
+        char probe[PATH_BUF_MAX + 64];
+        char driver[32];
+        PS2BootDevice dev;
+        int fd;
+        int ordinal = 0;
+        int earlier;
+
+        if (pass >= 0 && slot == requested)
+            continue;
+
+        mass_build_dir(dir, sizeof(dir), slot, relative);
+        snprintf(probe, sizeof(probe), "%s%s", dir, probe_name);
+        fd = open(probe, O_RDONLY);
+        if (fd < 0)
+            continue;
+        close(fd);
+
+        if (!mass_slot_driver(slot, driver, sizeof(driver)))
+            continue;
+        dev = bdm_driver_device(driver);
+        if (dev == PS2_BOOT_UNKNOWN || dev == PS2_BOOT_UDPBD)
+            continue; /* Generic UDPBD discovery remains explicit-only, like launcHER. */
+
+        for (earlier = 0; earlier < slot; earlier++)
+        {
+            char earlier_driver[32];
+            if (mass_slot_driver(earlier, earlier_driver, sizeof(earlier_driver)) &&
+                bdm_driver_matches(dev, earlier_driver))
+                ordinal++;
+        }
+
+        sDataDevice = dev;
+        sDataNeedsExistingIop = 0;
+        sDataNeedsBdmResolve = 1;
+        sBdmDriverOrdinal = ordinal;
+        ps2_log("storage: generic mass%d resolved as %s ordinal %d (driver=%s)",
+                slot, ps2_storage_device_name(dev), ordinal, driver);
+        return 1;
+    }
+
+    return 0;
+}
+
 int ps2_storage_resolve_data_root(const char *probe_name)
 {
     char relative[PATH_BUF_MAX];
     const char *colon;
     int slot;
+    int ordinal_seen = 0;
 
     if (!sDataNeedsBdmResolve)
         return 1;
@@ -427,39 +559,60 @@ int ps2_storage_resolve_data_root(const char *probe_name)
     if (relative[0] == '\0')
         snprintf(relative, sizeof(relative), "/");
 
+    /*
+     * First preserve the per-driver ordinal learned during generic massN:
+     * discovery (important with two USB sticks). If enumeration changed in a
+     * way that invalidates it, the second pass below still finds the volume by
+     * driver + relative path.
+     */
+    if (sBdmDriverOrdinal >= 0)
+    {
+        for (slot = 0; slot < 10; slot++)
+        {
+            char driver[32];
+            char dir[PATH_BUF_MAX];
+            char probe[PATH_BUF_MAX + 64];
+            int fd;
+
+            if (!mass_slot_driver(slot, driver, sizeof(driver)) ||
+                !bdm_driver_matches(sDataDevice, driver))
+                continue;
+            if (ordinal_seen++ != sBdmDriverOrdinal)
+                continue;
+
+            mass_build_dir(dir, sizeof(dir), slot, relative);
+            snprintf(probe, sizeof(probe), "%s%s", dir, probe_name);
+            fd = open(probe, O_RDONLY);
+            if (fd >= 0)
+            {
+                close(fd);
+                snprintf(sDataDir, sizeof(sDataDir), "%s", dir);
+                sDataNeedsBdmResolve = 0;
+                ps2_log("storage: %s ordinal %d resolved to %s",
+                        ps2_storage_device_name(sDataDevice), sBdmDriverOrdinal, sDataDir);
+                return 1;
+            }
+            break;
+        }
+    }
+
     for (slot = 0; slot < 10; slot++)
     {
-        char root[16];
         char dir[PATH_BUF_MAX];
         char probe[PATH_BUF_MAX + 64];
         char driver[32];
-        int fd, dfd, io;
+        int fd;
 
-        snprintf(root, sizeof(root), "mass%d:/", slot);
-        if (relative[0] == '/' || relative[0] == '\\')
-            snprintf(dir, sizeof(dir), "mass%d:%s", slot, relative);
-        else
-            snprintf(dir, sizeof(dir), "mass%d:/%s", slot, relative);
-        ensure_directory_suffix(dir, sizeof(dir), sDataDevice);
+        if (!mass_slot_driver(slot, driver, sizeof(driver)) ||
+            !bdm_driver_matches(sDataDevice, driver))
+            continue;
+
+        mass_build_dir(dir, sizeof(dir), slot, relative);
         snprintf(probe, sizeof(probe), "%s%s", dir, probe_name);
-
-        /* Opening the actual pack first both lazy-mounts FatFs and proves this
-         * volume is live. Only then ask bdmfs for the driver token: querying
-         * an empty mass slot with a return buffer can fault older bdmfs. */
         fd = open(probe, O_RDONLY);
         if (fd < 0)
             continue;
         close(fd);
-
-        dfd = fileXioDopen(root);
-        if (dfd < 0)
-            continue;
-        memset(driver, 0, sizeof(driver));
-        io = fileXioIoctl2(dfd, USBMASS_IOCTL_GET_DRIVERNAME,
-                           NULL, 0, driver, sizeof(driver) - 1);
-        fileXioDclose(dfd);
-        if (io < 0 || !bdm_driver_matches(sDataDevice, driver))
-            continue;
 
         snprintf(sDataDir, sizeof(sDataDir), "%s", dir);
         sDataNeedsBdmResolve = 0;
@@ -470,7 +623,6 @@ int ps2_storage_resolve_data_root(const char *probe_name)
 
     return 0;
 }
-
 
 int ps2_video_progressive(void)
 {
