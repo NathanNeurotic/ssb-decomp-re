@@ -114,6 +114,7 @@ jobs:
             cp ps2/build/obj/ssb64/ssb64.map artifacts/SSB64.map
           fi
           cp ps2/build.log artifacts/build.log
+          gzip -dc docs/data/ssb64-us.manifest.json.gz > artifacts/ssb64-us.manifest.json
 
           cat > artifacts/README.txt <<'EOF'
           SSB64 native PS2 port - automated ps2build artifact
