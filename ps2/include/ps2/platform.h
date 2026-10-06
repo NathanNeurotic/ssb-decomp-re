@@ -99,7 +99,7 @@ typedef enum PS2BootDevice
 {
     PS2_BOOT_UNKNOWN,
     PS2_BOOT_HOST,       /* host: (ps2link / PCSX2 host fs) */
-    PS2_BOOT_BDM,        /* generic massN: inherited BDM filesystem */
+    PS2_BOOT_BDM,        /* generic massN: connection-order BDM alias */
     PS2_BOOT_USB,        /* explicit usbN: transport identity */
     PS2_BOOT_MC,         /* mc0:/mc1: */
     PS2_BOOT_ATA,        /* ata: BDM (internal/exFAT) */
@@ -123,13 +123,15 @@ PS2BootDevice ps2_storage_data_device(void);
 PS2BootDevice ps2_storage_boot_device(void);
 const char *ps2_storage_launch_path(void);
 const char *ps2_storage_hdd_mount_source(void);
-/* True when the selected data path depends on an inherited IOP filesystem
- * (host:, generic massN:, or a bare pfsN: mount whose transport/source
- * cannot be reconstructed from argv[0]). */
+/* True when the selected data path genuinely depends on an inherited IOP
+ * filesystem (host: or a bare pfsN: mount). Generic massN: is discovered and
+ * rebuilt as its real USB/ATA/MX4SIO/iLink transport. */
 int ps2_storage_requires_iop_preserve(void);
-/* Resolve typed BDM launch identities (usb/ata/mx4sio/ilink/udpbd) to the
- * actual massN: filesystem that contains probe_name. Generic massN: paths
- * deliberately keep the inherited launcher IOP and are already usable. */
+/* During the temporary all-local-BDM probe stack, identify the transport
+ * behind an OPL/RiptOPL massN: alias by driver name + relative asset path. */
+int ps2_storage_discover_mass_device(const char *probe_name);
+/* Resolve a typed USB/ATA/MX4SIO/iLink/UDPBD identity back to the actual
+ * massN: filesystem after the clean exact-device IOP rebuild. */
 int ps2_storage_resolve_data_root(const char *probe_name);
 int ps2_video_progressive(void);         /* 1 = 240p (ELF name contains "240p"), 0 = 480i */
 
@@ -165,6 +167,7 @@ void ps2_file_close(int fd);
 /* ------------------------------------------------------------------ */
 
 void ps2_iop_init(void);                 /* reset IOP + load base modules */
+int ps2_iop_discover_bdm_device(const char *probe_name);
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 int ps2_iop_load_audio_driver(void); /* deferred SDR server; safe to call after storage/input */
 int ps2_iop_mmce_prepare_runtime_stream(void);

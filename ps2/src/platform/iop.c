@@ -76,6 +76,7 @@ DECLARE_IRX(secrsif);
 static const char *sLoaded[MAX_TRACKED_MODULES];
 static int sLoadedCount;
 static int sIopWasReset;
+static int sIopSessionActive;
 
 static int load_irx(const char *name, void *buf, unsigned int size, const char *args, int args_len)
 {
@@ -103,6 +104,62 @@ static int load_bdm_core(void)
     if (LOAD_IRX(bdmfs_fatfs) < 0)
         return -1;
     return 0;
+}
+
+
+/*
+ * Resolve an OPL/RiptOPL massN: launch the same way launcHER does: build a
+ * temporary local-BDM stack, ask bdmfs which driver owns the volume that
+ * contains SSB64.DAT, then let boot.c reset once more into that exact stack.
+ *
+ * UDPBD is intentionally not guessed from generic massN: here, matching
+ * launcHER: bringing the network up merely to identify an alias is fragile.
+ * Explicit udpbd: paths remain fully supported.
+ */
+int ps2_iop_discover_bdm_device(const char *probe_name)
+{
+    int attempt;
+    int dev9_ok;
+
+    if (ps2_storage_data_device() != PS2_BOOT_BDM)
+        return 0;
+
+    ps2_log("IOP: discovering generic massN: transport");
+
+    if (load_bdm_core() < 0)
+        return -1;
+
+    /* Hardware-specific drivers are probes here. Missing hardware is not a
+     * fatal error; the volume/path match below decides which one actually
+     * backs the launch path. */
+    if (LOAD_IRX(usbd_mini) >= 0)
+        (void)LOAD_IRX(usbmass_bd_mini);
+
+    dev9_ok = (LOAD_IRX(ps2dev9) >= 0);
+    if (dev9_ok)
+    {
+        if (LOAD_IRX(ps2atad) >= 0)
+            sleep(1);
+    }
+
+    (void)LOAD_IRX(mx4sio_bd);
+
+    if (LOAD_IRX(iLinkman) >= 0)
+        (void)LOAD_IRX(IEEE1394_bd);
+
+    for (attempt = 0; attempt <= 20; attempt++)
+    {
+        if (ps2_storage_discover_mass_device(probe_name))
+        {
+            ps2_log("IOP: generic massN: discovery selected %s",
+                    ps2_storage_device_name(ps2_storage_data_device()));
+            return 0;
+        }
+        DelayThread(250 * 1000);
+    }
+
+    ps2_log("IOP: generic massN: transport discovery failed");
+    return -1;
 }
 
 static int is_ipv4_token(const char *s)
@@ -210,13 +267,28 @@ void ps2_iop_init(void)
 {
     int preserve_iop = ps2_storage_requires_iop_preserve();
 
+    /*
+     * Generic massN: discovery intentionally performs two clean boots:
+     * first an all-local-BDM probe stack, then the exact discovered device
+     * stack. Tear down the EE-side clients before that second reset instead
+     * of carrying stale RPC state across it.
+     */
+    if (sIopSessionActive)
+    {
+        fileXioExit();
+        SifExitIopHeap();
+        SifLoadFileExit();
+        SifExitRpc();
+    }
+
     sLoadedCount = 0;
     sIopWasReset = 0;
 
     SifInitRpc(0);
 
     /* host: and bare pfsN: data paths depend on services/mounts owned by the
-     * launcher.  Everything else is rebuilt from a known IOP state. */
+     * launcher. Everything reconstructible -- including generic massN: after
+     * driver discovery -- is rebuilt from a known IOP state. */
     if (!preserve_iop)
     {
         while (!SifIopReset("", 0))
@@ -257,6 +329,7 @@ void ps2_iop_init(void)
      */
     ps2_log("IOP: sdr deferred for hardware-safe storage validation");
 
+    sIopSessionActive = 1;
     ps2_log("IOP: %s, %d base modules",
             sIopWasReset ? "reset" : "kept (inherited filesystem)", sLoadedCount);
 }
