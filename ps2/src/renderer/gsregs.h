@@ -27,7 +27,6 @@ typedef uint64_t gs_u64;
 #define GSR_XYOFFSET_1 0x18
 #define GSR_PRMODECONT 0x1A
 #define GSR_TEXCLUT    0x1C
-#define GSR_SCANMSK    0x22
 #define GSR_TEXA       0x3B
 #define GSR_FOGCOL     0x3D
 #define GSR_TEXFLUSH   0x3F

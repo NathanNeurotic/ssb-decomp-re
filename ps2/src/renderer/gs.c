@@ -41,22 +41,6 @@ PS2Packet gPS2Pkt;
 PS2RenderStats gPS2RenderStats;
 PS2RenderStats gPS2RenderStatsLast;
 
-/* This port only needs gsKit for low-level screen setup.  Keep its state
- * entirely static so retail hardware never depends on newlib heap state,
- * OSD config RPCs, or ROM-region probing during GS bring-up. */
-#define PS2_GSKIT_BOOT_OS_QUEUE_BYTES  (16 * 1024)
-#define PS2_GSKIT_BOOT_PER_QUEUE_BYTES (4 * 1024)
-
-static GSGLOBAL sGsGlobalStorage;
-static GSBGCOLOR sGsBgColor;
-static GSTEST sGsTest;
-static GSCLAMP sGsClamp;
-static GSQUEUE sGsOsQueue;
-static GSQUEUE sGsPerQueue;
-static uint8_t sGsOsPool0[PS2_GSKIT_BOOT_OS_QUEUE_BYTES] __attribute__((aligned(64)));
-static uint8_t sGsOsPool1[PS2_GSKIT_BOOT_OS_QUEUE_BYTES] __attribute__((aligned(64)));
-static uint8_t sGsPerPool[PS2_GSKIT_BOOT_PER_QUEUE_BYTES] __attribute__((aligned(64)));
-static uint8_t sGsDmaMisc[512] __attribute__((aligned(64)));
 static GSGLOBAL *sGsGlobal;
 
 /* Two packet buffers: one is filled while the other may still be in DMA. */
@@ -67,21 +51,26 @@ static volatile int sPktInFlight; /* a buffer was kicked and not yet waited on *
 
 /* The game's framebuffers (RDRAM on N64) - defined by the linker glue
  * (ps2/src/platform/arena.S) so every scene's arena-size arithmetic holds. */
-/* The game declares them [3][230][320] (src/sys/video.h): consecutive
- * buffers are only 230 rows apart and overlap by 10 rows, which is fine on
- * the N64 because rows 0-9 and 230-239 are never drawn (scissor border).
- * Each maps to its own full 240-row GS framebuffer here. */
-#define N64_FB_ROWS 230
-#define N64_FB_STRIDE (N64_FB_ROWS * PS2_SCREEN_W * 2)
-extern uint16_t gSYFramebufferSets[PS2_FB_COUNT][N64_FB_ROWS * PS2_SCREEN_W];
+/*
+ * The game-owned framebuffer backing store is 320x230, not 320x240.
+ * Keep this declaration byte-for-byte consistent with src/sys/video.h.
+ *
+ * The old 240-line declaration changed C's array stride by 6400 bytes
+ * per framebuffer. As a result, game FB0 and FB1 both mapped to GS FB0,
+ * while game FB2 mapped to GS FB1. The scheduler still believed it had
+ * three independent buffers, so rendering could modify the same GS buffer
+ * currently being scanned out, producing the persistent moving horizontal
+ * tear/line seen on real hardware.
+ *
+ * The GS output remains 320x240; this constant describes only the game's
+ * RDRAM-style backing layout used to identify which logical framebuffer an
+ * N64 pointer belongs to.
+ */
+#define PS2_GAME_FB_H 230
+extern uint16_t gSYFramebufferSets[PS2_FB_COUNT][PS2_GAME_FB_H][PS2_SCREEN_W];
 extern uint16_t gSYZBuffer[PS2_SCREEN_W * PS2_SCREEN_H] __attribute__((weak));
 
 static volatile int sDisplayedFb = -1;
-static volatile int sPendingFb = -1; /* requested by osViSwapBuffer */
-
-/* Scan-out race counters (PS2_DEBUG: logged with the periodic gfx stats). */
-uint32_t gPS2FbDrawDisplayed; /* frames drawn into the buffer on screen */
-uint32_t gPS2FbDrawPending;   /* ... into the buffer queued for display */
 static volatile int sBlackout = 1;
 
 /* ------------------------------------------------------------------ */
@@ -271,26 +260,18 @@ void ps2_pkt_finish(void)
 int ps2_gs_fb_index_for(const void *n64_fb)
 {
     uintptr_t a = (uintptr_t)n64_fb & 0x0FFFFFFF;
-    uintptr_t base = (uintptr_t)gSYFramebufferSets & 0x0FFFFFFF;
-    uintptr_t off;
     int i;
 
-    /* Buffer i starts at base + i * N64_FB_STRIDE (230 rows, not 240: see
-     * the declaration).  Mapping by 240-row ranges put the game's second
-     * buffer inside the first one's range, so both drew into GS
-     * framebuffer 0 - including while it was on screen, which showed on
-     * hardware as a black line flickering at the scanline being redrawn. */
-    if (a < base)
+    for (i = 0; i < PS2_FB_COUNT; i++)
     {
-        return -1;
+        uintptr_t fb = (uintptr_t)gSYFramebufferSets[i] & 0x0FFFFFFF;
+
+        if (a >= fb && a < fb + sizeof(gSYFramebufferSets[i]))
+        {
+            return i;
+        }
     }
-    off = a - base;
-    if (off >= (uintptr_t)(PS2_FB_COUNT - 1) * N64_FB_STRIDE + PS2_SCREEN_W * PS2_SCREEN_H * 2)
-    {
-        return -1;
-    }
-    i = (int)(off / N64_FB_STRIDE);
-    return (i < PS2_FB_COUNT) ? i : PS2_FB_COUNT - 1;
+    return -1;
 }
 
 int ps2_gs_is_zbuffer(const void *n64_addr)
@@ -318,10 +299,6 @@ static void display_fb(int index)
     dispfb = PGS_DISPFB_VAL(PS2_FB_PAGE(index), PS2_FBW, PS2_FB_PSM);
     *PGS_DISPFB2 = dispfb;
     sDisplayedFb = index;
-    if (sPendingFb == index)
-    {
-        sPendingFb = -1;
-    }
 }
 
 static void apply_blackout(void)
@@ -329,53 +306,6 @@ static void apply_blackout(void)
     /* gsKit programs DISPLAY2 for the mode, so read circuit 2 only; with it
      * disabled the GS outputs BGCOLOR (black). */
     *PGS_PMODE = PGS_PMODE_VAL(0, sBlackout ? 0 : 1, 1, 0x80);
-}
-
-/* Thread context, from osViSwapBuffer(): program the new display address
- * right away instead of waiting for the VBlank handler.  The GS does not
- * switch DISPFB mid-picture: it latches it around vertical sync.  Written
- * only from the VBlank-start handler, the write sometimes lands after that
- * latch (interrupt latency), so the old buffer stays on screen one more
- * field while the game - told it was swapped - already clears and redraws
- * it: the scanline being output at that moment shows the cleared colour,
- * a thin black line that moves with the scene (PCSX2 applies the register
- * at once and never shows it).  Written here, during the active picture,
- * the address is latched at the next vertical sync, the same VBlank where
- * ps2_vi_vblank_isr() then reports the swap to the game. */
-void ps2_gs_queue_display_framebuffer(void *n64_fb)
-{
-    int index = ps2_gs_fb_index_for(n64_fb);
-
-    if (index >= 0 && index < PS2_FB_COUNT)
-    {
-        *PGS_DISPFB2 = PGS_DISPFB_VAL(PS2_FB_PAGE(index), PS2_FBW, PS2_FB_PSM);
-        sPendingFb = index;
-    }
-}
-
-/* Render thread, before the first draw into framebuffer `fb` in a frame.
- * Debug builds count draws into a buffer that is on screen or queued for
- * it; the game's VI bookkeeping should never allow either (it happened
- * while game framebuffers were mapped by the wrong stride, see
- * ps2_gs_fb_index_for). */
-void ps2_gs_before_draw_into(int fb)
-{
-#if PS2_DEBUG
-    if (fb < 0)
-    {
-        return;
-    }
-    if (fb == sDisplayedFb)
-    {
-        gPS2FbDrawDisplayed++;
-    }
-    if (fb == sPendingFb)
-    {
-        gPS2FbDrawPending++;
-    }
-#else
-    (void)fb;
-#endif
 }
 
 /* Interrupt context (VBlank): latch a new display framebuffer. */
@@ -404,13 +334,7 @@ void ps2_gs_frame_setup(int fb_index)
     {
         fb_index = 0;
     }
-    ps2_pkt_ad_begin(12);
-    /* Neither this renderer nor gsKit's init otherwise writes these two, and
-     * a real GS keeps whatever the launcher left in them (PCSX2 starts them
-     * at 0): PABE=1 turns alpha blending off for pixels with source alpha
-     * below 0x80, SCANMSK=2/3 stops every even/odd line from being drawn. */
-    ps2_pkt_ad(GSR_PABE, 0);
-    ps2_pkt_ad(GSR_SCANMSK, 0);
+    ps2_pkt_ad_begin(10);
     ps2_pkt_ad(GSR_FRAME_1, GSV_FRAME(PS2_FB_PAGE(fb_index), PS2_FBW, PS2_FB_PSM, 0));
     ps2_pkt_ad(GSR_ZBUF_1, GSV_ZBUF(PS2_Z_PAGE, PS2_Z_PSM, 0));
     /* Primitive coordinates are emitted relative to a 2048,2048 origin so the
@@ -423,7 +347,7 @@ void ps2_gs_frame_setup(int fb_index)
     ps2_pkt_ad(GSR_TEXA, GSV_TEXA(0x00, 0, 0x80)); /* 1-bit alpha -> 0 / 1.0 */
     ps2_pkt_ad(GSR_TEST_1, GSV_TEST(0, 0, 0, 0, 0, 0, 1, GSZTST_ALWAYS));
     ps2_pkt_ad(GSR_FBA_1, 0);
-    gPS2RenderStats.state_writes += 12;
+    gPS2RenderStats.state_writes += 10;
 }
 
 void ps2_gs_clear(int fb_index, uint32_t rgba, int clear_z)
@@ -576,25 +500,16 @@ void ps2_gs_rect(int x0, int y0, int x1, int y1, uint32_t rgba)
 /* ------------------------------------------------------------------ */
 
 static int sGsReady;
-static const char *sBootTitle;
 
 void ps2_boot_stage(const char *name, uint32_t rgb)
 {
+    ps2_log("boot: %s", name);
     if (!sGsReady)
     {
-        /* Hardware diagnostics must not depend on printf/RPC.  Show the
-         * marker first; if logging itself wedges after an IOP reboot the TV
-         * must still identify the stage we actually entered. */
+        /* Both display circuits off: the whole screen shows BGCOLOR in the
+         * video mode the launcher left. */
         *PGS_PMODE = PGS_PMODE_VAL(0, 0, 1, 0);
         *PGS_BGCOLOR = ((rgb >> 16) & 0xFF) | (rgb & 0xFF00) | ((uint64_t)(rgb & 0xFF) << 16);
-        __asm__ volatile("sync.p" ::: "memory");
-    }
-    ps2_log("boot: %s", name);
-    if (sGsReady && sBootTitle != NULL)
-    {
-        /* Past GS init the boot log is on screen: redraw it so a stage that
-         * hangs is the last line the TV shows. */
-        ps2_gs_boot_screen(sBootTitle);
     }
 }
 
@@ -607,7 +522,6 @@ void ps2_gs_boot_screen(const char *title)
     {
         return;
     }
-    sBootTitle = title;
     ps2_gs_clear(fb, 0x302010, 0);
     ps2_gs_text(8, 8, 0x40C0FF, title);
     n = ps2_log_line_count();
@@ -661,108 +575,9 @@ void ps2_gs_show_panic(const char *msg)
 /* Init                                                                 */
 /* ------------------------------------------------------------------ */
 
-static void *gs_ucab_alias(void *p)
-{
-    return (void *)((uintptr_t)p | 0x30000000u);
-}
-
-static void ps2_gskit_queue_init_static(GSQUEUE *queue, void *pool0, void *pool1, int size, int mode)
-{
-    memset(queue, 0, sizeof(*queue));
-    queue->pool[0] = gs_ucab_alias(pool0);
-    queue->pool_max[0] = (void *)((uintptr_t)queue->pool[0] + (uintptr_t)size);
-    if (mode == GS_ONESHOT)
-    {
-        queue->pool[1] = gs_ucab_alias(pool1);
-        queue->pool_max[1] = (void *)((uintptr_t)queue->pool[1] + (uintptr_t)size);
-    }
-    queue->dma_tag = queue->pool[0];
-    queue->pool_cur = (void *)((uintptr_t)queue->pool[0] + 16u);
-    queue->last_tag = queue->pool_cur;
-    queue->last_type = GIF_RESERVED;
-    queue->mode = (u8)mode;
-    queue->dbuf = 0;
-}
-
-static GSGLOBAL *ps2_gskit_init_static(void)
-{
-    static const s8 dither_matrix[16] = {4, 2, 5, 3, 0, 6, 1, 7, 5, 3, 4, 2, 1, 7, 0, 6};
-    GSGLOBAL *g = &sGsGlobalStorage;
-
-    memset(g, 0, sizeof(*g));
-    memset(&sGsBgColor, 0, sizeof(sGsBgColor));
-    memset(&sGsTest, 0, sizeof(sGsTest));
-    memset(&sGsClamp, 0, sizeof(sGsClamp));
-
-    ps2_gskit_queue_init_static(&sGsOsQueue, sGsOsPool0, sGsOsPool1,
-                                 PS2_GSKIT_BOOT_OS_QUEUE_BYTES, GS_ONESHOT);
-    ps2_gskit_queue_init_static(&sGsPerQueue, sGsPerPool, NULL,
-                                 PS2_GSKIT_BOOT_PER_QUEUE_BYTES, GS_PERSISTENT);
-
-    g->BGColor = &sGsBgColor;
-    g->Test = &sGsTest;
-    g->Clamp = &sGsClamp;
-    g->Os_Queue = &sGsOsQueue;
-    g->Per_Queue = &sGsPerQueue;
-    g->CurQueue = &sGsOsQueue;
-    g->Os_AllocSize = PS2_GSKIT_BOOT_OS_QUEUE_BYTES;
-    g->Per_AllocSize = PS2_GSKIT_BOOT_PER_QUEUE_BYTES;
-    g->dma_misc = gs_ucab_alias(sGsDmaMisc);
-
-    g->Aspect = GS_ASPECT_4_3;
-    g->PSM = GS_PSM_CT24;
-    g->PSMZ = GS_PSMZ_32;
-    g->Dithering = GS_SETTING_OFF;
-    g->DoubleBuffering = GS_SETTING_ON;
-    g->ZBuffering = GS_SETTING_ON;
-    g->Mode = GS_MODE_NTSC;
-    g->Interlace = GS_INTERLACED;
-    g->Field = GS_FIELD;
-    g->Width = 640;
-    g->Height = 448;
-    g->CurrentPointer = 0;
-    g->DrawOrder = GS_PER_OS;
-    g->EvenOrOdd = 0;
-    g->OffsetX = 2048 << 4;
-    g->OffsetY = 2048 << 4;
-    g->ActiveBuffer = 1;
-    g->LockBuffer = GS_SETTING_OFF;
-    g->PrimFogEnable = GS_SETTING_OFF;
-    g->PrimAAEnable = GS_SETTING_OFF;
-    g->PrimAlphaEnable = GS_SETTING_OFF;
-    g->PrimAlpha = GS_BLEND_BACK2FRONT;
-    g->PrimContext = 0;
-    g->FirstFrame = GS_SETTING_ON;
-    memcpy(g->DitherMatrix, dither_matrix, sizeof(dither_matrix));
-
-    sGsBgColor.Red = 0;
-    sGsBgColor.Green = 0;
-    sGsBgColor.Blue = 0;
-
-    sGsTest.ATE = GS_SETTING_OFF;
-    sGsTest.ATST = GS_SETTING_ON;
-    sGsTest.AREF = 0x80;
-    sGsTest.AFAIL = 0;
-    sGsTest.DATE = GS_SETTING_OFF;
-    sGsTest.DATM = 0;
-    sGsTest.ZTE = GS_SETTING_ON;
-    sGsTest.ZTST = 2;
-
-    sGsClamp.WMS = GS_CMODE_CLAMP;
-    sGsClamp.WMT = GS_CMODE_CLAMP;
-
-    return g;
-}
-
 void ps2_gs_init(void)
 {
-    /* Avoid gsKit_init_global[_custom]() entirely on hardware.  Besides
-     * heap allocations it queries OSD/ROM configuration that this port does
-     * not need because the video mode is selected explicitly below. */
-    ps2_boot_stage("GS: static state begin", 0xFFFFFF); /* white */
-    sGsGlobal = ps2_gskit_init_static();
-    ps2_boot_stage("GS: static state ready", 0x00FF00); /* bright green */
-
+    sGsGlobal = gsKit_init_global();
     sGsGlobal->Mode = GS_MODE_NTSC;
     if (ps2_video_progressive())
     {
@@ -787,34 +602,13 @@ void ps2_gs_init(void)
     sGsGlobal->PrimAlphaEnable = GS_SETTING_ON;
     sGsGlobal->Dithering = GS_SETTING_ON;
 
-    /* Do not call dmaKit_init() here on hardware.  By this point SIF RPC
-     * has already been used extensively to reboot the IOP and load modules.
-     * dmaKit_init() resets the global EE DMAC CTRL/PCR/SQWC/RBSR/RBOR
-     * registers, which can destroy live SIF DMA state on a real console.
-     * PCSX2 is much more forgiving of that reset.
-     *
-     * The DMAC is already enabled (SIF RPC could not have worked otherwise).
-     * We only own the GIF channel, so reset that channel alone and preserve
-     * every other channel's global DMAC state.  dmaKit_wait_fast() uses the
-     * CPCOND mask in PCR, therefore OR the GIF bit into the existing mask
-     * instead of replacing PCR wholesale. */
-    ps2_boot_stage("GS: GIF channel init", 0xFF8000); /* bright orange */
-    if (dmaKit_chan_init(DMA_CHANNEL_GIF) < 0)
-    {
-        ps2_boot_stage("GS: GIF channel failed", 0xFF0000); /* bright red */
-        for (;;)
-        {
-            SleepThread();
-        }
-    }
-    *DMA_REG_PCR |= (1u << DMA_CHANNEL_GIF);
-    __asm__ volatile("sync.p" ::: "memory");
-    ps2_boot_stage("GS: DMAC ready", 0xFFFF00); /* bright yellow */
+    dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8,
+                1 << DMA_CHANNEL_GIF);
+    dmaKit_chan_init(DMA_CHANNEL_GIF);
 
     /* gsKit programs SMODE/SYNC/DISPLAY for the mode; from here on the
      * renderer owns VRAM layout, FRAME/ZBUF and the display circuit. */
     gsKit_init_screen(sGsGlobal);
-    ps2_boot_stage("GS: screen ready", 0xFF00FF); /* bright magenta */
 
     ps2_mem_reclassify_static(PS2_MEM_GFX_STAGING, sizeof(sPktBuf));
 
@@ -823,7 +617,6 @@ void ps2_gs_init(void)
     pkt_open(0);
     upload_font();
     ps2_gs_clear(0, 0, 1);
-    ps2_boot_stage("GS: first GIF finish", 0x8000FF); /* violet */
     ps2_pkt_finish();
 
     *PGS_BGCOLOR = 0;

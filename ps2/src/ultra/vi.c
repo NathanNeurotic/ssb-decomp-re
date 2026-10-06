@@ -13,7 +13,6 @@
 
 /* Renderer hooks (ps2/src/renderer/gs.c, callable from interrupt context). */
 extern void ps2_gs_isr_display_framebuffer(void *n64_fb);
-extern void ps2_gs_queue_display_framebuffer(void *n64_fb);
 extern void ps2_gs_isr_set_blackout(int black);
 
 static OSMesgQueue *sViEventQueue;
@@ -70,8 +69,6 @@ void osViSwapBuffer(void *frameBufPtr)
 
     sViNextFramebuffer = frameBufPtr;
     sViSwapPending = 1;
-    /* latched by the GS at the next vertical sync; see gs.c */
-    ps2_gs_queue_display_framebuffer(frameBufPtr);
     ps2_intr_restore(intr);
 }
 
