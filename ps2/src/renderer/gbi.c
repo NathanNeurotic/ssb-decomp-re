@@ -1582,19 +1582,8 @@ void ps2_gbi_run(const void *dl_start)
                 }
                 else if (where == G_MWO_POINT_ST)
                 {
-                    /*
-                     * ModifyVtx writes raw s10.5 texture coordinates into the
-                     * RSP vertex cache. Keep them in the same representation as
-                     * coordinates loaded through G_VTX: apply the currently
-                     * active gSPTexture scale before storing them.
-                     *
-                     * Without this, a display list that patches ST after a
-                     * material's gSPTexture command samples a different part of
-                     * the texture than an otherwise identical freshly-loaded
-                     * vertex.
-                     */
-                    v->s = (float)(int16_t)(w1 >> 16) * R.tex_scale_s / 32.0f;
-                    v->t = (float)(int16_t)(w1 & 0xFFFF) * R.tex_scale_t / 32.0f;
+                    v->s = (float)(int16_t)(w1 >> 16) / 32.0f;
+                    v->t = (float)(int16_t)(w1 & 0xFFFF) / 32.0f;
                 }
             }
             break;
