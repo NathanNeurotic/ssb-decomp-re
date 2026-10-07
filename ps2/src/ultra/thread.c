@@ -181,6 +181,11 @@ void osCreateThread(OSThread *t, OSId id, void (*entry)(void *), void *arg, void
     ext->arg = arg;
     ext->stack_class = cls;
     ext->stack = stack_alloc(cls, &ext->stack_size);
+    if (ext->stack == NULL)
+    {
+        ps2_panic("osCreateThread(id=%ld) cannot allocate %lu-byte stack",
+                  (long)id, (unsigned long)ext->stack_size);
+    }
     ext->run_sema = create_run_sema();
 
     __builtin_memset(&th, 0, sizeof(th));
