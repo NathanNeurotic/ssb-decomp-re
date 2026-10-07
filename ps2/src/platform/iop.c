@@ -249,7 +249,7 @@ static void quiesce_inherited_usb(void)
     int result = 0;
     int id;
 
-    ps2_boot_stage("IOP: stopping inherited USB controller", 0x008080);
+    ps2_boot_stage("IOP: stopping inherited USB controller", 0xFF8000);
     SifLoadFileInit();
     SifInitIopHeap();
     sbv_patch_enable_lmb();
