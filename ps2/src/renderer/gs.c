@@ -667,6 +667,9 @@ void ps2_gs_show_panic(const char *msg)
 void ps2_gs_init(void)
 {
     sGsGlobal = gsKit_init_global();
+    if (sGsGlobal == NULL)
+        ps2_panic("GS: gsKit global allocation failed");
+
     sGsGlobal->Mode = GS_MODE_NTSC;
     if (ps2_video_progressive())
     {
