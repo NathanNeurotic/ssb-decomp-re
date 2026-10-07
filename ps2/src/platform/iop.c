@@ -276,14 +276,13 @@ void ps2_iop_init(void)
      * RiptOPL's sysReset() sequence on hardware. */
     fileXioInit();
 
-    LOAD_IRX(libsd);
     /*
-     * Real hardware has already proven the embedded sdr server can wedge this
-     * port during startup. Storage work must not be masked by an unrelated
-     * audio RPC hang, so keep SDR deferred until the common storage path is
-     * stable on hardware.
+     * Keep SPU2 completely outside the storage/input-critical boot path.
+     * libsd is an import dependency of ssb_audio only, so load both together
+     * later from ps2_iop_load_audio_driver(). This also keeps MMCE/SIO2 setup
+     * free of unrelated audio modules.
      */
-    ps2_log("IOP: sdr deferred for hardware-safe storage validation");
+    ps2_log("IOP: audio modules deferred until audio initialization");
 
     ps2_log("IOP: %s, %d base modules",
             sIopWasReset ? "reset" : "kept (inherited filesystem)", sLoadedCount);
@@ -341,8 +340,7 @@ int ps2_iop_mmce_prepare_runtime_stream(void)
 
     if (LOAD_IRX(mcman) < 0 ||
         LOAD_IRX(mtapman) < 0 ||
-        LOAD_IRX(padman) < 0 ||
-        LOAD_IRX(libsd) < 0)
+        LOAD_IRX(padman) < 0)
         return -1;
 
     ps2_log("IOP: final MMCE game stack ready (MMCEDRV before PAD/MC)");
@@ -360,6 +358,12 @@ int ps2_iop_load_audio_driver(void)
      */
     if (ps2_iop_module_loaded("ssb_audio"))
         return 0;
+
+    if (!ps2_iop_module_loaded("libsd") && LOAD_IRX(libsd) < 0)
+    {
+        ps2_log("IOP: libsd failed to start; audio disabled");
+        return -1;
+    }
 
     ps2_log("IOP: starting dedicated ssb_audio server");
     return LOAD_IRX(ssb_audio);
