@@ -66,9 +66,11 @@ typedef struct Voice
 
 static int sReady;
 static uint8_t *sSet;                     /* whole sample region, EE RAM */
+static uint32_t sSetBytes;
 static const PS2SpuSampleEntry *sEntries;
 static uint32_t sCount;
 static int *sResidentOf;                  /* per sample: index into sRes or -1 */
+static uint32_t sResidentBytes;
 static Resident sRes[MAX_RESIDENT];
 static int sResCount;
 static uint32_t sClock;
@@ -210,29 +212,33 @@ static void batch_add(uint16_t func, uint16_t entry, uint32_t value)
     }
 }
 
-static void batch_submit(void)
+static int batch_submit(void)
 {
     int n = sBatchCount;
     uint32_t bytes;
+    int rc;
 
     sStats.batch_entries = (uint32_t)n;
     if (n == 0)
-        return;
+        return 1;
 
     ((uint32_t *)sRpcSend)[0] = (uint32_t)n;
     memcpy(sRpcSend + 4, sBatch, (size_t)n * sizeof(sceSdBatch));
     bytes = 4u + (uint32_t)n * (uint32_t)sizeof(sceSdBatch);
 
-    if (audio_rpc_batch_async(sRpcSend, bytes) < 0)
+    rc = audio_rpc_batch_async(sRpcSend, bytes);
+    sBatchCount = 0;
+    if (rc < 0)
     {
         sReady = 0;
         ps2_log("audio: batch RPC failed; disabling audio");
+        return 0;
     }
-    sBatchCount = 0;
+    return 1;
 }
 
 /* Copy [src, src+size) from EE RAM to SPU RAM at addr (blocking). */
-static void spu_upload(const uint8_t *src, uint32_t addr, uint32_t size)
+static int spu_upload(const uint8_t *src, uint32_t addr, uint32_t size)
 {
     uint32_t done = 0;
 
@@ -254,12 +260,13 @@ static void spu_upload(const uint8_t *src, uint32_t addr, uint32_t size)
         {
             sReady = 0;
             ps2_log("audio: sample upload RPC failed; disabling audio");
-            return;
+            return 0;
         }
         done += n;
     }
     sStats.uploads++;
     sStats.upload_bytes += size;
+    return 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -345,7 +352,9 @@ static int make_resident(int sample)
         res_remove(lru);
         sStats.evictions++;
     }
-    spu_upload(sSet + e->data_off, addr, e->data_size);
+    if (!spu_upload(sSet + e->data_off, addr, e->data_size))
+        return 0;
+
     sRes[sResCount].sample = sample;
     sRes[sResCount].addr = addr;
     sRes[sResCount].size = e->data_size;
@@ -359,11 +368,41 @@ static int make_resident(int sample)
 /* Public interface                                                    */
 /* ------------------------------------------------------------------ */
 
+static void release_sample_set(void)
+{
+    if (sResidentOf != NULL)
+    {
+        ps2_mem_free(PS2_MEM_AUDIO, sResidentOf, sResidentBytes);
+        sResidentOf = NULL;
+    }
+    if (sSet != NULL)
+    {
+        ps2_mem_free(PS2_MEM_AUDIO, sSet, sSetBytes);
+        sSet = NULL;
+    }
+
+    sSetBytes = 0;
+    sResidentBytes = 0;
+    sEntries = NULL;
+    sCount = 0;
+    sResCount = 0;
+}
+
 int ps2_spu_init(void)
 {
     PS2SpuSampleHeader head;
     uint32_t size, i;
     int v;
+
+    sReady = 0;
+    sRpcPoisoned = 0;
+    sRpcPending = 0;
+    sBatchCount = 0;
+    sResCount = 0;
+    sClock = 0;
+    memset(&sStats, 0, sizeof(sStats));
+    memset(sVoices, 0, sizeof(sVoices));
+    release_sample_set();
 
     ps2_log("audio: SPU init stage 1/6 - reading sample header");
     {
@@ -413,13 +452,10 @@ int ps2_spu_init(void)
     }
     ps2_log("audio: SPU init stage 2/6 - sample set %u KiB, %u entries",
             (unsigned)(size / 1024), (unsigned)head.count);
-    sSet = (uint8_t *)ps2_mem_alloc(PS2_MEM_AUDIO, size, 64);
-    sResidentOf = (int *)ps2_mem_alloc(PS2_MEM_AUDIO, head.count * sizeof(int), 16);
-    if (sSet == NULL || sResidentOf == NULL)
-    {
-        ps2_log("audio: cannot allocate %u KiB for the sample set; audio stays silent", (unsigned)(size / 1024));
-        return -1;
-    }
+    sSetBytes = size;
+    sResidentBytes = head.count * (uint32_t)sizeof(int);
+    sSet = (uint8_t *)ps2_mem_alloc(PS2_MEM_AUDIO, sSetBytes, 64);
+    sResidentOf = (int *)ps2_mem_alloc(PS2_MEM_AUDIO, sResidentBytes, 16);
     ps2_log("audio: SPU init stage 3/6 - loading PS-ADPCM set");
     ps2_rom_read(PS2_SPU_SAMPLES_VROM, sSet, size);
     sEntries = (const PS2SpuSampleEntry *)(sSet + head.entries_offset);
@@ -428,10 +464,23 @@ int ps2_spu_init(void)
     {
         const PS2SpuSampleEntry *e = &sEntries[i];
 
-        if (e->data_off > size || e->data_size > size - e->data_off)
+        if (e->data_size == 0 || (e->data_size & 63u) != 0 ||
+            e->data_off > size || e->data_size > size - e->data_off)
         {
-            ps2_log("audio: invalid sample entry %u range; audio stays silent", (unsigned)i);
+            ps2_log("audio: invalid sample entry %u range/alignment; audio stays silent", (unsigned)i);
+            release_sample_set();
             return -1;
+        }
+        if (i > 0)
+        {
+            const PS2SpuSampleEntry *prev = &sEntries[i - 1];
+
+            if (e->key < prev->key || (e->key == prev->key && e->len < prev->len))
+            {
+                ps2_log("audio: sample table is not sorted at entry %u; audio stays silent", (unsigned)i);
+                release_sample_set();
+                return -1;
+            }
         }
         sResidentOf[i] = -1;
     }
@@ -440,6 +489,7 @@ int ps2_spu_init(void)
     if (audio_rpc_bind() < 0)
     {
         ps2_log("audio: ssb_audio RPC unavailable; audio stays silent");
+        release_sample_set();
         return -1;
     }
 
@@ -447,6 +497,7 @@ int ps2_spu_init(void)
     if (audio_rpc_call(SSB_AUDIO_CMD_INIT, sRpcSend, 0) < 0)
     {
         ps2_log("audio: ssb_audio init failed; audio stays silent");
+        release_sample_set();
         return -1;
     }
     ps2_log("audio: SPU init stage 6/6 - configuring voices");
@@ -471,7 +522,12 @@ int ps2_spu_init(void)
         sVoices[v].sample = -1;
     }
     batch_add(SD_BATCH_SETSWITCH, SPU_CORE | SD_SWITCH_KOFF, 0xFFFFFF);
-    batch_submit();
+    if (!batch_submit() || audio_rpc_drain() < 0)
+    {
+        ps2_log("audio: initial voice configuration failed; audio stays silent");
+        release_sample_set();
+        return -1;
+    }
 
     sStats.samples = sCount;
     sStats.spu_bytes_total = SPU_RAM_LIMIT - SPU_RAM_FIRST;
