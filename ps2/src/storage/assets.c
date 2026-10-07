@@ -329,6 +329,20 @@ static int find_region(uint32_t addr)
     return -1;
 }
 
+uint32_t ps2_rom_region_remaining(uint32_t rom_addr)
+{
+    int idx;
+
+    if ((rom_addr & 0xF0000000u) == 0xB0000000u)
+        rom_addr &= 0x0FFFFFFFu;
+
+    idx = (sRegions != NULL) ? find_region(rom_addr) : -1;
+    if (idx < 0)
+        return 0;
+
+    return sRegions[idx].size - (rom_addr - sRegions[idx].vrom_start);
+}
+
 void ps2_rom_read(uint32_t rom_addr, void *dst, uint32_t size)
 {
     uint8_t *out = (uint8_t *)dst;
