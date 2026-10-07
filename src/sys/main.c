@@ -260,7 +260,9 @@ void syMainThread5(void *arg)
 
 void syMainThread1Idle(void *arg) 
 {
+#if !defined(PLATFORM_PS2)
     syDebugStartRmonThread8();
+#endif
     osCreateThread(&gSYMainThread5, 5, syMainThread5, arg, &sSYMainThread5Stack[THREAD5_STACK_SIZE], THREAD5_PRI);
     sSYMainThread5Stack[STACK_CANARY_OFFSET] = STACK_CANARY;
 
