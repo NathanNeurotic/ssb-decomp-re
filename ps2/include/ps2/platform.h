@@ -174,6 +174,7 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 /* massN: only: add non-USB BDM transports to the live stack (once, no reset). */
 int ps2_iop_load_bdm_fallback_transports(void);
 int ps2_iop_load_audio_driver(void); /* deferred SDR server; safe to call after storage/input */
+void ps2_audio_shutdown(void);            /* bounded SPU2 mute/key-off for IGR */
 int ps2_iop_mmce_prepare_runtime_stream(void);
 int  ps2_iop_module_loaded(const char *name);
 int  ps2_iop_module_count(void);
