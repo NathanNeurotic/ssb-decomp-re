@@ -17,6 +17,7 @@
 
 #include <kernel.h>
 #include <libmc.h>
+#include <sifrpc.h>
 #include <string.h>
 
 #define SRAM_SIZE (32 * 1024)
@@ -43,6 +44,7 @@ static int sNextSlot;
 static int sCardOk;
 static int sLock = -1;
 static int sThreadId = -1;
+static int sMcRpcDead;
 static uint8_t sThreadStack[16 * 1024] __attribute__((aligned(64)));
 
 static uint32_t crc32_calc(const uint8_t *p, uint32_t n)
@@ -62,16 +64,54 @@ static uint32_t crc32_calc(const uint8_t *p, uint32_t n)
     return ~crc;
 }
 
+static int mc_server_ready(void)
+{
+    SifRpcClientData_t client;
+    int tries;
+
+    memset(&client, 0, sizeof(client));
+    for (tries = 0; tries < 100; tries++)
+    {
+        int rc = SifBindRpc(&client, 0x80000400, 0);
+
+        if (rc < 0)
+            return 0;
+        if (client.server != NULL)
+            return 1;
+        DelayThread(10 * 1000);
+    }
+    return 0;
+}
+
 static int mc_call(int r)
 {
-    int cmd, result;
+    int cmd = 0;
+    int result = -1;
+    int tries;
 
-    if (r != 0)
-    {
+    if (sMcRpcDead || r != 0)
         return -1;
+
+    /*
+     * libmc's mcSync(0) spins forever while the RPC remains busy. A missing,
+     * wedged or SIO2-starved MCSERV must never stop the whole game boot.
+     * Poll the asynchronous command for up to five seconds; on timeout mark
+     * the MC backend unusable for this run and leave SRAM resident in RAM.
+     */
+    for (tries = 0; tries < 500; tries++)
+    {
+        int sync = mcSync(1, &cmd, &result);
+
+        if (sync == 1)
+            return result;
+        if (sync < 0)
+            break;
+        DelayThread(10 * 1000);
     }
-    mcSync(0, &cmd, &result);
-    return result;
+
+    sMcRpcDead = 1;
+    ps2_log("save: memory-card RPC timeout; disabling MC saves");
+    return -1;
 }
 
 static int card_present(void)
@@ -179,12 +219,27 @@ void ps2_save_init(void)
     sLock = CreateSema(&sema);
     memset(sSram, 0, sizeof(sSram));
 
-    if (mcInit(MC_TYPE_XMC) < 0)
+    sMcRpcDead = 0;
+    ps2_log("save: probing MCSERV RPC");
+    if (!mc_server_ready())
     {
-        ps2_log("save: mcInit failed, saving disabled");
+        sMcRpcDead = 1;
+        ps2_log("save: MCSERV RPC unavailable; saves stay in RAM");
     }
-    else if ((sCardOk = card_present()))
+    else
     {
+        int mc_init_rc;
+
+        ps2_log("save: MCSERV present; initializing libmc");
+        mc_init_rc = mcInit(MC_TYPE_XMC);
+        ps2_log("save: mcInit rc=%d", mc_init_rc);
+        if (mc_init_rc < 0)
+        {
+            sMcRpcDead = 1;
+            ps2_log("save: mcInit failed, saving disabled");
+        }
+        else if ((sCardOk = card_present()))
+        {
         seq_a = load_slot(0, tmp);
         if (seq_a >= 0)
         {
@@ -197,11 +252,12 @@ void ps2_save_init(void)
         }
         sSequence = (uint32_t)((seq_a > seq_b) ? seq_a : (seq_b > 0 ? seq_b : 0));
         sNextSlot = (seq_a > seq_b) ? 1 : 0;
-        ps2_log("save: memory card 1 ready (slot A %d, slot B %d)", (int)seq_a, (int)seq_b);
-    }
-    else
-    {
-        ps2_log("save: no formatted memory card in slot 1; saves stay in RAM");
+            ps2_log("save: memory card 1 ready (slot A %d, slot B %d)", (int)seq_a, (int)seq_b);
+        }
+        else
+        {
+            ps2_log("save: no formatted memory card in slot 1; saves stay in RAM");
+        }
     }
     ps2_mem_reclassify_static(PS2_MEM_SCRATCH, sizeof(sWriteBuf) + sizeof(tmp));
 
