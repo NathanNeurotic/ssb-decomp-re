@@ -19,6 +19,8 @@
 #include <libmc.h>
 #include <string.h>
 
+extern void ps2_delay_vblanks(int n);
+
 #define SRAM_SIZE (32 * 1024)
 #define SAVE_DIR "/SSB64PS2"
 #define SAVE_VERSION 1
@@ -174,8 +176,6 @@ static void save_thread(void *arg)
     (void)arg;
     for (;;)
     {
-        extern void ps2_delay_vblanks(int n);
-
         ps2_delay_vblanks(15);
         if (sDirty && (ps2_vblank_count() - sDirtyVBlank) >= FLUSH_DELAY_VBLANKS)
         {
