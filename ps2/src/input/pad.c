@@ -288,6 +288,7 @@ void ps2_input_poll(void)
         if (!s->open)
         {
             st->connected = 0;
+            sIgrHolding[i] = 0;
             continue;
         }
         state = padGetState(s->port, s->slot);
@@ -299,6 +300,7 @@ void ps2_input_poll(void)
         {
             st->connected = 0;
             s->analog_set = 0;
+            sIgrHolding[i] = 0;
             continue;
         }
         if (!s->analog_set && state == PAD_STATE_STABLE)
@@ -308,6 +310,7 @@ void ps2_input_poll(void)
         if (padRead(s->port, s->slot, &pad) == 0)
         {
             st->connected = 0;
+            sIgrHolding[i] = 0;
             continue;
         }
         held = (uint16_t)(0xFFFF ^ pad.btns);
