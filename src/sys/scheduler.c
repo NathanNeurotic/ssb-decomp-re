@@ -301,9 +301,11 @@ void sySchedulerRemoveMainQueue(SYTaskInfo *task)
 }
 
 // 0x80000D44 - Add to sSYSchedulerPausedQueueHead/sSYSchedulerPausedQueueTail priority queue
-void sySchedulerAddPausedQueue(SYTaskInfo *this_info)
+void sySchedulerAddPausedQueue(SYTaskGfx *task)
 {
-    SYTaskInfo *tail_info = &sSYSchedulerPausedQueueTail->info;
+    SYTaskInfo *this_info = &task->info;
+    SYTaskInfo *tail_info =
+        (sSYSchedulerPausedQueueTail != NULL) ? &sSYSchedulerPausedQueueTail->info : NULL;
 
     while ((tail_info != NULL) && (tail_info->priority < this_info->priority))
     {
@@ -318,8 +320,10 @@ void sySchedulerAddPausedQueue(SYTaskInfo *this_info)
     }
     else
     {
-        this_info->next = &sSYSchedulerPausedQueueHead->info;
-        sSYSchedulerPausedQueueHead = this_info;
+        this_info->next = (sSYSchedulerPausedQueueHead != NULL)
+                              ? &sSYSchedulerPausedQueueHead->info
+                              : NULL;
+        sSYSchedulerPausedQueueHead = task;
     }
     tail_info = this_info->next;
 
@@ -327,23 +331,39 @@ void sySchedulerAddPausedQueue(SYTaskInfo *this_info)
     {
         tail_info->prev = this_info;
     }
-    else sSYSchedulerPausedQueueTail = this_info;
+    else
+    {
+        sSYSchedulerPausedQueueTail = task;
+    }
 }
 
 // remove from sSYSchedulerPausedQueueHead/sSYSchedulerPausedQueueTail queue
-void sySchedulerRemovePausedQueue(SYTaskInfo *this_info)
+void sySchedulerRemovePausedQueue(SYTaskGfx *task)
 {
+    SYTaskInfo *this_info = &task->info;
+
     if (this_info->prev != NULL)
     {
         this_info->prev->next = this_info->next;
     }
-    else sSYSchedulerPausedQueueHead = this_info->next;
-    
+    else
+    {
+        sSYSchedulerPausedQueueHead =
+            (this_info->next != NULL) ? (SYTaskGfx *)this_info->next : NULL;
+    }
+
     if (this_info->next != NULL)
     {
         this_info->next->prev = this_info->prev;
     }
-    else sSYSchedulerPausedQueueTail = this_info->prev;
+    else
+    {
+        sSYSchedulerPausedQueueTail =
+            (this_info->prev != NULL) ? (SYTaskGfx *)this_info->prev : NULL;
+    }
+
+    this_info->next = NULL;
+    this_info->prev = NULL;
 }
 
 // scQueue3Add
