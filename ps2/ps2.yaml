@@ -24,6 +24,23 @@ targets:
     imports_lst: iop/ata_bd/src/imports.lst
     exports_tab: iop/ata_bd/src/exports.tab
 
+  # RiptOPL's hardware-validated pre-2024 PS2SDK USB host stack.
+  - name: usbd_riptopl
+    type: iop
+    sources:
+      - iop/usbd_riptopl/src/hcd.c
+      - iop/usbd_riptopl/src/hub.c
+      - iop/usbd_riptopl/src/interface.c
+      - iop/usbd_riptopl/src/mem.c
+      - iop/usbd_riptopl/src/usbd.c
+      - iop/usbd_riptopl/src/usbio.c
+      - iop/usbd_riptopl/src/driver.c
+    include_dirs: [iop/usbd_riptopl/src, iop/usbd_riptopl/include]
+    headers: *iop_headers
+    defines: [MINI_DRIVER=1, USE_GP_REGISTER=0]
+    imports_lst: iop/usbd_riptopl/src/imports.lst
+    exports_tab: iop/usbd_riptopl/src/exports.tab
+
   - name: smap_udpbd
     type: iop
     sources: [iop/smap_udpbd/src/main.c, iop/smap_udpbd/src/smap.c, iop/smap_udpbd/src/xfer.c, iop/smap_udpbd/src/ministack.c, iop/smap_udpbd/src/udpbd.c, iop/smap_udpbd/src/udptty.c]
@@ -309,7 +326,7 @@ targets:
       # Common BDM + physical transports.
       - bdm
       - bdmfs_fatfs
-      - usbd_mini
+      - usbd_riptopl:usbd_mini
       - usbmass_bd_mini
       - dev9:ps2dev9
       - ata_bd:ps2atad
