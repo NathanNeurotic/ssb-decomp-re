@@ -56,6 +56,11 @@ uint32_t ps2_audio_ai_get_length(void)
     return 0;
 }
 
+void ps2_audio_shutdown(void)
+{
+    ps2_spu_shutdown();
+}
+
 uint32_t ps2_audio_memory_used(void)
 {
     return 0;
