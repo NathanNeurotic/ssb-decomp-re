@@ -105,6 +105,11 @@ int ps2_assets_init(void)
     sema.init_count = 1;
     sema.max_count = 1;
     sReadSema = CreateSema(&sema);
+    if (sReadSema < 0)
+    {
+        ps2_log("assets: read semaphore creation failed (%d)", sReadSema);
+        return 0;
+    }
 
     /*
      * Wait for the real pack by opening the handle we will keep for the
@@ -197,22 +202,101 @@ int ps2_assets_init(void)
         return 0;
     }
 
-    table_bytes = sHeader.region_count * sizeof(PS2PackRegion);
+    /*
+     * Treat the DAT header as untrusted input before using any field for an
+     * allocation, read, or pointer offset. A corrupt/partial pack should
+     * produce one deterministic boot error, never an overflow or NULL write.
+     */
+    if (sHeader.total_size < sizeof(sHeader) ||
+        sHeader.region_count == 0 ||
+        sHeader.region_count > (UINT32_MAX / (uint32_t)sizeof(PS2PackRegion)) ||
+        sHeader.region_count > (UINT32_MAX / (uint32_t)sizeof(uint8_t *)))
+    {
+        ps2_log("assets: invalid pack sizing (regions=%u total=%u)",
+                (unsigned)sHeader.region_count, (unsigned)sHeader.total_size);
+        return 0;
+    }
+
+    table_bytes = sHeader.region_count * (uint32_t)sizeof(PS2PackRegion);
+    if (sHeader.region_table_offset > sHeader.total_size ||
+        table_bytes > sHeader.total_size - sHeader.region_table_offset ||
+        sHeader.resident_offset > sHeader.total_size ||
+        sHeader.resident_bytes > sHeader.total_size - sHeader.resident_offset)
+    {
+        ps2_log("assets: pack table/resident range exceeds declared size");
+        return 0;
+    }
+
     sRegions = ps2_mem_alloc(PS2_MEM_GAME_HEAP, table_bytes, 64);
-    sResidentPtr = ps2_mem_alloc(PS2_MEM_GAME_HEAP, sHeader.region_count * sizeof(uint8_t *), 64);
+    sResidentPtr = ps2_mem_alloc(PS2_MEM_GAME_HEAP,
+                                sHeader.region_count * sizeof(uint8_t *), 64);
+    if (sRegions == NULL || sResidentPtr == NULL)
+    {
+        ps2_log("assets: cannot allocate region metadata (%u entries)",
+                (unsigned)sHeader.region_count);
+        return 0;
+    }
     if (!read_exact(sRegions, sHeader.region_table_offset, table_bytes))
     {
         ps2_log("assets: region table read failed");
         return 0;
     }
 
-    /* All resident regions are stored back to back: one read at boot. */
-    sResidentBlob = ps2_mem_alloc(PS2_MEM_GAME_HEAP, sHeader.resident_bytes + 64, 64);
-    if (sHeader.resident_bytes != 0 &&
-        !read_exact(sResidentBlob, sHeader.resident_offset, sHeader.resident_bytes))
+    /* Validate every region before any pointer arithmetic below. */
+    for (i = 0; i < sHeader.region_count; i++)
     {
-        ps2_log("assets: resident block read failed");
-        return 0;
+        const PS2PackRegion *r = &sRegions[i];
+        uint32_t end;
+
+        if (r->size == 0 || r->file_offset > sHeader.total_size ||
+            r->size > sHeader.total_size - r->file_offset ||
+            r->vrom_start > UINT32_MAX - r->size)
+        {
+            ps2_log("assets: invalid region %u range", (unsigned)i);
+            return 0;
+        }
+        end = r->vrom_start + r->size;
+        if (i > 0)
+        {
+            const PS2PackRegion *prev = &sRegions[i - 1];
+            uint32_t prev_end = prev->vrom_start + prev->size;
+
+            if (r->vrom_start < prev_end)
+            {
+                ps2_log("assets: region table is unsorted/overlapping at %u", (unsigned)i);
+                return 0;
+            }
+        }
+        (void)end;
+
+        if (r->flags & PS2PACK_REGION_RESIDENT)
+        {
+            if (r->file_offset < sHeader.resident_offset ||
+                r->file_offset - sHeader.resident_offset > sHeader.resident_bytes ||
+                r->size > sHeader.resident_bytes - (r->file_offset - sHeader.resident_offset))
+            {
+                ps2_log("assets: resident region %u escapes resident block", (unsigned)i);
+                return 0;
+            }
+        }
+    }
+
+    /* All resident regions are stored back to back: one read at boot. */
+    sResidentBlob = NULL;
+    if (sHeader.resident_bytes != 0)
+    {
+        sResidentBlob = ps2_mem_alloc(PS2_MEM_GAME_HEAP, sHeader.resident_bytes, 64);
+        if (sResidentBlob == NULL)
+        {
+            ps2_log("assets: cannot allocate %u-byte resident block",
+                    (unsigned)sHeader.resident_bytes);
+            return 0;
+        }
+        if (!read_exact(sResidentBlob, sHeader.resident_offset, sHeader.resident_bytes))
+        {
+            ps2_log("assets: resident block read failed");
+            return 0;
+        }
     }
     for (i = 0; i < sHeader.region_count; i++)
     {
