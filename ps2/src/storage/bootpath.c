@@ -269,16 +269,19 @@ static int set_data_location(const char *path, int path_is_file)
     }
     else if (dev == PS2_BOOT_BDM)
     {
-        /* massN: is a connection-order alias, not a live handle we can
-         * inherit: whether the launcher's mount survives to this ELF depends
-         * on the launcher (RiptOPL's "Reboot IOP" leaves a bare ROM IOP with
-         * no mass: device and no fileXio server). Reset once like every other
-         * reconstructible device, bring up our own BDM stack, and locate the
-         * volume that holds the same relative path. Never reset again after
-         * that stack is up: hardware showed USB does not come back from a
-         * second reset in the same boot. */
-        sDataNeedsExistingIop = 0;
-        sDataNeedsBdmResolve = 1;
+        /*
+         * A normal sidecar launch already proves that the launcher had this
+         * exact massN: filesystem alive long enough to load our ELF. Keep
+         * that working mount first instead of immediately tearing it down.
+         *
+         * If the launcher reset its IOP after loading the ELF, the inherited
+         * mass slot will be gone; assets.c then rebuilds BDM/USB on the live
+         * IOP without a second reset and rediscoveries the same relative DAT
+         * path. Explicit --data=massN: remains reconstructible and uses the
+         * clean-stack resolver directly.
+         */
+        sDataNeedsExistingIop = path_is_file ? 1 : 0;
+        sDataNeedsBdmResolve = path_is_file ? 0 : 1;
         strncpy(tmp, path, sizeof(tmp) - 1);
         tmp[sizeof(tmp) - 1] = '\0';
         if (path_is_file)
@@ -414,6 +417,57 @@ static int bdm_driver_matches(PS2BootDevice dev, const char *driver)
     default:
         return 0;
     }
+}
+
+int ps2_storage_recover_mass_sidecar(const char *probe_name)
+{
+    char relative[PATH_BUF_MAX];
+    const char *colon;
+    int slot;
+
+    if (sDataDevice != PS2_BOOT_BDM || probe_name == NULL || probe_name[0] == '\0')
+        return 0;
+
+    colon = strchr(sDataDir, ':');
+    if (colon == NULL)
+        return 0;
+
+    snprintf(relative, sizeof(relative), "%s", colon + 1);
+    if (relative[0] == '\0')
+        snprintf(relative, sizeof(relative), "/");
+
+    for (slot = 0; slot < 10; slot++)
+    {
+        char dir[PATH_BUF_MAX];
+        char probe[PATH_BUF_MAX + 64];
+        int fd;
+
+        if (relative[0] == '/' || relative[0] == '\\')
+            snprintf(dir, sizeof(dir), "mass%d:%s", slot, relative);
+        else
+            snprintf(dir, sizeof(dir), "mass%d:/%s", slot, relative);
+        ensure_directory_suffix(dir, sizeof(dir), PS2_BOOT_BDM);
+        snprintf(probe, sizeof(probe), "%s%s", dir, probe_name);
+
+        /* The sidecar file itself is the authority. Do not query a transport
+         * token on an empty slot; older bdmfs builds can fault doing that. */
+        fd = open(probe, O_RDONLY);
+        if (fd < 0)
+            continue;
+        close(fd);
+
+        snprintf(sDataDir, sizeof(sDataDir), "%s", dir);
+        ps2_log("storage: inherited BDM sidecar found at %s", sDataDir);
+        return 1;
+    }
+
+    return 0;
+}
+
+void ps2_storage_begin_bdm_recovery(void)
+{
+    if (sDataDevice == PS2_BOOT_BDM)
+        sDataNeedsBdmResolve = 1;
 }
 
 int ps2_storage_resolve_data_root(const char *probe_name)
