@@ -79,7 +79,10 @@ static SifRpcClientData_t sAudioRpc __attribute__((aligned(64)));
 static uint8_t sRpcSend[SSB_AUDIO_RPC_SIZE] __attribute__((aligned(64)));
 static uint32_t sRpcRecv[4] __attribute__((aligned(64)));
 static volatile int sRpcPending;
+static int sRpcPoisoned;
 static PS2SpuStats sStats;
+
+#define AUDIO_RPC_TIMEOUT_US 2000000u
 
 static int audio_rpc_bind(void)
 {
@@ -107,11 +110,30 @@ static void audio_rpc_complete(void *arg)
 
 static int audio_rpc_drain(void)
 {
+    uint32_t start;
+
+    if (sRpcPoisoned)
+        return -1;
     if (!sRpcPending)
         return (int)sRpcRecv[0];
 
-    while (sceSifCheckStatRpc(&sAudioRpc))
-        DelayThread(50);
+    start = ps2_time_us();
+    while (sRpcPending || sceSifCheckStatRpc(&sAudioRpc))
+    {
+        if ((uint32_t)(ps2_time_us() - start) >= AUDIO_RPC_TIMEOUT_US)
+        {
+            /*
+             * Never reuse the shared client/staging buffers after a timed-out
+             * SIF request. The IOP may still complete it later; poisoning the
+             * audio backend keeps that late completion isolated instead of
+             * letting optional audio stall or corrupt the rest of the port.
+             */
+            sRpcPoisoned = 1;
+            ps2_log("audio: RPC timed out after 2 s; disabling audio");
+            return -1;
+        }
+        DelayThread(1000);
+    }
 
     sRpcPending = 0;
     return (int)sRpcRecv[0];
@@ -121,7 +143,7 @@ static int audio_rpc_call(int cmd, const void *send, uint32_t send_size)
 {
     int rc;
 
-    if (send_size > SSB_AUDIO_RPC_SIZE)
+    if (sRpcPoisoned || send_size > SSB_AUDIO_RPC_SIZE)
         return -1;
 
     /* Upload/init calls share the client and staging buffer with the
@@ -131,18 +153,24 @@ static int audio_rpc_call(int cmd, const void *send, uint32_t send_size)
 
     memset(sRpcRecv, 0, sizeof(sRpcRecv));
     FlushCache(0);
-    rc = sceSifCallRpc(&sAudioRpc, cmd, 0, (void *)send, (int)send_size,
-                       sRpcRecv, sizeof(sRpcRecv), NULL, NULL);
+    sRpcPending = 1;
+    rc = sceSifCallRpc(&sAudioRpc, cmd, SIF_RPC_M_NOWAIT,
+                       (void *)send, (int)send_size,
+                       sRpcRecv, sizeof(sRpcRecv),
+                       audio_rpc_complete, NULL);
     if (rc < 0)
+    {
+        sRpcPending = 0;
         return rc;
-    return (int)sRpcRecv[0];
+    }
+    return audio_rpc_drain();
 }
 
 static int audio_rpc_batch_async(const void *send, uint32_t send_size)
 {
     int rc;
 
-    if (send_size > SSB_AUDIO_RPC_SIZE)
+    if (sRpcPoisoned || send_size > SSB_AUDIO_RPC_SIZE)
         return -1;
 
     /*
