@@ -169,7 +169,7 @@ void ps2_file_close(int fd);
 /* IOP modules (ps2/src/platform/iop.c)                                */
 /* ------------------------------------------------------------------ */
 
-void ps2_iop_init(void);                 /* reset IOP + load base modules */
+int ps2_iop_init(void);                  /* reset IOP + load required base modules */
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 /* massN: only: add non-USB BDM transports to the live stack (once, no reset). */
 int ps2_iop_load_bdm_fallback_transports(void);
