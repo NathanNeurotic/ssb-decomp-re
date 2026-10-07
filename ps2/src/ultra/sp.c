@@ -15,9 +15,23 @@ void ps2_gfx_task_submit(OSTask *task)
     ps2_render_enqueue(task->t.data_ptr, task);
 }
 
-void ps2_render_task_done(void *cookie)
+void ps2_render_sp_done(void *cookie)
 {
     (void)cookie;
     ps2_ultra_post_event(OS_EVENT_SP);
+}
+
+void ps2_render_dp_done(void *cookie)
+{
+    (void)cookie;
     ps2_ultra_post_event(OS_EVENT_DP);
+}
+
+/* Compatibility helper for callers that genuinely complete both stages at
+ * once. The threaded renderer uses the split hooks so RSP-style CPU work can
+ * overlap the GS finishing the previous packet. */
+void ps2_render_task_done(void *cookie)
+{
+    ps2_render_sp_done(cookie);
+    ps2_render_dp_done(cookie);
 }
