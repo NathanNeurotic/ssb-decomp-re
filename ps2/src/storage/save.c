@@ -64,14 +64,26 @@ static uint32_t crc32_calc(const uint8_t *p, uint32_t n)
 
 static int mc_call(int r)
 {
-    int cmd, result;
+    int cmd = 0, result = -1;
+    int i;
 
     if (r != 0)
-    {
         return -1;
+
+    /* Never let a damaged SIO2/MCSERV transaction freeze game boot. */
+    for (i = 0; i < 120; i++)
+    {
+        int sync = mcSync(MC_NOWAIT, &cmd, &result);
+
+        if (sync > 0)
+            return result;
+        if (sync < 0)
+            return -1;
+        ps2_delay_vblanks(1);
     }
-    mcSync(0, &cmd, &result);
-    return result;
+
+    ps2_log("save: memory-card RPC timed out; continuing without persistence");
+    return -1;
 }
 
 static int card_present(void)
@@ -113,11 +125,12 @@ static int64_t load_slot(int slot, uint8_t *dst)
 static void flush_now(void)
 {
     PS2SaveHeader *h = (PS2SaveHeader *)sWriteBuf;
+    uint32_t snapshot_vblank;
     int fd, n;
 
     WaitSema(sLock);
     memcpy(sWriteBuf + sizeof(*h), sSram, SRAM_SIZE);
-    sDirty = 0;
+    snapshot_vblank = sDirtyVBlank;
     SignalSema(sLock);
 
     if (!sCardOk && !(sCardOk = card_present()))
@@ -149,6 +162,11 @@ static void flush_now(void)
     }
     ps2_log("save: wrote %s seq %u", slot_name(sNextSlot), (unsigned)sSequence);
     sNextSlot ^= 1;
+
+    WaitSema(sLock);
+    if (sDirty && sDirtyVBlank == snapshot_vblank)
+        sDirty = 0;
+    SignalSema(sLock);
 }
 
 static void save_thread(void *arg)
@@ -211,7 +229,10 @@ void ps2_save_init(void)
     th.gp_reg = &_gp;
     th.initial_priority = 110; /* below every game thread */
     sThreadId = CreateThread(&th);
-    StartThread(sThreadId, NULL);
+    if (sThreadId >= 0)
+        StartThread(sThreadId, NULL);
+    else
+        ps2_log("save: background flush thread unavailable; saves stay in RAM");
 }
 
 void ps2_sram_read(uint32_t offset, void *dst, uint32_t size)
