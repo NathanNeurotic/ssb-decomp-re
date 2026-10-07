@@ -86,7 +86,8 @@ int ps2_main(int argc, char *argv[])
     if (ps2_iop_init() < 0)
         ps2_panic("failed to initialize required IOP services");
     ps2_boot_stage("vblank + video init", 0x008080);
-    ps2_vblank_init();
+    if (ps2_vblank_init() < 0)
+        ps2_panic("failed to initialize VBlank timing");
     ps2_gs_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
