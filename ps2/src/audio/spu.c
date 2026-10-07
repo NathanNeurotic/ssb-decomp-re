@@ -366,19 +366,42 @@ int ps2_spu_init(void)
     int v;
 
     ps2_log("audio: SPU init stage 1/6 - reading sample header");
-    ps2_rom_read(PS2_SPU_SAMPLES_VROM, &head, sizeof(head));
-    if (memcmp(head.magic, PS2_SPU_SAMPLES_MAGIC, 4) != 0 || head.version != PS2_SPU_SAMPLES_VERSION)
     {
-        ps2_log("audio: no SPU sample set in the asset pack (rebuild it); audio stays silent");
-        return -1;
-    }
-    /* size = end of the last sample's data */
-    {
-        PS2SpuSampleEntry last;
+        uint32_t region_bytes = ps2_rom_region_remaining(PS2_SPU_SAMPLES_VROM);
 
-        ps2_rom_read(PS2_SPU_SAMPLES_VROM + head.entries_offset + (head.count - 1) * sizeof(last), &last,
-                     sizeof(last));
-        size = last.data_off + last.data_size;
+        if (region_bytes < sizeof(head))
+        {
+            ps2_log("audio: SPU sample region missing/truncated; audio stays silent");
+            return -1;
+        }
+
+        ps2_rom_read(PS2_SPU_SAMPLES_VROM, &head, sizeof(head));
+        if (memcmp(head.magic, PS2_SPU_SAMPLES_MAGIC, 4) != 0 ||
+            head.version != PS2_SPU_SAMPLES_VERSION ||
+            head.count == 0 ||
+            head.count > UINT32_MAX / (uint32_t)sizeof(PS2SpuSampleEntry) ||
+            head.entries_offset > region_bytes ||
+            head.count * (uint32_t)sizeof(PS2SpuSampleEntry) > region_bytes - head.entries_offset)
+        {
+            ps2_log("audio: invalid SPU sample metadata; audio stays silent");
+            return -1;
+        }
+
+        /* size = end of the last sample's data, constrained to this region. */
+        {
+            PS2SpuSampleEntry last;
+            uint32_t last_off = head.entries_offset +
+                                (head.count - 1) * (uint32_t)sizeof(last);
+
+            ps2_rom_read(PS2_SPU_SAMPLES_VROM + last_off, &last, sizeof(last));
+            if (last.data_off > region_bytes ||
+                last.data_size > region_bytes - last.data_off)
+            {
+                ps2_log("audio: SPU sample payload escapes pack region; audio stays silent");
+                return -1;
+            }
+            size = last.data_off + last.data_size;
+        }
     }
     ps2_log("audio: SPU init stage 2/6 - sample set %u KiB, %u entries",
             (unsigned)(size / 1024), (unsigned)head.count);
