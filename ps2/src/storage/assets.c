@@ -140,15 +140,6 @@ int ps2_assets_init(void)
 
             if (ps2_storage_data_device() == PS2_BOOT_HOST)
                 break;
-
-            /* Generic massN: brings up USB first. If ~5 s pass without the
-             * pack on any mass slot, add the other local BDM transports to
-             * the same live IOP and keep probing. */
-            if (attempt == 50 && ps2_storage_data_device() == PS2_BOOT_BDM)
-            {
-                ps2_boot_stage("assets: SSB64.DAT not on USB after 5 s; adding other BDM transports", 0);
-                ps2_iop_load_bdm_fallback_transports();
-            }
             ps2_delay_vblanks(6);
         }
     }

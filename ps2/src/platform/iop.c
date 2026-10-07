@@ -4,14 +4,10 @@
  * The launch device and the data device are intentionally separate.  host:
  * keeps the ps2link/PCSX2 IOP alive; every other launch starts from a clean
  * IOP and reconstructs only the stack required by the selected data device.
- * Exactly one reset happens per boot for BDM devices: once the USB host
- * driver is running, a second IOP reset leaves the stick unreachable.
  *
  * Base:      iomanX + fileXio + sio2man + mtapman + padman + mcman/mcserv
  *            + libsd/sdr
  * USB:       bdm + bdmfs_fatfs + usbd_mini + usbmass_bd_mini
- * massN:     USB stack first; MX4SIO/iLink/ATA added later only if the
- *            pack has not appeared (no reset in between)
  * ATA BDM:   ps2dev9 + bdm + bdmfs_fatfs + ps2atad
  * MX4SIO:    bdm + bdmfs_fatfs + mx4sio_bd
  * iLink:     bdm + bdmfs_fatfs + iLinkman + IEEE1394_bd
@@ -42,7 +38,6 @@
     extern unsigned char name##_irx[];    \
     extern unsigned int size_##name##_irx
 
-DECLARE_IRX(ssb_usb_quiesce);
 DECLARE_IRX(iomanx);
 DECLARE_IRX(filexio);
 DECLARE_IRX(sio2man);
@@ -211,28 +206,6 @@ static int mount_hdd_partition(void)
     return -1;
 }
 
-/*
- * A launcher that used USB leaves its OHCI controller running, and PS2SDK's
- * usbd does not stop it on IOP reboot. It then keeps DMAing into IOP RAM
- * while the new kernel boots, which hung our reset from some launchers. Halt
- * it from inside the inherited IOP first; the module is a no-op when USB was
- * never enabled and never stays resident.
- */
-static void quiesce_inherited_usb(void)
-{
-    int result = 0;
-    int id;
-
-    ps2_boot_stage("IOP: stopping inherited USB controller", 0xFF8000);
-    SifLoadFileInit();
-    SifInitIopHeap();
-    sbv_patch_enable_lmb();
-    id = SifExecModuleBuffer(ssb_usb_quiesce_irx, size_ssb_usb_quiesce_irx, 0, NULL, &result);
-    SifExitIopHeap();
-    SifLoadFileExit();
-    ps2_log("IOP: inherited USB quiesce id=%d res=%d", id, result);
-}
-
 void ps2_iop_init(void)
 {
     int preserve_iop = ps2_storage_requires_iop_preserve();
@@ -243,14 +216,9 @@ void ps2_iop_init(void)
     SifInitRpc(0);
 
     /* host: and bare pfsN: data paths depend on services/mounts owned by the
-     * launcher.  Everything else, including generic massN:, is rebuilt from
-     * a known IOP state. Disable stdout mirroring before that reset so a
-     * stale console RPC cannot deadlock real hardware. */
+     * launcher.  Everything else is rebuilt from a known IOP state. */
     if (!preserve_iop)
     {
-        ps2_log_console(0);
-        quiesce_inherited_usb();
-        ps2_boot_stage("IOP: reset request", 0xC0C000);
         while (!SifIopReset("", 0))
         {
         }
@@ -377,18 +345,8 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
     switch (dev)
     {
     case PS2_BOOT_HOST:
-    case PS2_BOOT_MC:
-        return 0;
-
     case PS2_BOOT_BDM:
-        /* Generic massN: does not say which transport backs it. USB is by
-         * far the common case, so bring it up first; a missing USB driver is
-         * not fatal because ps2_iop_load_bdm_fallback_transports() can still
-         * add the other local transports without resetting the IOP. */
-        if (load_bdm_core() < 0)
-            return -1;
-        if (LOAD_IRX(usbd_mini) < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
-            ps2_log("IOP: USB mass storage unavailable; other BDM transports remain");
+    case PS2_BOOT_MC:
         return 0;
 
     case PS2_BOOT_CDROM:
@@ -476,26 +434,6 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
         ps2_log("IOP: unsupported/ambiguous data device; refusing USB fallback");
         return -1;
     }
-}
-
-int ps2_iop_load_bdm_fallback_transports(void)
-{
-    static int sDone;
-
-    if (ps2_storage_data_device() != PS2_BOOT_BDM || sDone)
-        return 0;
-    sDone = 1;
-
-    /* Called only when the pack has not appeared on USB. These are added to
-     * the live BDM stack -- never via an IOP reset -- and each one is
-     * optional: hardware that is not present simply fails to load. */
-    ps2_log("IOP: adding iLink/ATA/MX4SIO BDM transports for massN:");
-    if (LOAD_IRX(iLinkman) >= 0)
-        LOAD_IRX(IEEE1394_bd);
-    if (LOAD_IRX(ps2dev9) >= 0 && LOAD_IRX(ps2atad) >= 0)
-        sleep(1);
-    LOAD_IRX(mx4sio_bd);
-    return 1;
 }
 
 int ps2_iop_module_loaded(const char *name)

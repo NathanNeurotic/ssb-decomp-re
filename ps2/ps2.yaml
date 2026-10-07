@@ -86,13 +86,6 @@ targets:
     defines: [IOMANX_OLD_NAME_COMPATIBILITY=0, IOMANX_OLD_NAME_ADDDELDRV=0]
     imports_lst: iop/mmce_stream/src/imports.lst
 
-  - name: ssb_usb_quiesce
-    type: iop
-    sources: [iop/usb_quiesce/src/main.c]
-    include_dirs: [iop/usb_quiesce/src]
-    headers: *iop_headers
-    imports_lst: iop/usb_quiesce/src/imports.lst
-
   - name: ssb_audio
     type: iop
     sources: [iop/audio_server/src/main.c]
@@ -304,7 +297,6 @@ targets:
       - debug
       - m
     embed_irx:
-      - ssb_usb_quiesce
       - iomanx
       - filexio
       - sio2man
