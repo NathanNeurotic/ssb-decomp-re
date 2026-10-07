@@ -69,7 +69,7 @@ static const PadMapEntry sDefaultMap[] = {
     { PS2B_RIGHT, N64_BTN_DR },
 };
 
-#define STICK_DEADZONE 10     /* of 127 */
+#define STICK_DEADZONE 16     /* of 127; ~13% center deadzone for DualShock 2 */
 #define STICK_N64_MAX 80      /* full deflection of an N64 stick */
 #define RSTICK_C_THRESHOLD 64 /* right stick -> C buttons */
 
