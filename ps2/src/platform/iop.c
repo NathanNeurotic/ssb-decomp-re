@@ -344,6 +344,7 @@ int ps2_iop_mmce_prepare_runtime_stream(void)
         return -1;
 
     if (LOAD_IRX(mcman) < 0 ||
+        LOAD_IRX(mcserv) < 0 ||
         LOAD_IRX(mtapman) < 0 ||
         LOAD_IRX(padman) < 0 ||
         LOAD_IRX(libsd) < 0)
