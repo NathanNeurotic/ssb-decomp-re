@@ -480,22 +480,37 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
 
 int ps2_iop_load_bdm_fallback_transports(void)
 {
-    static int sDone;
+    static int sTier;
 
-    if (ps2_storage_data_device() != PS2_BOOT_BDM || sDone)
+    if (ps2_storage_data_device() != PS2_BOOT_BDM)
         return 0;
-    sDone = 1;
 
-    /* Called only when the pack has not appeared on USB. These are added to
-     * the live BDM stack -- never via an IOP reset -- and each one is
-     * optional: hardware that is not present simply fails to load. */
-    ps2_log("IOP: adding iLink/ATA/MX4SIO BDM transports for massN:");
-    if (LOAD_IRX(iLinkman) >= 0)
-        LOAD_IRX(IEEE1394_bd);
-    if (LOAD_IRX(ps2dev9) >= 0 && LOAD_IRX(ps2atad) >= 0)
-        sleep(1);
-    LOAD_IRX(mx4sio_bd);
-    return 1;
+    /*
+     * Match RiptOPL's literal-mass recovery order instead of loading every
+     * possible backend at once. USB is already the initial tier. If the exact
+     * massN: slot has not reappeared, add MX4SIO alone; only then add the
+     * expensive iLink + ATA transports. Nothing here resets the IOP.
+     */
+    if (sTier == 0)
+    {
+        sTier = 1;
+        ps2_log("IOP: mass recovery tier 2: MX4SIO");
+        LOAD_IRX(mx4sio_bd);
+        return 1;
+    }
+
+    if (sTier == 1)
+    {
+        sTier = 2;
+        ps2_log("IOP: mass recovery tier 3: iLink + ATA");
+        if (LOAD_IRX(iLinkman) >= 0)
+            LOAD_IRX(IEEE1394_bd);
+        if (LOAD_IRX(ps2dev9) >= 0 && LOAD_IRX(ps2atad) >= 0)
+            sleep(1);
+        return 1;
+    }
+
+    return 0;
 }
 
 int ps2_iop_module_loaded(const char *name)
