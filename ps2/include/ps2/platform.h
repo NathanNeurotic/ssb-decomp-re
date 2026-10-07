@@ -142,6 +142,11 @@ void ps2_boot_stage(const char *name, uint32_t rgb);
  * on screen (and into the log file when possible). */
 void ps2_crash_init(void);
 
+/* In-game reset: quiesce the native PS2 runtime and leave the game. */
+void ps2_igr_exit(void) __attribute__((noreturn));
+/* Stop outstanding GIF DMA and blank the display before chainloading. */
+void ps2_gs_prepare_exec(void);
+
 /* Writes the in-memory log to <boot dir>SSB64.LOG (boot device drivers
  * must be loaded). Safe to call repeatedly; each call rewrites the file. */
 void ps2_log_save(void);
