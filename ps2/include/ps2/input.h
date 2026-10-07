@@ -35,6 +35,7 @@ typedef struct PS2InputState
 
 void ps2_input_init(void);
 void ps2_input_poll(void);
+void ps2_input_quiesce(void);
 const PS2InputState *ps2_input_state(int player);
 int ps2_input_raw_combo(int player, uint16_t ps2_combo);
 int ps2_input_overlay_toggle_pressed(void);
