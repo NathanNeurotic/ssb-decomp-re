@@ -17,6 +17,8 @@
 #include <strings.h>
 #include <unistd.h>
 
+static int sMmceRuntimeFd = -1;
+
 int ps2_file_open_read(const char *path)
 {
     int fd = open(path, O_RDONLY);
@@ -46,16 +48,18 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
     uint8_t *out = (uint8_t *)dst;
     uint32_t done = 0;
     uint32_t max_chunk = 0x4000u;
-    int is_mmce = (ps2_storage_data_device() == PS2_BOOT_MMCE);
+    int is_mmce_setup = (ps2_storage_data_device() == PS2_BOOT_MMCE &&
+                         fd != sMmceRuntimeFd);
 
     /*
-     * Keep the API identical for every device. MMCE only needs a smaller
-     * transfer quantum because MMCEMAN owns SIO2 for the duration of each
-     * request. 2 KiB transactions plus a tiny EE-side yield give PAD/MC
-     * clients a scheduling window between storage bursts instead of letting a
-     * 64 KiB asset request immediately reacquire SIO2 over and over.
+     * MMCEMAN is only the setup/filesystem path. While it owns SIO2, keep its
+     * conservative 2 KiB requests and short yields so PAD/MC traffic can get
+     * a turn. Once ps2_file_mmce_enter_runtime_stream() promotes the live DAT
+     * descriptor to MMCEDRV, that restriction is actively harmful: gameplay
+     * streaming is then on the dedicated in-game driver and may use the normal
+     * 16 KiB transfer quantum with no artificial half-millisecond sleeps.
      */
-    if (is_mmce)
+    if (is_mmce_setup)
         max_chunk = 0x800u;
     else if (ps2_storage_data_device() == PS2_BOOT_HOST ||
              ps2_storage_data_device() == PS2_BOOT_CDROM)
@@ -67,13 +71,13 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
         int n = -1;
         int retry;
 
-        for (retry = 0; retry < (is_mmce ? 3 : 1); retry++)
+        for (retry = 0; retry < (is_mmce_setup ? 3 : 1); retry++)
         {
             n = (int)read(fd, out + done, chunk);
             if (n > 0)
                 break;
 
-            if (is_mmce && retry + 1 < 3)
+            if (is_mmce_setup && retry + 1 < 3)
                 DelayThread(1000);
         }
 
@@ -82,7 +86,7 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
 
         done += (uint32_t)n;
 
-        if (is_mmce && done < size)
+        if (is_mmce_setup && done < size)
             DelayThread(500);
     }
     return (int)done;
@@ -161,6 +165,7 @@ int ps2_file_mmce_enter_runtime_stream(int fd)
         return -1;
     }
 
+    sMmceRuntimeFd = stream_fd;
     ps2_log("MMCE: SSB64.DAT now backed by MMCEDRV in-game stream");
     return stream_fd;
 }
@@ -168,5 +173,9 @@ int ps2_file_mmce_enter_runtime_stream(int fd)
 void ps2_file_close(int fd)
 {
     if (fd >= 0)
+    {
         close(fd);
+        if (fd == sMmceRuntimeFd)
+            sMmceRuntimeFd = -1;
+    }
 }
