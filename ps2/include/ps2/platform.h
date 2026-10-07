@@ -130,8 +130,12 @@ int ps2_storage_requires_iop_preserve(void);
  * udpbd identities) to the actual massN: filesystem that contains
  * probe_name. */
 int ps2_storage_resolve_data_root(const char *probe_name);
-/* Generic massN: sidecar recovery: search live slots, or switch the same
- * relative path into post-recovery mass-slot resolution. */
+/* Validate/capture the backing BDM identity (driver + device number) on the
+ * SAME open file descriptor that will be used for data. Non-BDM fds pass.
+ * allow_capture is only for establishing the first trustworthy baseline. */
+int ps2_storage_validate_bdm_fd(int fd, int allow_capture);
+/* Generic massN: sidecar recovery: verify the exact inherited launch slot,
+ * or switch the same relative path into post-recovery mass-slot resolution. */
 int ps2_storage_recover_mass_sidecar(const char *probe_name);
 void ps2_storage_begin_bdm_recovery(void);
 /* Hardware diagnostics: log what every massN: slot answers for probe_name. */
