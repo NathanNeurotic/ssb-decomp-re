@@ -22,11 +22,11 @@ extern void ps2_gs_init(void);
 extern void ps2_gs_boot_screen(const char *title);
 extern void ps2_ultra_threads_init(void);
 extern void ps2_vi_init(void);
-extern int ps2_input_init(void);
+extern void ps2_input_init(void);
 extern int ps2_assets_init(void);
-extern int ps2_save_init(void);
+extern void ps2_save_init(void);
 extern void ps2_audio_init(void);
-extern int ps2_render_thread_init(void);
+extern void ps2_render_thread_init(void);
 extern void ps2_arena_init(void);
 extern void ps2_overlay_state_init(void);
 
@@ -83,11 +83,9 @@ int ps2_main(int argc, char *argv[])
     }
 
     ps2_boot_stage("IOP reset + modules", 0x800080);
-    if (ps2_iop_init() < 0)
-        ps2_panic("failed to initialize required IOP services");
+    ps2_iop_init();
     ps2_boot_stage("vblank + video init", 0x008080);
-    if (ps2_vblank_init() < 0)
-        ps2_panic("failed to initialize VBlank timing");
+    ps2_vblank_init();
     ps2_gs_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
@@ -121,49 +119,28 @@ int ps2_main(int argc, char *argv[])
 
     if (ps2_storage_data_device() != PS2_BOOT_CDROM)
     {
-        /*
-         * Enable crash-time log persistence, but do not synchronously write a
-         * diagnostic file on the boot thread. Optional logging must never be
-         * another storage operation that can delay or wedge game startup.
-         */
         ps2_log_enable_save(1);
+        ps2_log_save();
     }
 
-    /*
-     * Bring PAD/MTAP clients up before touching the memory card. Real hardware
-     * already proved this controller path healthy, and a damaged/slow card
-     * must not be allowed to interfere with libpad's one-time RPC setup.
-     */
-    ps2_log("boot: initializing controller backend");
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
-    if (!ps2_input_init())
-        ps2_panic("controller RPC initialization failed");
-    ps2_log("boot: controller backend initialized");
+    ps2_input_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
-    /*
-     * SRAM discovery runs in its own worker and has a finite boot budget.
-     * Existing SRAM is still resolved before syMainLoop; on timeout the game
-     * proceeds with RAM-backed SRAM and persistence disabled for this run.
-     */
+    /* Keep the on-screen boot log truthful. Previously the screen was only
+     * redrawn before save/audio init and after both had completed, so a hang
+     * inside either subsystem misleadingly left "input: ... ready" as the
+     * final visible line. */
     ps2_log("boot: initializing save backend");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
-    if (!ps2_save_init())
-        ps2_panic("SRAM backend initialization failed");
+    ps2_save_init();
     ps2_log("boot: save backend initialized");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
-    ps2_log("boot: initializing audio backend");
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
+    ps2_log("boot: scheduling audio backend");
     ps2_audio_init();
-    ps2_log("boot: audio backend initialized");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
-    ps2_log("boot: initializing render worker");
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
-    if (!ps2_render_thread_init())
-        ps2_panic("render worker initialization failed");
-    ps2_log("boot: render worker initialized");
+    ps2_render_thread_init();
 
     mem = ps2_mem_stats();
     ps2_log("mem: %u KiB committed (code/static %u KiB), budget %u KiB", (unsigned)(mem->total_used >> 10),
@@ -171,7 +148,7 @@ int ps2_main(int argc, char *argv[])
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
     ps2_log("boot: starting game");
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
+    ps2_log_save();
     /* syMainLoop creates the idle thread (libultra priority 127), which in
      * turn starts the game's main thread; this boot thread then just parks
      * at the lowest priority. */

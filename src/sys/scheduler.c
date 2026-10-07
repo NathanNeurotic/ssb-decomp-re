@@ -17,10 +17,6 @@
 #include <PR/sptask.h>
 #include <PR/ultratypes.h>
 
-#if defined(PLATFORM_PS2)
-extern void ps2_panic(const char *fmt, ...) __attribute__((noreturn));
-#endif
-
 /*
     28 00 u32	type;
     2C 04 u32	flags;
@@ -211,9 +207,7 @@ s32 func_80000B54(UNUSED SYTaskInfo *t)
     {
         return FALSE;
     }
-    curr = (sSYSchedulerPausedQueueHead != NULL)
-               ? &sSYSchedulerPausedQueueHead->info
-               : NULL;
+    curr = &sSYSchedulerPausedQueueHead->info;
 
     while (curr != NULL)
     {
@@ -237,7 +231,7 @@ s32 func_80000B54(UNUSED SYTaskInfo *t)
     {
         return FALSE;
     }
-    curr = (scQueue3Head != NULL) ? &scQueue3Head->info : NULL;
+    curr = &scQueue3Head->info;
 
     while (curr != NULL)
     {
@@ -303,11 +297,9 @@ void sySchedulerRemoveMainQueue(SYTaskInfo *task)
 }
 
 // 0x80000D44 - Add to sSYSchedulerPausedQueueHead/sSYSchedulerPausedQueueTail priority queue
-void sySchedulerAddPausedQueue(SYTaskGfx *task)
+void sySchedulerAddPausedQueue(SYTaskInfo *this_info)
 {
-    SYTaskInfo *this_info = &task->info;
-    SYTaskInfo *tail_info =
-        (sSYSchedulerPausedQueueTail != NULL) ? &sSYSchedulerPausedQueueTail->info : NULL;
+    SYTaskInfo *tail_info = &sSYSchedulerPausedQueueTail->info;
 
     while ((tail_info != NULL) && (tail_info->priority < this_info->priority))
     {
@@ -322,10 +314,8 @@ void sySchedulerAddPausedQueue(SYTaskGfx *task)
     }
     else
     {
-        this_info->next = (sSYSchedulerPausedQueueHead != NULL)
-                              ? &sSYSchedulerPausedQueueHead->info
-                              : NULL;
-        sSYSchedulerPausedQueueHead = task;
+        this_info->next = &sSYSchedulerPausedQueueHead->info;
+        sSYSchedulerPausedQueueHead = this_info;
     }
     tail_info = this_info->next;
 
@@ -333,48 +323,30 @@ void sySchedulerAddPausedQueue(SYTaskGfx *task)
     {
         tail_info->prev = this_info;
     }
-    else
-    {
-        sSYSchedulerPausedQueueTail = task;
-    }
+    else sSYSchedulerPausedQueueTail = this_info;
 }
 
 // remove from sSYSchedulerPausedQueueHead/sSYSchedulerPausedQueueTail queue
-void sySchedulerRemovePausedQueue(SYTaskGfx *task)
+void sySchedulerRemovePausedQueue(SYTaskInfo *this_info)
 {
-    SYTaskInfo *this_info = &task->info;
-
     if (this_info->prev != NULL)
     {
         this_info->prev->next = this_info->next;
     }
-    else
-    {
-        sSYSchedulerPausedQueueHead =
-            (this_info->next != NULL) ? (SYTaskGfx *)this_info->next : NULL;
-    }
-
+    else sSYSchedulerPausedQueueHead = this_info->next;
+    
     if (this_info->next != NULL)
     {
         this_info->next->prev = this_info->prev;
     }
-    else
-    {
-        sSYSchedulerPausedQueueTail =
-            (this_info->prev != NULL) ? (SYTaskGfx *)this_info->prev : NULL;
-    }
-
-    this_info->next = NULL;
-    this_info->prev = NULL;
+    else sSYSchedulerPausedQueueTail = this_info->prev;
 }
 
 // scQueue3Add
 // append to head of scQueue3Head/D_80044EE0_406F0 queue
 void func_80000E24(SYTaskGfx *task) {
     task->info.next = NULL;
-    task->info.prev = (D_80044EE0_406F0 != NULL)
-                          ? &D_80044EE0_406F0->info
-                          : NULL;
+    task->info.prev = &D_80044EE0_406F0->info;
     if (D_80044EE0_406F0 != NULL) {
         D_80044EE0_406F0->info.next = &task->info;
     } else {
@@ -880,9 +852,7 @@ s32 sySchedulerExecuteTask(SYTaskInfo *task)
                 v1 = sSYSchedulerCurrentTaskGfx;
             }
 
-            v0 = (sSYSchedulerPausedQueueHead != NULL)
-                     ? &sSYSchedulerPausedQueueHead->info
-                     : NULL;
+            v0 = &sSYSchedulerPausedQueueHead->info;
             while (v0 != NULL) {
                 if (v0->type == nSYTaskTypeGfx) {
                     if (((SYTaskGfx*) v0)->task_id == t->task_id) {
@@ -903,18 +873,16 @@ s32 sySchedulerExecuteTask(SYTaskInfo *task)
                 v0 = v0->next;
             }
 
-            v0 = (scCurrentQueue3Task != NULL)
-                     ? &scCurrentQueue3Task->info
-                     : NULL;
+            v0 = &scCurrentQueue3Task->info;
             if (v0 != NULL) {
                 if (v0->type == nSYTaskTypeGfx) {
-                    if (scCurrentQueue3Task->task_id == t->task_id) {
-                        v1 = scCurrentQueue3Task;
+                    if (sSYSchedulerCurrentTaskGfx->task_id == t->task_id) {
+                        v1 = (void*) v0;
                     }
                 }
             }
 
-            v0 = (scQueue3Head != NULL) ? &scQueue3Head->info : NULL;
+            v0 = &scQueue3Head->info;
             while (v0 != NULL) {
                 if (v0->type == nSYTaskTypeGfx) {
                     if (((SYTaskGfx*) v0)->task_id == t->task_id) {
@@ -1123,13 +1091,8 @@ void sySchedulerSpTaskDone(void)
     
                 if (sSYSchedulerRdpOutputBufferID < sSYSchedulerRdpCache)
                 {
-#if defined(PLATFORM_PS2)
-                    ps2_panic("scheduler RDP output buffer overflow (size=%d)",
-                              sSYSchedulerRdpOutputBufferID);
-#else
                     syDebugPrintf("rdp_output_buff over !! size = %d\n byte", sSYSchedulerRdpOutputBufferID);
                     while (TRUE);
-#endif
                 }
                 sSYSchedulerCurrentTaskGfx->info.state = nSYSchedulerStatusTaskQueued;
                 func_80000E24(sSYSchedulerCurrentTaskGfx);
@@ -1224,35 +1187,17 @@ void sySchedulerSoftReset(void);
 // jp: 0x8000241C 
 void sySchedulerThreadMain(void *arg)
 {
-#if defined(PLATFORM_PS2)
-    OSMesg mesg;
-#else
     s32 mesg;
-#endif
 
     // the wonders of matching
     sSYSchedulerClients = NULL;
 
-#if defined(PLATFORM_PS2)
-    /*
-     * These globals intentionally point at different task subtypes. Avoid the
-     * original chained assignment on PS2 so the compiler never propagates one
-     * incompatible pointer type through the chain.
-     */
-    sSYSchedulerMainQueueHead = NULL;
-    sSYSchedulerMainQueueTail = NULL;
-    sSYSchedulerCurrentTaskGfx = NULL;
-    sSYSchedulerCurrentTaskAudio = NULL;
-    sSYSchedulerPausedQueueHead = NULL;
-    sSYSchedulerPausedQueueTail = NULL;
-#else
     sSYSchedulerMainQueueHead =
     sSYSchedulerMainQueueTail =
     sSYSchedulerCurrentTaskGfx =
     sSYSchedulerCurrentTaskAudio =
     sSYSchedulerPausedQueueHead =
     sSYSchedulerPausedQueueTail = NULL;
-#endif
     scCurrentQueue3Task = scQueue3Head = D_80044EE0_406F0 = NULL;
 
     sSYSchedulerIsViModePending = FALSE;
@@ -1274,11 +1219,7 @@ void sySchedulerThreadMain(void *arg)
         break;
         
     case OS_TV_PAL:
-#if defined(PLATFORM_PS2)
-        ps2_panic("scheduler entered unsupported PAL TV mode");
-#else
         while (TRUE);
-#endif
         break;
         
     case OS_TV_MPAL:
@@ -1314,15 +1255,9 @@ void sySchedulerThreadMain(void *arg)
 
     while (TRUE)
     {
-#if defined(PLATFORM_PS2)
-        osRecvMesg(&gSYSchedulerTaskMesgQueue, &mesg, OS_MESG_BLOCK);
-
-        switch ((intptr_t)mesg)
-#else
         osRecvMesg(&gSYSchedulerTaskMesgQueue, (OSMesg)&mesg, OS_MESG_BLOCK);
 
         switch (mesg)
-#endif
         {
         case INTR_VRETRACE:
             sySchedulerVRetrace();
@@ -1353,11 +1288,7 @@ void sySchedulerThreadMain(void *arg)
         default:
             if (gSYSchedulerIsSoftReset == FALSE)
             {
-#if defined(PLATFORM_PS2)
-                sySchedulerPrepTask((SYTaskInfo *)mesg);
-#else
                 sySchedulerPrepTask(mesg);
-#endif
             }
         }
     }

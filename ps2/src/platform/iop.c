@@ -7,8 +7,8 @@
  * Exactly one reset happens per boot for BDM devices: once the USB host
  * driver is running, a second IOP reset leaves the stick unreachable.
  *
- * Base:      iomanX + fileXio + sio2man + mcman + mtapman + padman
- * Audio:     libsd + dedicated ssb_audio, both deferred until after storage/input
+ * Base:      iomanX + fileXio + sio2man + mtapman + padman + mcman/mcserv
+ *            + libsd/sdr
  * USB:       bdm + bdmfs_fatfs + usbd_mini + usbmass_bd_mini
  * massN:     USB stack first; MX4SIO/iLink/ATA added later only if the
  *            pack has not appeared (no reset in between)
@@ -42,13 +42,16 @@
     extern unsigned char name##_irx[];    \
     extern unsigned int size_##name##_irx
 
+DECLARE_IRX(ssb_usb_quiesce);
 DECLARE_IRX(iomanx);
 DECLARE_IRX(filexio);
 DECLARE_IRX(sio2man);
 DECLARE_IRX(mtapman);
 DECLARE_IRX(padman);
 DECLARE_IRX(mcman);
+DECLARE_IRX(mcserv);
 DECLARE_IRX(libsd);
+DECLARE_IRX(sdr);
 DECLARE_IRX(ssb_audio);
 
 DECLARE_IRX(bdm);
@@ -208,10 +211,31 @@ static int mount_hdd_partition(void)
     return -1;
 }
 
-int ps2_iop_init(void)
+/*
+ * A launcher that used USB leaves its OHCI controller running, and PS2SDK's
+ * usbd does not stop it on IOP reboot. It then keeps DMAing into IOP RAM
+ * while the new kernel boots, which hung our reset from some launchers. Halt
+ * it from inside the inherited IOP first; the module is a no-op when USB was
+ * never enabled and never stays resident.
+ */
+static void quiesce_inherited_usb(void)
+{
+    int result = 0;
+    int id;
+
+    ps2_boot_stage("IOP: stopping inherited USB controller", 0xFF8000);
+    SifLoadFileInit();
+    SifInitIopHeap();
+    sbv_patch_enable_lmb();
+    id = SifExecModuleBuffer(ssb_usb_quiesce_irx, size_ssb_usb_quiesce_irx, 0, NULL, &result);
+    SifExitIopHeap();
+    SifLoadFileExit();
+    ps2_log("IOP: inherited USB quiesce id=%d res=%d", id, result);
+}
+
+void ps2_iop_init(void)
 {
     int preserve_iop = ps2_storage_requires_iop_preserve();
-    int required_ok = 1;
 
     sLoadedCount = 0;
     sIopWasReset = 0;
@@ -225,6 +249,7 @@ int ps2_iop_init(void)
     if (!preserve_iop)
     {
         ps2_log_console(0);
+        quiesce_inherited_usb();
         ps2_boot_stage("IOP: reset request", 0xC0C000);
         while (!SifIopReset("", 0))
         {
@@ -244,70 +269,28 @@ int ps2_iop_init(void)
     if (sIopWasReset)
         sbv_patch_fileio();
 
-    /*
-     * After our own reset these modules must actually load. On preserved IOP
-     * paths a duplicate module may legitimately reject the load because the
-     * launcher's service is already resident; fileXioInit()/the later RPC
-     * preflights remain the authoritative readiness tests there.
-     */
-    if (LOAD_IRX(iomanx) < 0 && sIopWasReset)
-        required_ok = 0;
-    if (LOAD_IRX(filexio) < 0 && sIopWasReset)
-        required_ok = 0;
+    LOAD_IRX(iomanx);
+    LOAD_IRX(filexio);
+    /* Even when the inherited IOP already had fileXio loaded and the duplicate
+     * module load is rejected, bind the EE RPC client to the live service. */
+    fileXioInit();
 
-    /*
-     * Keep the SIO2 client order already proven on hardware and documented by
-     * PS2SDK's multitap sample: MTAPMAN/PADMAN before MCMAN. PADMAN is
-     * required; MTAPMAN and MCMAN are optional enhancements and may fail
-     * without making the game itself unbootable.
-     */
-    if (LOAD_IRX(sio2man) < 0 && sIopWasReset)
-        required_ok = 0;
+    LOAD_IRX(sio2man);
     LOAD_IRX(mtapman);
-    if (LOAD_IRX(padman) < 0 && sIopWasReset)
-        required_ok = 0;
+    LOAD_IRX(padman);
     LOAD_IRX(mcman);
-
+    LOAD_IRX(mcserv);
+    LOAD_IRX(libsd);
     /*
-     * Match RiptOPL's proven reset ordering: the USB HOST driver is resident
-     * before the EE fileXio RPC client binds. The post-reset BDM/FAT and mass
-     * driver are still loaded later by ps2_iop_load_boot_device_drivers().
-     *
-     * Do this only for USB-capable data paths. Other backends keep their
-     * existing module set and ordering.
+     * Real hardware has already proven the embedded sdr server can wedge this
+     * port during startup. Storage work must not be masked by an unrelated
+     * audio RPC hang, so keep SDR deferred until the common storage path is
+     * stable on hardware.
      */
-    if (ps2_storage_data_device() == PS2_BOOT_BDM ||
-        ps2_storage_data_device() == PS2_BOOT_USB)
-    {
-        if (LOAD_IRX(usbd_mini) < 0)
-            ps2_log("IOP: RiptOPL USB host failed during base init");
-    }
-
-    /* Bind only after the host-side USB module ordering above, matching
-     * RiptOPL's sysReset() sequence on hardware. */
-    if (fileXioInit() < 0)
-    {
-        ps2_log("IOP: fileXio RPC client failed to initialize");
-        required_ok = 0;
-    }
-
-    /*
-     * Keep SPU2 completely outside the storage/input-critical boot path.
-     * libsd is an import dependency of ssb_audio only, so load both together
-     * later from ps2_iop_load_audio_driver(). This also keeps MMCE/SIO2 setup
-     * free of unrelated audio modules.
-     */
-    ps2_log("IOP: audio modules deferred until audio initialization");
+    ps2_log("IOP: sdr deferred for hardware-safe storage validation");
 
     ps2_log("IOP: %s, %d base modules",
             sIopWasReset ? "reset" : "kept (inherited filesystem)", sLoadedCount);
-
-    if (!required_ok)
-    {
-        ps2_log("IOP: required base service initialization failed");
-        return -1;
-    }
-    return 0;
 }
 
 int ps2_iop_mmce_prepare_runtime_stream(void)
@@ -362,7 +345,9 @@ int ps2_iop_mmce_prepare_runtime_stream(void)
 
     if (LOAD_IRX(mtapman) < 0 ||
         LOAD_IRX(padman) < 0 ||
-        LOAD_IRX(mcman) < 0)
+        LOAD_IRX(mcman) < 0 ||
+        LOAD_IRX(mcserv) < 0 ||
+        LOAD_IRX(libsd) < 0)
         return -1;
 
     ps2_log("IOP: final MMCE game stack ready (MMCEDRV before PAD/MC)");
@@ -380,12 +365,6 @@ int ps2_iop_load_audio_driver(void)
      */
     if (ps2_iop_module_loaded("ssb_audio"))
         return 0;
-
-    if (!ps2_iop_module_loaded("libsd") && LOAD_IRX(libsd) < 0)
-    {
-        ps2_log("IOP: libsd failed to start; audio disabled");
-        return -1;
-    }
 
     ps2_log("IOP: starting dedicated ssb_audio server");
     return LOAD_IRX(ssb_audio);
@@ -408,7 +387,7 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
          * add the other local transports without resetting the IOP. */
         if (load_bdm_core() < 0)
             return -1;
-        if (LOAD_IRX(usbmass_bd_mini) < 0)
+        if (LOAD_IRX(usbd_mini) < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
             ps2_log("IOP: USB mass storage unavailable; other BDM transports remain");
         return 0;
 
@@ -416,7 +395,7 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
         return LOAD_IRX(cdvd);
 
     case PS2_BOOT_USB:
-        if (load_bdm_core() < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
+        if (load_bdm_core() < 0 || LOAD_IRX(usbd_mini) < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
             return -1;
         return 0;
 
@@ -501,37 +480,22 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
 
 int ps2_iop_load_bdm_fallback_transports(void)
 {
-    static int sTier;
+    static int sDone;
 
-    if (ps2_storage_data_device() != PS2_BOOT_BDM)
+    if (ps2_storage_data_device() != PS2_BOOT_BDM || sDone)
         return 0;
+    sDone = 1;
 
-    /*
-     * Match RiptOPL's literal-mass recovery order instead of loading every
-     * possible backend at once. USB is already the initial tier. If the exact
-     * massN: slot has not reappeared, add MX4SIO alone; only then add the
-     * expensive iLink + ATA transports. Nothing here resets the IOP.
-     */
-    if (sTier == 0)
-    {
-        sTier = 1;
-        ps2_log("IOP: mass recovery tier 2: MX4SIO");
-        LOAD_IRX(mx4sio_bd);
-        return 1;
-    }
-
-    if (sTier == 1)
-    {
-        sTier = 2;
-        ps2_log("IOP: mass recovery tier 3: iLink + ATA");
-        if (LOAD_IRX(iLinkman) >= 0)
-            LOAD_IRX(IEEE1394_bd);
-        if (LOAD_IRX(ps2dev9) >= 0 && LOAD_IRX(ps2atad) >= 0)
-            sleep(1);
-        return 1;
-    }
-
-    return 0;
+    /* Called only when the pack has not appeared on USB. These are added to
+     * the live BDM stack -- never via an IOP reset -- and each one is
+     * optional: hardware that is not present simply fails to load. */
+    ps2_log("IOP: adding iLink/ATA/MX4SIO BDM transports for massN:");
+    if (LOAD_IRX(iLinkman) >= 0)
+        LOAD_IRX(IEEE1394_bd);
+    if (LOAD_IRX(ps2dev9) >= 0 && LOAD_IRX(ps2atad) >= 0)
+        sleep(1);
+    LOAD_IRX(mx4sio_bd);
+    return 1;
 }
 
 int ps2_iop_module_loaded(const char *name)

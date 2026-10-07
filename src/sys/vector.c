@@ -126,8 +126,7 @@ f32 syVectorAngleDiff3D(Vec3f *a, Vec3f *b)
 
 Vec3f* syVectorRotate3D(Vec3f *dst, s32 axis, f32 angle)
 {
-    /* Invalid axis leaves the vector unchanged instead of using indeterminate locals. */
-    f32 x = dst->x, y = dst->y, z = dst->z;
+    f32 x, y, z;
     f32 sin = sinf(angle);
     f32 cos = cosf(angle);
 

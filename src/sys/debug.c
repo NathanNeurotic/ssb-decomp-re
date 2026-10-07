@@ -736,23 +736,14 @@ void syDebugFramebufferPrintThreadStatus(OSThread *t, sb32 is_show_summary)
 
 OSThread* syDebugGetFaultThread(void)
 {
-#if defined(PLATFORM_PS2)
-    /*
-     * The PS2 port installs its own EE exception vectors and does not maintain
-     * libultra's private active-thread queue/RMON fault flags. Keeping the N64
-     * scanner here produced an implicit __osGetActiveQueue() ABI dependency
-     * that only disappeared because this section happened to be dead-stripped.
-     */
-    return NULL;
-#else
     OSThread *thread = __osGetActiveQueue();
 
     while (thread->priority != -1)
     {
-        if
+        if 
         (
             thread->priority > OS_PRIORITY_IDLE &&
-            thread->priority < OS_PRIORITY_APPMAX &&
+            thread->priority < OS_PRIORITY_APPMAX && 
             (thread->flags & (OS_FLAG_CPU_BREAK | OS_FLAG_FAULT))
         )
         {
@@ -762,7 +753,6 @@ OSThread* syDebugGetFaultThread(void)
     }
 
     return NULL;
-#endif
 }
 
 /*
@@ -916,11 +906,7 @@ void syDebugStartRmonThread8(void)
 void syDebugFileLoaderThread8(void *arg)
 {
     OSMesg msg;
-#if defined(PLATFORM_PS2)
-    u32 sp50 = 0;
-#else
     u32 sp50;
-#endif
     OSPri origPri;
     s32 count;
     OSMesgQueue *mq;

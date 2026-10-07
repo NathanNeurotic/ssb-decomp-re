@@ -33,7 +33,7 @@ typedef struct PS2InputState
     int8_t stick_y;
 } PS2InputState;
 
-int ps2_input_init(void);
+void ps2_input_init(void);
 void ps2_input_poll(void);
 void ps2_input_quiesce(void);
 const PS2InputState *ps2_input_state(int player);

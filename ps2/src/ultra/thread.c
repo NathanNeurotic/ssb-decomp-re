@@ -90,8 +90,7 @@ static void stack_free(void *stack, u32 size)
 {
     u8 *p = (u8 *)stack;
 
-    if (p >= &sCoroutineStacks[0][0] &&
-        p < (&sCoroutineStacks[0][0] + sizeof(sCoroutineStacks)))
+    if (p >= &sCoroutineStacks[0][0] && p < &sCoroutineStacks[COROUTINE_STACK_SLOTS][0])
     {
         s32 intr = ps2_intr_disable();
 
@@ -155,8 +154,6 @@ OSThread *ps2_ultra_self(void)
     PS2_THREAD_EXT(t)->magic = PS2_THREAD_MAGIC;
     PS2_THREAD_EXT(t)->ee_id = id;
     PS2_THREAD_EXT(t)->run_sema = create_run_sema();
-    if (PS2_THREAD_EXT(t)->run_sema < 0)
-        ps2_panic("cannot create run semaphore for foreign EE thread %ld", (long)id);
     PS2_THREAD_EXT(t)->started = 1;
     if (id >= 0 && id < EE_MAX_THREADS)
     {
@@ -183,11 +180,6 @@ void osCreateThread(OSThread *t, OSId id, void (*entry)(void *), void *arg, void
     ext->arg = arg;
     ext->stack_class = cls;
     ext->stack = stack_alloc(cls, &ext->stack_size);
-    if (ext->stack == NULL)
-    {
-        ps2_panic("osCreateThread(id=%ld) cannot allocate %lu-byte stack",
-                  (long)id, (unsigned long)ext->stack_size);
-    }
     ext->run_sema = create_run_sema();
 
     __builtin_memset(&th, 0, sizeof(th));
@@ -222,32 +214,20 @@ void osStartThread(OSThread *t)
 
     if (!ext->started)
     {
-        int rc = StartThread(ext->ee_id, t);
-
-        if (rc < 0)
-            ps2_panic("osStartThread(id=%ld ee=%ld) failed: %d",
-                      (long)t->id, (long)ext->ee_id, rc);
         ext->started = 1;
         t->state = OS_STATE_RUNNABLE;
+        StartThread(ext->ee_id, t);
     }
     else if (ext->suspended)
     {
-        int rc = ResumeThread(ext->ee_id);
-
-        if (rc < 0)
-            ps2_panic("osStartThread resume(id=%ld ee=%ld) failed: %d",
-                      (long)t->id, (long)ext->ee_id, rc);
         ext->suspended = 0;
         t->state = OS_STATE_RUNNABLE;
+        ResumeThread(ext->ee_id);
     }
     else if (t->state == OS_STATE_STOPPED)
     {
-        int rc = SignalSema(ext->run_sema);
-
-        if (rc < 0)
-            ps2_panic("osStartThread signal(id=%ld sema=%ld) failed: %d",
-                      (long)t->id, (long)ext->run_sema, rc);
         t->state = OS_STATE_RUNNABLE;
+        SignalSema(ext->run_sema);
     }
 }
 

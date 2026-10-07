@@ -66,11 +66,9 @@ typedef struct Voice
 
 static int sReady;
 static uint8_t *sSet;                     /* whole sample region, EE RAM */
-static uint32_t sSetBytes;
 static const PS2SpuSampleEntry *sEntries;
 static uint32_t sCount;
 static int *sResidentOf;                  /* per sample: index into sRes or -1 */
-static uint32_t sResidentBytes;
 static Resident sRes[MAX_RESIDENT];
 static int sResCount;
 static uint32_t sClock;
@@ -81,10 +79,7 @@ static SifRpcClientData_t sAudioRpc __attribute__((aligned(64)));
 static uint8_t sRpcSend[SSB_AUDIO_RPC_SIZE] __attribute__((aligned(64)));
 static uint32_t sRpcRecv[4] __attribute__((aligned(64)));
 static volatile int sRpcPending;
-static int sRpcPoisoned;
 static PS2SpuStats sStats;
-
-#define AUDIO_RPC_TIMEOUT_US 2000000u
 
 static int audio_rpc_bind(void)
 {
@@ -112,30 +107,11 @@ static void audio_rpc_complete(void *arg)
 
 static int audio_rpc_drain(void)
 {
-    uint32_t start;
-
-    if (sRpcPoisoned)
-        return -1;
     if (!sRpcPending)
         return (int)sRpcRecv[0];
 
-    start = ps2_time_us();
-    while (sRpcPending || sceSifCheckStatRpc(&sAudioRpc))
-    {
-        if ((uint32_t)(ps2_time_us() - start) >= AUDIO_RPC_TIMEOUT_US)
-        {
-            /*
-             * Never reuse the shared client/staging buffers after a timed-out
-             * SIF request. The IOP may still complete it later; poisoning the
-             * audio backend keeps that late completion isolated instead of
-             * letting optional audio stall or corrupt the rest of the port.
-             */
-            sRpcPoisoned = 1;
-            ps2_log("audio: RPC timed out after 2 s; disabling audio");
-            return -1;
-        }
-        DelayThread(1000);
-    }
+    while (sceSifCheckStatRpc(&sAudioRpc))
+        DelayThread(50);
 
     sRpcPending = 0;
     return (int)sRpcRecv[0];
@@ -145,7 +121,7 @@ static int audio_rpc_call(int cmd, const void *send, uint32_t send_size)
 {
     int rc;
 
-    if (sRpcPoisoned || send_size > SSB_AUDIO_RPC_SIZE)
+    if (send_size > SSB_AUDIO_RPC_SIZE)
         return -1;
 
     /* Upload/init calls share the client and staging buffer with the
@@ -155,24 +131,18 @@ static int audio_rpc_call(int cmd, const void *send, uint32_t send_size)
 
     memset(sRpcRecv, 0, sizeof(sRpcRecv));
     FlushCache(0);
-    sRpcPending = 1;
-    rc = sceSifCallRpc(&sAudioRpc, cmd, SIF_RPC_M_NOWAIT,
-                       (void *)send, (int)send_size,
-                       sRpcRecv, sizeof(sRpcRecv),
-                       audio_rpc_complete, NULL);
+    rc = sceSifCallRpc(&sAudioRpc, cmd, 0, (void *)send, (int)send_size,
+                       sRpcRecv, sizeof(sRpcRecv), NULL, NULL);
     if (rc < 0)
-    {
-        sRpcPending = 0;
         return rc;
-    }
-    return audio_rpc_drain();
+    return (int)sRpcRecv[0];
 }
 
 static int audio_rpc_batch_async(const void *send, uint32_t send_size)
 {
     int rc;
 
-    if (sRpcPoisoned || send_size > SSB_AUDIO_RPC_SIZE)
+    if (send_size > SSB_AUDIO_RPC_SIZE)
         return -1;
 
     /*
@@ -212,33 +182,29 @@ static void batch_add(uint16_t func, uint16_t entry, uint32_t value)
     }
 }
 
-static int batch_submit(void)
+static void batch_submit(void)
 {
     int n = sBatchCount;
     uint32_t bytes;
-    int rc;
 
     sStats.batch_entries = (uint32_t)n;
     if (n == 0)
-        return 1;
+        return;
 
     ((uint32_t *)sRpcSend)[0] = (uint32_t)n;
     memcpy(sRpcSend + 4, sBatch, (size_t)n * sizeof(sceSdBatch));
     bytes = 4u + (uint32_t)n * (uint32_t)sizeof(sceSdBatch);
 
-    rc = audio_rpc_batch_async(sRpcSend, bytes);
-    sBatchCount = 0;
-    if (rc < 0)
+    if (audio_rpc_batch_async(sRpcSend, bytes) < 0)
     {
         sReady = 0;
         ps2_log("audio: batch RPC failed; disabling audio");
-        return 0;
     }
-    return 1;
+    sBatchCount = 0;
 }
 
 /* Copy [src, src+size) from EE RAM to SPU RAM at addr (blocking). */
-static int spu_upload(const uint8_t *src, uint32_t addr, uint32_t size)
+static void spu_upload(const uint8_t *src, uint32_t addr, uint32_t size)
 {
     uint32_t done = 0;
 
@@ -260,13 +226,12 @@ static int spu_upload(const uint8_t *src, uint32_t addr, uint32_t size)
         {
             sReady = 0;
             ps2_log("audio: sample upload RPC failed; disabling audio");
-            return 0;
+            return;
         }
         done += n;
     }
     sStats.uploads++;
     sStats.upload_bytes += size;
-    return 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -352,9 +317,7 @@ static int make_resident(int sample)
         res_remove(lru);
         sStats.evictions++;
     }
-    if (!spu_upload(sSet + e->data_off, addr, e->data_size))
-        return 0;
-
+    spu_upload(sSet + e->data_off, addr, e->data_size);
     sRes[sResCount].sample = sample;
     sRes[sResCount].addr = addr;
     sRes[sResCount].size = e->data_size;
@@ -368,128 +331,47 @@ static int make_resident(int sample)
 /* Public interface                                                    */
 /* ------------------------------------------------------------------ */
 
-static void release_sample_set(void)
-{
-    if (sResidentOf != NULL)
-    {
-        ps2_mem_free(PS2_MEM_AUDIO, sResidentOf, sResidentBytes);
-        sResidentOf = NULL;
-    }
-    if (sSet != NULL)
-    {
-        ps2_mem_free(PS2_MEM_AUDIO, sSet, sSetBytes);
-        sSet = NULL;
-    }
-
-    sSetBytes = 0;
-    sResidentBytes = 0;
-    sEntries = NULL;
-    sCount = 0;
-    sResCount = 0;
-}
-
 int ps2_spu_init(void)
 {
     PS2SpuSampleHeader head;
     uint32_t size, i;
     int v;
 
-    sReady = 0;
-    sRpcPoisoned = 0;
-    sRpcPending = 0;
-    sBatchCount = 0;
-    sResCount = 0;
-    sClock = 0;
-    memset(&sStats, 0, sizeof(sStats));
-    memset(sVoices, 0, sizeof(sVoices));
-    release_sample_set();
-
     ps2_log("audio: SPU init stage 1/6 - reading sample header");
+    ps2_rom_read(PS2_SPU_SAMPLES_VROM, &head, sizeof(head));
+    if (memcmp(head.magic, PS2_SPU_SAMPLES_MAGIC, 4) != 0 || head.version != PS2_SPU_SAMPLES_VERSION)
     {
-        uint32_t region_bytes = ps2_rom_region_remaining(PS2_SPU_SAMPLES_VROM);
+        ps2_log("audio: no SPU sample set in the asset pack (rebuild it); audio stays silent");
+        return -1;
+    }
+    /* size = end of the last sample's data */
+    {
+        PS2SpuSampleEntry last;
 
-        if (region_bytes < sizeof(head))
-        {
-            ps2_log("audio: SPU sample region missing/truncated; audio stays silent");
-            return -1;
-        }
-
-        ps2_rom_read(PS2_SPU_SAMPLES_VROM, &head, sizeof(head));
-        if (memcmp(head.magic, PS2_SPU_SAMPLES_MAGIC, 4) != 0 ||
-            head.version != PS2_SPU_SAMPLES_VERSION ||
-            head.count == 0 ||
-            head.count > UINT32_MAX / (uint32_t)sizeof(PS2SpuSampleEntry) ||
-            head.entries_offset > region_bytes ||
-            head.count * (uint32_t)sizeof(PS2SpuSampleEntry) > region_bytes - head.entries_offset)
-        {
-            ps2_log("audio: invalid SPU sample metadata; audio stays silent");
-            return -1;
-        }
-
-        /* size = end of the last sample's data, constrained to this region. */
-        {
-            PS2SpuSampleEntry last;
-            uint32_t last_off = head.entries_offset +
-                                (head.count - 1) * (uint32_t)sizeof(last);
-
-            uint32_t entries_end =
-                head.entries_offset + head.count * (uint32_t)sizeof(PS2SpuSampleEntry);
-
-            ps2_rom_read(PS2_SPU_SAMPLES_VROM + last_off, &last, sizeof(last));
-            if (last.data_off > region_bytes ||
-                last.data_size > region_bytes - last.data_off)
-            {
-                ps2_log("audio: SPU sample payload escapes pack region; audio stays silent");
-                return -1;
-            }
-            size = last.data_off + last.data_size;
-            if (size < entries_end || size < sizeof(head))
-            {
-                ps2_log("audio: SPU sample set does not contain its metadata table");
-                return -1;
-            }
-        }
+        ps2_rom_read(PS2_SPU_SAMPLES_VROM + head.entries_offset + (head.count - 1) * sizeof(last), &last,
+                     sizeof(last));
+        size = last.data_off + last.data_size;
     }
     ps2_log("audio: SPU init stage 2/6 - sample set %u KiB, %u entries",
             (unsigned)(size / 1024), (unsigned)head.count);
-    sSetBytes = size;
-    sResidentBytes = head.count * (uint32_t)sizeof(int);
-    sSet = (uint8_t *)ps2_mem_alloc(PS2_MEM_AUDIO, sSetBytes, 64);
-    sResidentOf = (int *)ps2_mem_alloc(PS2_MEM_AUDIO, sResidentBytes, 16);
+    sSet = (uint8_t *)ps2_mem_alloc(PS2_MEM_AUDIO, size, 64);
+    sResidentOf = (int *)ps2_mem_alloc(PS2_MEM_AUDIO, head.count * sizeof(int), 16);
+    if (sSet == NULL || sResidentOf == NULL)
+    {
+        ps2_log("audio: cannot allocate %u KiB for the sample set; audio stays silent", (unsigned)(size / 1024));
+        return -1;
+    }
     ps2_log("audio: SPU init stage 3/6 - loading PS-ADPCM set");
     ps2_rom_read(PS2_SPU_SAMPLES_VROM, sSet, size);
     sEntries = (const PS2SpuSampleEntry *)(sSet + head.entries_offset);
     sCount = head.count;
     for (i = 0; i < sCount; i++)
-    {
-        const PS2SpuSampleEntry *e = &sEntries[i];
-
-        if (e->data_size == 0 || (e->data_size & 63u) != 0 ||
-            e->data_off > size || e->data_size > size - e->data_off)
-        {
-            ps2_log("audio: invalid sample entry %u range/alignment; audio stays silent", (unsigned)i);
-            release_sample_set();
-            return -1;
-        }
-        if (i > 0)
-        {
-            const PS2SpuSampleEntry *prev = &sEntries[i - 1];
-
-            if (e->key < prev->key || (e->key == prev->key && e->len < prev->len))
-            {
-                ps2_log("audio: sample table is not sorted at entry %u; audio stays silent", (unsigned)i);
-                release_sample_set();
-                return -1;
-            }
-        }
         sResidentOf[i] = -1;
-    }
 
     ps2_log("audio: SPU init stage 4/6 - binding dedicated RPC");
     if (audio_rpc_bind() < 0)
     {
         ps2_log("audio: ssb_audio RPC unavailable; audio stays silent");
-        release_sample_set();
         return -1;
     }
 
@@ -497,7 +379,6 @@ int ps2_spu_init(void)
     if (audio_rpc_call(SSB_AUDIO_CMD_INIT, sRpcSend, 0) < 0)
     {
         ps2_log("audio: ssb_audio init failed; audio stays silent");
-        release_sample_set();
         return -1;
     }
     ps2_log("audio: SPU init stage 6/6 - configuring voices");
@@ -522,12 +403,7 @@ int ps2_spu_init(void)
         sVoices[v].sample = -1;
     }
     batch_add(SD_BATCH_SETSWITCH, SPU_CORE | SD_SWITCH_KOFF, 0xFFFFFF);
-    if (!batch_submit() || audio_rpc_drain() < 0)
-    {
-        ps2_log("audio: initial voice configuration failed; audio stays silent");
-        release_sample_set();
-        return -1;
-    }
+    batch_submit();
 
     sStats.samples = sCount;
     sStats.spu_bytes_total = SPU_RAM_LIMIT - SPU_RAM_FIRST;

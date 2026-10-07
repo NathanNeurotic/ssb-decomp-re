@@ -32,42 +32,16 @@ static s32 vblank_handler(s32 cause)
     return 0;
 }
 
-int ps2_vblank_init(void)
+void ps2_vblank_init(void)
 {
     ee_sema_t sema = { 0 };
-    int rc;
 
     sema.init_count = 0;
     sema.max_count = 1;
     sVBlankSema = CreateSema(&sema);
-    if (sVBlankSema < 0)
-    {
-        ps2_log("vblank: semaphore creation failed (%d)", sVBlankSema);
-        return -1;
-    }
 
     sVBlankHandlerId = AddIntcHandler(INTC_VBLANK_S, vblank_handler, 0);
-    if (sVBlankHandlerId < 0)
-    {
-        ps2_log("vblank: handler registration failed (%d)", sVBlankHandlerId);
-        DeleteSema(sVBlankSema);
-        sVBlankSema = -1;
-        return -1;
-    }
-
-    rc = EnableIntc(INTC_VBLANK_S);
-    if (rc < 0)
-    {
-        ps2_log("vblank: interrupt enable failed (%d)", rc);
-        RemoveIntcHandler(INTC_VBLANK_S, sVBlankHandlerId);
-        sVBlankHandlerId = -1;
-        DeleteSema(sVBlankSema);
-        sVBlankSema = -1;
-        return -1;
-    }
-
-    ps2_log("vblank: interrupt service ready");
-    return 0;
+    EnableIntc(INTC_VBLANK_S);
 }
 
 uint32_t ps2_vblank_count(void)

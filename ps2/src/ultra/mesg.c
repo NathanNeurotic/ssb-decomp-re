@@ -73,10 +73,6 @@ void ps2_mesg_forget_thread(OSThread *t)
 
 void osCreateMesgQueue(OSMesgQueue *mq, OSMesg *msg, s32 count)
 {
-    if (mq == NULL || msg == NULL || count <= 0)
-        ps2_panic("osCreateMesgQueue invalid args mq=%p msg=%p count=%ld",
-                  mq, msg, (long)count);
-
     mq->mtqueue = NULL;
     mq->fullqueue = NULL;
     mq->validCount = 0;
@@ -273,14 +269,7 @@ void ps2_ultra_post_event(OSEvent e)
 {
     if (e < PS2_EVENT_COUNT && sEvents[e].mq != NULL)
     {
-        /*
-         * Thread-context synthetic hardware completions must not be dropped.
-         * Graphics posts SP then DP back-to-back; losing only DP can leave the
-         * scheduler waiting forever for a completion that will never recur.
-         * Blocking here provides normal queue backpressure. Real interrupt
-         * context continues to use ps2_ultra_post_event_isr() below.
-         */
-        osSendMesg(sEvents[e].mq, sEvents[e].msg, OS_MESG_BLOCK);
+        osSendMesg(sEvents[e].mq, sEvents[e].msg, OS_MESG_NOBLOCK);
     }
 }
 

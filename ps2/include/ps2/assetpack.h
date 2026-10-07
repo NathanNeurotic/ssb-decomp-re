@@ -76,7 +76,5 @@ typedef struct PS2PackRegion
 
 /* Reads from the pack's virtual ROM address space (ps2/src/storage/assets.c). */
 void ps2_rom_read(uint32_t rom_addr, void *dst, uint32_t size);
-/* Bytes remaining in the mapped pack region containing rom_addr, or 0. */
-uint32_t ps2_rom_region_remaining(uint32_t rom_addr);
 
 #endif /* PS2_ASSETPACK_H */

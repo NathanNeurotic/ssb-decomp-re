@@ -1,6 +1,6 @@
 #include "main.h"
 
-#include <sc/scmanager.h>
+// #include "scenemgr/scene_manager.h"
 #include <sys/debug.h>
 #include <sys/dma.h>
 #include <sys/taskman.h>
@@ -42,45 +42,6 @@ void __osSetWatchLo(u32); // Only define this for US region as it breaks the JP 
 #define THREAD4_PRI 110
 #define THREAD5_PRI 50
 #define THREAD6_PRI 115
-
-#if defined(PLATFORM_PS2)
-/*
- * The N64 bootstrap waits forever for each system thread to announce itself.
- * Preserve that handshake, but make a missing PS2-side ready signal explicit
- * instead of leaving hardware on an unchanging screen indefinitely.
- *
- * Keep these declarations local rather than including ps2/platform.h: the
- * game headers intentionally use libultra's u32/s32 typedefs.
- */
-extern unsigned int ps2_time_us(void);
-extern void ps2_log(const char *fmt, ...);
-extern void ps2_panic(const char *fmt, ...) __attribute__((noreturn));
-extern OSMesgQueue gSYMainThreadingMesgQueue;
-
-static void syMainWaitBootReady(const char *name)
-{
-    OSMesg mesg;
-    u32 start = (u32)ps2_time_us();
-
-    for (;;)
-    {
-        if (osRecvMesg(&gSYMainThreadingMesgQueue, &mesg, OS_MESG_NOBLOCK) == 0)
-        {
-            ps2_log("game bootstrap: %s ready", name);
-            return;
-        }
-        if ((u32)((u32)ps2_time_us() - start) >= 10000000U)
-            ps2_panic("game bootstrap timed out waiting for %s", name);
-
-        /*
-         * Child system threads have higher priority and run immediately when
-         * runnable. Yield here so this low-priority bootstrap poll never burns
-         * an EE timeslice while it waits for their one-shot ready message.
-         */
-        osYieldThread();
-    }
-}
-#endif
 
 // // // // // // // // // // // //
 //                               //
@@ -190,13 +151,9 @@ void syMainSetDmemStatus(void)
 
 void syMainThreadStackOverflow(s32 tid)
 {
-#if defined(PLATFORM_PS2)
-    ps2_panic("game thread stack canary failed (id=%d)", tid);
-#else
     syDebugPrintf("thread stack overflow  id = %d\n", tid);
 
     while (TRUE);
-#endif
 }
 
 void syMainVerifyStackProbes(void) 
@@ -235,27 +192,15 @@ void syMainThread5(void *arg)
 
     osCreateThread(&sSYMainThread3, 3, sySchedulerThreadMain, NULL, &sSYMainThread3Stack[THREAD3_STACK_SIZE], THREAD3_PRI);
     sSYMainThread3Stack[STACK_CANARY_OFFSET] = STACK_CANARY; osStartThread(&sSYMainThread3);
-#if defined(PLATFORM_PS2)
-    syMainWaitBootReady("scheduler");
-#else
     osRecvMesg(&gSYMainThreadingMesgQueue, NULL, OS_MESG_BLOCK);
-#endif
 
     osCreateThread(&sSYMainThread4, 4, syAudioThreadMain, NULL, &sSYMainThread4Stack[THREAD4_STACK_SIZE], THREAD4_PRI);
     sSYMainThread4Stack[STACK_CANARY_OFFSET] = STACK_CANARY; osStartThread(&sSYMainThread4);
-#if defined(PLATFORM_PS2)
-    syMainWaitBootReady("audio");
-#else
     osRecvMesg(&gSYMainThreadingMesgQueue, NULL, OS_MESG_BLOCK);
-#endif
 
     osCreateThread(&gSYMainThread6, 6, syControllerThreadMain, NULL, &sSYMainThread6Stack[THREAD6_STACK_SIZE], THREAD6_PRI);
     sSYMainThread6Stack[STACK_CANARY_OFFSET] = STACK_CANARY; osStartThread(&gSYMainThread6);
-#if defined(PLATFORM_PS2)
-    syMainWaitBootReady("controller");
-#else
     osRecvMesg(&gSYMainThreadingMesgQueue, NULL, OS_MESG_BLOCK);
-#endif
 
     func_80006B80();
     syDmaLoadOverlay(&dSYMainSceneManagerOverlay);
@@ -264,9 +209,7 @@ void syMainThread5(void *arg)
 
 void syMainThread1Idle(void *arg) 
 {
-#if !defined(PLATFORM_PS2)
     syDebugStartRmonThread8();
-#endif
     osCreateThread(&gSYMainThread5, 5, syMainThread5, arg, &sSYMainThread5Stack[THREAD5_STACK_SIZE], THREAD5_PRI);
     sSYMainThread5Stack[STACK_CANARY_OFFSET] = STACK_CANARY;
 

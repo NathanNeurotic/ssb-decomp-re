@@ -21,7 +21,6 @@
 
 #include <debug.h>
 #include <dmaKit.h>
-#include <ee_regs.h>
 #include <gsKit.h>
 #include <kernel.h>
 
@@ -49,9 +48,6 @@ static GSGLOBAL *sGsGlobal;
 static uint64_t sPktBuf[2][PKT_BUF_QWORDS * 2] __attribute__((aligned(64)));
 static int sPktCur;
 static volatile int sPktInFlight; /* a buffer was kicked and not yet waited on */
-static volatile int sGsFaulted;
-
-#define GS_WAIT_TIMEOUT_US 2000000u
 
 /* The game's framebuffers (RDRAM on N64) - defined by the linker glue
  * (ps2/src/platform/arena.S) so every scene's arena-size arithmetic holds. */
@@ -157,27 +153,13 @@ static void pkt_close_cnt(void)
     gPS2Pkt.cnt[0] = DMATAG(qwc, DMATAG_CNT, 0);
 }
 
-static int dma_wait_gif(void)
+static void dma_wait_gif(void)
 {
-    uint32_t start;
-
-    if (!sPktInFlight)
-        return 1;
-
-    start = ps2_time_us();
-    while ((*R_EE_D2_CHCR & 0x00000100u) != 0)
+    if (sPktInFlight)
     {
-        if ((uint32_t)(ps2_time_us() - start) >= GS_WAIT_TIMEOUT_US)
-        {
-            sPktInFlight = 0;
-            sGsFaulted = 1;
-            ps2_log("GS: GIF DMA did not complete within 2 s");
-            return 0;
-        }
+        dmaKit_wait(DMA_CHANNEL_GIF, 0);
+        sPktInFlight = 0;
     }
-
-    sPktInFlight = 0;
-    return 1;
 }
 
 /* Terminate the current buffer's chain and start its DMA. */
@@ -209,8 +191,7 @@ static void pkt_kick(void)
     gPS2RenderStats.packet_bytes += bytes;
     gPS2RenderStats.kicks++;
 
-    if (!dma_wait_gif())
-        ps2_panic("GIF DMA timeout before packet submission");
+    dma_wait_gif();
     FlushCache(0); /* write back the packet (and any texel data it references) */
     dmaKit_send_chain(DMA_CHANNEL_GIF, gPS2Pkt.base, bytes / 16);
     sPktInFlight = 1;
@@ -266,19 +247,9 @@ void ps2_pkt_finish(void)
     ps2_pkt_ad(GSR_FINISH, 0);
     *PGS_CSR = PGS_CSR_FINISH; /* clear FINISH */
     pkt_kick();
-    if (!dma_wait_gif())
-        ps2_panic("GIF DMA timeout waiting for GS FINISH");
+    dma_wait_gif();
+    while (!(*PGS_CSR & PGS_CSR_FINISH))
     {
-        uint32_t start = ps2_time_us();
-
-        while (!(*PGS_CSR & PGS_CSR_FINISH))
-        {
-            if ((uint32_t)(ps2_time_us() - start) >= GS_WAIT_TIMEOUT_US)
-            {
-                sGsFaulted = 1;
-                ps2_panic("GS FINISH timeout");
-            }
-        }
     }
 }
 
@@ -538,12 +509,7 @@ void ps2_gs_prepare_exec(void)
     /* IGR raises the calling thread above the renderer before reaching here,
      * so no new GIF work can be queued. Let the current DMA complete, then
      * blank both display circuits while the next ELF/OSDSYS takes over. */
-    /*
-     * IGR must never become trapped behind a wedged renderer. A failed wait
-     * is already logged by dma_wait_gif(); blank the display and continue to
-     * the chainload/OSDSYS fallback rather than panicking inside the exit path.
-     */
-    (void)dma_wait_gif();
+    dma_wait_gif();
     *PGS_PMODE = PGS_PMODE_VAL(0, 0, 1, 0);
     *PGS_BGCOLOR = 0;
 }
@@ -587,13 +553,9 @@ void ps2_gs_show_panic(const char *msg)
     int y = 40;
     size_t off = 0, len = strlen(msg);
 
-    if (!sGsReady || sGsFaulted)
+    if (!sGsReady)
     {
-        /*
-         * If GIF/GS itself faulted, do not recurse through ps2_pkt_finish()
-         * while trying to render the panic. Fall back to ps2sdk's standalone
-         * debug screen instead.
-         */
+        /* before our GS setup: use ps2sdk's self-contained text screen */
         init_scr();
         scr_setbgcolor(0x600000);
         scr_clear();
@@ -604,7 +566,7 @@ void ps2_gs_show_panic(const char *msg)
     pkt_open(sPktCur);
     ps2_gs_clear(0, 0x000060, 0);
     ps2_gs_text(8, 16, 0x4040FF, "SSB64 PS2 - FATAL ERROR");
-    while (off < len && y < 150)
+    while (off < len && y < 230)
     {
         size_t n = len - off;
 
@@ -618,44 +580,6 @@ void ps2_gs_show_panic(const char *msg)
         off += n;
         y += 10;
     }
-
-    /*
-     * Hardware failures cannot rely on stdout or a writable data device.
-     * Put the tail of the in-memory boot log directly on the fatal screen so
-     * one test distinguishes "slot never mounted" from "pack open failed".
-     * ps2_panic() appended two lines ("*** PANIC ***" and msg) immediately
-     * before calling us, so omit those and show the useful history preceding
-     * them.
-     */
-    if (y < 220)
-    {
-        int count = ps2_log_line_count();
-        int first = count - 10;
-        int last = count - 2;
-        int i;
-
-        if (first < 0)
-            first = 0;
-        if (last < first)
-            last = first;
-
-        y += 4;
-        ps2_gs_text(8, y, 0x80C0FF, "Recent boot log:");
-        y += 10;
-
-        for (i = first; i < last && y < 230; i++)
-        {
-            const char *src = ps2_log_line(i);
-            size_t n = strlen(src);
-
-            if (n > 38)
-                n = 38;
-            memcpy(line, src, n);
-            line[n] = '\0';
-            ps2_gs_text(8, y, 0xC0C0C0, line);
-            y += 10;
-        }
-    }
     ps2_pkt_finish();
     ps2_gs_present_now(0);
 }
@@ -667,9 +591,6 @@ void ps2_gs_show_panic(const char *msg)
 void ps2_gs_init(void)
 {
     sGsGlobal = gsKit_init_global();
-    if (sGsGlobal == NULL)
-        ps2_panic("GS: gsKit global allocation failed");
-
     sGsGlobal->Mode = GS_MODE_NTSC;
     if (ps2_video_progressive())
     {
