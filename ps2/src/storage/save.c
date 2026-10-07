@@ -16,10 +16,10 @@
 #include <ps2/platform.h>
 
 #include <kernel.h>
-#include <fcntl.h>
+#define NEWLIB_PORT_AWARE
+#include <fileio.h>
+#include <sifrpc.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #define SRAM_SIZE (32 * 1024)
 #define SAVE_DIR "mc0:SSB64PS2"
@@ -44,6 +44,7 @@ static uint32_t sSequence;
 static int sNextSlot;
 static int sLock = -1;
 static int sThreadId = -1;
+static int sFioReady;
 static uint32_t sNextRetryVBlank;
 static uint8_t sThreadStack[16 * 1024] __attribute__((aligned(64)));
 
@@ -64,6 +65,42 @@ static uint32_t crc32_calc(const uint8_t *p, uint32_t n)
     return ~crc;
 }
 
+static int save_fio_init(void)
+{
+    SifRpcClientData_t probe __attribute__((aligned(64)));
+    int i;
+
+    if (sFioReady)
+        return 1;
+
+    /*
+     * Keep memory-card traffic off fileXio, which owns the persistent DAT
+     * stream. PS2SDK's fioInit() has an unbounded bind loop, so first prove
+     * the ROM FILEIO service is present with a bounded probe.
+     */
+    memset(&probe, 0, sizeof(probe));
+    for (i = 0; i < 500; i++)
+    {
+        int rc = sceSifBindRpc(&probe, 0x80000001u, 0);
+
+        if (rc < 0)
+            break;
+        if (probe.server != NULL)
+        {
+            if (fioInit() >= 0)
+            {
+                sFioReady = 1;
+                return 1;
+            }
+            break;
+        }
+        DelayThread(1000);
+    }
+
+    ps2_log("save: FILEIO RPC unavailable; SRAM stays in RAM");
+    return 0;
+}
+
 static int read_full_fd(int fd, void *dst, int size)
 {
     uint8_t *p = (uint8_t *)dst;
@@ -71,7 +108,7 @@ static int read_full_fd(int fd, void *dst, int size)
 
     while (done < size)
     {
-        int n = read(fd, p + done, size - done);
+        int n = fioRead(fd, p + done, size - done);
 
         if (n <= 0)
             return -1;
@@ -87,7 +124,7 @@ static int write_full_fd(int fd, const void *src, int size)
 
     while (done < size)
     {
-        int n = write(fd, p + done, size - done);
+        int n = fioWrite(fd, p + done, size - done);
 
         if (n <= 0)
             return -1;
@@ -105,14 +142,18 @@ static const char *slot_name(int slot)
 static int64_t load_slot(int slot, uint8_t *dst)
 {
     PS2SaveHeader *h = (PS2SaveHeader *)sWriteBuf;
-    int fd = open(slot_name(slot), O_RDONLY);
+    int fd;
     int n;
 
+    if (!save_fio_init())
+        return -1;
+
+    fd = fioOpen(slot_name(slot), FIO_O_RDONLY);
     if (fd < 0)
         return -1;
 
     n = read_full_fd(fd, sWriteBuf, sizeof(sWriteBuf));
-    close(fd);
+    fioClose(fd);
 
     if (n != (int)sizeof(sWriteBuf) || memcmp(h->magic, "SSB64SAV", 8) != 0 ||
         h->version != SAVE_VERSION || h->size != SRAM_SIZE ||
@@ -149,10 +190,16 @@ static void flush_now(void)
     h->size = SRAM_SIZE;
     h->crc = crc32_calc(sWriteBuf + sizeof(*h), SRAM_SIZE);
 
-    /* mkdir fails harmlessly when the directory already exists. */
-    mkdir(SAVE_DIR, 0777);
+    if (!save_fio_init())
+    {
+        sNextRetryVBlank = ps2_vblank_count() + 300;
+        return;
+    }
 
-    fd = open(slot_name(sNextSlot), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    /* fio/MCMAN is intentionally separate from the fileXio DAT stream. */
+    fioMkdir(SAVE_DIR);
+
+    fd = fioOpen(slot_name(sNextSlot), FIO_O_WRONLY | FIO_O_CREAT | FIO_O_TRUNC);
     if (fd < 0)
     {
         sNextRetryVBlank = ps2_vblank_count() + 300; /* retry in ~5 s */
@@ -161,7 +208,7 @@ static void flush_now(void)
     }
 
     n = write_full_fd(fd, sWriteBuf, sizeof(sWriteBuf));
-    close(fd);
+    fioClose(fd);
     if (n != (int)sizeof(sWriteBuf))
     {
         sNextRetryVBlank = ps2_vblank_count() + 300;
@@ -221,6 +268,7 @@ int ps2_save_init(void)
 
     memset(sSram, 0, sizeof(sSram));
     sDirty = 0;
+    sFioReady = 0;
     sNextRetryVBlank = 0;
 
     /*
