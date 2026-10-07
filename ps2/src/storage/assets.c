@@ -26,6 +26,7 @@ static PS2PackRegion *sRegions;
 static uint8_t **sResidentPtr; /* per region: EE copy or NULL */
 static uint8_t *sResidentBlob;
 static int sReadSema = -1;
+static int sMmceRuntimeStream;
 
 static uint32_t sBytesRead;
 static uint32_t sReads;
@@ -36,6 +37,11 @@ static int reopen_pack_stream(void)
     int new_fd;
 
     if (sPackPath[0] == '\0')
+        return 0;
+
+    /* The gameplay MMCE stream intentionally abandons MMCEMAN during its IOP
+     * rebuild. Never try to reopen the old mmceN: path after that handoff. */
+    if (sMmceRuntimeStream)
         return 0;
 
     /*
@@ -196,6 +202,26 @@ int ps2_assets_init(void)
     {
         ps2_log("assets: region table read failed");
         return 0;
+    }
+
+    /*
+     * MMCEMAN is the setup filesystem, not the in-game streaming transport.
+     * Promote the exact already-open DAT descriptor before loading the large
+     * resident block. This rebuilds the IOP around MMCEDRV and the ssbmmce
+     * bridge, preserving the card-side descriptor while removing the setup
+     * driver's SIO2 contention from gameplay.
+     */
+    if (ps2_storage_data_device() == PS2_BOOT_MMCE)
+    {
+        int stream_fd = ps2_file_mmce_enter_runtime_stream(sFd);
+
+        if (stream_fd < 0)
+        {
+            ps2_log("assets: MMCE runtime-stream handoff failed");
+            return 0;
+        }
+        sFd = stream_fd;
+        sMmceRuntimeStream = 1;
     }
 
     /* All resident regions are stored back to back: one read at boot. */
