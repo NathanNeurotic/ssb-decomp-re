@@ -16,6 +16,7 @@
  * core 1 (dry output). Returns 0 on success; the game then runs silent. */
 int ps2_spu_init(void);
 int ps2_spu_ready(void);
+void ps2_spu_shutdown(void);
 
 /* Finds the converted sample for an N64 wavetable (wav->base, wav->len and
  * its loop points in samples, 0/0 when not looped). Returns an id or -1. */
