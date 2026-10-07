@@ -248,35 +248,39 @@ void ps2_iop_init(void)
     LOAD_IRX(iomanx);
     LOAD_IRX(filexio);
 
-    /*
-     * Bring up the supported memory-card RPC stack before pad/multitap
-     * clients. This preserves the hardware-good 59baa97 save backend while
-     * keeping SIO2 dependency order deterministic on rebuilt IOPs.
-     */
-    LOAD_IRX(sio2man);
-    LOAD_IRX(mcman);
-    LOAD_IRX(mcserv);
-    LOAD_IRX(mtapman);
-    LOAD_IRX(padman);
-
-    /*
-     * Match RiptOPL's proven reset ordering: the USB HOST driver is resident
-     * before the EE fileXio RPC client binds. The post-reset BDM/FAT and mass
-     * driver are still loaded later by ps2_iop_load_boot_device_drivers().
-     *
-     * Do this only for USB-capable data paths. Other backends keep their
-     * existing module set and ordering.
-     */
     if (ps2_storage_data_device() == PS2_BOOT_BDM ||
         ps2_storage_data_device() == PS2_BOOT_USB)
     {
+        /*
+         * Mass/USB is the only special case. Rebuilt USB launches need the
+         * supported MC stack established before PAD and the RiptOPL USB host
+         * resident before the EE fileXio client binds.
+         */
+        LOAD_IRX(sio2man);
+        LOAD_IRX(mcman);
+        LOAD_IRX(mcserv);
+        LOAD_IRX(mtapman);
+        LOAD_IRX(padman);
+
         if (LOAD_IRX(usbd_mini) < 0)
             ps2_log("IOP: RiptOPL USB host failed during base init");
-    }
 
-    /* Bind only after the host-side USB module ordering above, matching
-     * RiptOPL's sysReset() sequence on hardware. */
-    fileXioInit();
+        fileXioInit();
+    }
+    else
+    {
+        /*
+         * Preserve the hardware-good 59baa97 ordering byte-for-behavior for
+         * MMCE, HDD, host and every other backend. Do not make mass recovery
+         * a global IOP architecture change.
+         */
+        fileXioInit();
+        LOAD_IRX(sio2man);
+        LOAD_IRX(mtapman);
+        LOAD_IRX(padman);
+        LOAD_IRX(mcman);
+        LOAD_IRX(mcserv);
+    }
 
     LOAD_IRX(libsd);
     /*
