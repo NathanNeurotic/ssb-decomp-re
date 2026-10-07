@@ -42,7 +42,6 @@
     extern unsigned char name##_irx[];    \
     extern unsigned int size_##name##_irx
 
-DECLARE_IRX(ssb_usb_quiesce);
 DECLARE_IRX(iomanx);
 DECLARE_IRX(filexio);
 DECLARE_IRX(sio2man);
@@ -211,28 +210,6 @@ static int mount_hdd_partition(void)
     return -1;
 }
 
-/*
- * A launcher that used USB leaves its OHCI controller running, and PS2SDK's
- * usbd does not stop it on IOP reboot. It then keeps DMAing into IOP RAM
- * while the new kernel boots, which hung our reset from some launchers. Halt
- * it from inside the inherited IOP first; the module is a no-op when USB was
- * never enabled and never stays resident.
- */
-static void quiesce_inherited_usb(void)
-{
-    int result = 0;
-    int id;
-
-    ps2_boot_stage("IOP: stopping inherited USB controller", 0xFF8000);
-    SifLoadFileInit();
-    SifInitIopHeap();
-    sbv_patch_enable_lmb();
-    id = SifExecModuleBuffer(ssb_usb_quiesce_irx, size_ssb_usb_quiesce_irx, 0, NULL, &result);
-    SifExitIopHeap();
-    SifLoadFileExit();
-    ps2_log("IOP: inherited USB quiesce id=%d res=%d", id, result);
-}
-
 void ps2_iop_init(void)
 {
     int preserve_iop = ps2_storage_requires_iop_preserve();
@@ -249,7 +226,6 @@ void ps2_iop_init(void)
     if (!preserve_iop)
     {
         ps2_log_console(0);
-        quiesce_inherited_usb();
         ps2_boot_stage("IOP: reset request", 0xC0C000);
         while (!SifIopReset("", 0))
         {
@@ -271,15 +247,32 @@ void ps2_iop_init(void)
 
     LOAD_IRX(iomanx);
     LOAD_IRX(filexio);
-    /* Even when the inherited IOP already had fileXio loaded and the duplicate
-     * module load is rejected, bind the EE RPC client to the live service. */
-    fileXioInit();
 
     LOAD_IRX(sio2man);
     LOAD_IRX(mtapman);
     LOAD_IRX(padman);
     LOAD_IRX(mcman);
     LOAD_IRX(mcserv);
+
+    /*
+     * Match RiptOPL's proven reset ordering: the USB HOST driver is resident
+     * before the EE fileXio RPC client binds. The post-reset BDM/FAT and mass
+     * driver are still loaded later by ps2_iop_load_boot_device_drivers().
+     *
+     * Do this only for USB-capable data paths. Other backends keep their
+     * existing module set and ordering.
+     */
+    if (ps2_storage_data_device() == PS2_BOOT_BDM ||
+        ps2_storage_data_device() == PS2_BOOT_USB)
+    {
+        if (LOAD_IRX(usbd_mini) < 0)
+            ps2_log("IOP: RiptOPL USB host failed during base init");
+    }
+
+    /* Bind only after the host-side USB module ordering above, matching
+     * RiptOPL's sysReset() sequence on hardware. */
+    fileXioInit();
+
     LOAD_IRX(libsd);
     /*
      * Real hardware has already proven the embedded sdr server can wedge this
@@ -387,7 +380,7 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
          * add the other local transports without resetting the IOP. */
         if (load_bdm_core() < 0)
             return -1;
-        if (LOAD_IRX(usbd_mini) < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
+        if (LOAD_IRX(usbmass_bd_mini) < 0)
             ps2_log("IOP: USB mass storage unavailable; other BDM transports remain");
         return 0;
 
@@ -395,7 +388,7 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
         return LOAD_IRX(cdvd);
 
     case PS2_BOOT_USB:
-        if (load_bdm_core() < 0 || LOAD_IRX(usbd_mini) < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
+        if (load_bdm_core() < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
             return -1;
         return 0;
 
