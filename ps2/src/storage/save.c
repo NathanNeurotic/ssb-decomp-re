@@ -64,14 +64,31 @@ static uint32_t crc32_calc(const uint8_t *p, uint32_t n)
 
 static int mc_call(int r)
 {
-    int cmd, result;
+    int cmd = MC_FUNC_NONE;
+    int result = -1;
+    int i;
 
     if (r != 0)
-    {
         return -1;
+
+    /*
+     * Never let a damaged SIO2/MCSERV transaction freeze game boot forever.
+     * libmc operations are asynchronous, so poll their completion for about
+     * two seconds instead of using MC_WAIT's unbounded blocking path.
+     */
+    for (i = 0; i < 120; i++)
+    {
+        int sync = mcSync(MC_NOWAIT, &cmd, &result);
+
+        if (sync > 0)
+            return result;
+        if (sync < 0)
+            return -1;
+        ps2_delay_vblanks(1);
     }
-    mcSync(0, &cmd, &result);
-    return result;
+
+    ps2_log("save: MCSERV timeout on command %d; disabling this operation", cmd);
+    return -1;
 }
 
 static int card_present(void)
