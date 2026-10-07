@@ -9,11 +9,14 @@
  *
  * Canonical examples:
  *   usb:/SSB64/ssb64.elf              -> mass0:/SSB64/
- *   mass1:/SSB64/ssb64.elf            -> mass1:/SSB64/
+ *   mass1:/SSB64/ssb64.elf            -> massN:/SSB64/ (slot found by probe)
  *   mx4sio:/SSB64/ssb64.elf           -> mx4sio:/SSB64/
  *   hdd0:+OPL:pfs:/SSB64/ssb64.elf    -> pfs0:/SSB64/
  *                                         mount source hdd0:+OPL
  *   udpfs:/SSB64/ssb64.elf            -> udpfs:/SSB64/
+ *
+ * massN: is resolved after the IOP reset by probing every massN: slot for
+ * the same relative path (USB first, then the other local BDM transports).
  *
  * A bare bdm: path is deliberately NOT guessed: it does not identify which
  * transport must be reconstructed after an IOP reset.
@@ -266,12 +269,16 @@ static int set_data_location(const char *path, int path_is_file)
     }
     else if (dev == PS2_BOOT_BDM)
     {
-        /* massN: names an already-mounted BDM filesystem but does not encode
-         * whether the transport is USB, ATA, MX4SIO, iLink, or network. Do
-         * not guess and destroy the correct stack with an IOP reset: inherit
-         * the launcher's mount exactly as supplied. */
-        sDataNeedsExistingIop = 1;
-        sDataNeedsBdmResolve = 0;
+        /* massN: is a connection-order alias, not a live handle we can
+         * inherit: whether the launcher's mount survives to this ELF depends
+         * on the launcher (RiptOPL's "Reboot IOP" leaves a bare ROM IOP with
+         * no mass: device and no fileXio server). Reset once like every other
+         * reconstructible device, bring up our own BDM stack, and locate the
+         * volume that holds the same relative path. Never reset again after
+         * that stack is up: hardware showed USB does not come back from a
+         * second reset in the same boot. */
+        sDataNeedsExistingIop = 0;
+        sDataNeedsBdmResolve = 1;
         strncpy(tmp, path, sizeof(tmp) - 1);
         tmp[sizeof(tmp) - 1] = '\0';
         if (path_is_file)
@@ -387,26 +394,122 @@ int ps2_storage_requires_iop_preserve(void)
     return sDataNeedsExistingIop;
 }
 
-static int bdm_driver_matches(PS2BootDevice dev, const char *driver)
+static PS2BootDevice bdm_device_from_token(int token)
 {
-    if (driver == NULL || driver[0] == '\0')
+    char driver[5];
+
+    if (token <= 0)
+        return PS2_BOOT_UNKNOWN;
+
+    memcpy(driver, &token, 4);
+    driver[4] = '\0';
+
+    if (strcmp(driver, "usb") == 0)
+        return PS2_BOOT_USB;
+    if (strcmp(driver, "ata") == 0)
+        return PS2_BOOT_ATA;
+    if (strcmp(driver, "sdc") == 0 || strcmp(driver, "mx4s") == 0)
+        return PS2_BOOT_MX4SIO;
+    if (strcmp(driver, "sd") == 0 || strcmp(driver, "ilin") == 0)
+        return PS2_BOOT_ILINK;
+    if (strcmp(driver, "udp") == 0)
+        return PS2_BOOT_UDPBD;
+    return PS2_BOOT_UNKNOWN;
+}
+
+/*
+ * RiptOPL-style mount readiness test.
+ *
+ * Never probe an absent BDM slot by opening SSB64.DAT. A massN: file open can
+ * enter FatFs/device I/O while the transport is still enumerating and has
+ * proven capable of wedging the boot before our retry loop gets control back.
+ *
+ * Instead, ask the exact massN: root whether a block device is mounted. The
+ * device-number ioctl checks mounted_bd before writing, and GET_DRIVERNAME is
+ * used without a return buffer so the ps2sdk NULL-device copy bug is avoided.
+ */
+static int bdm_slot_mounted(int slot)
+{
+    char root[16];
+    iox_stat_t st;
+
+    if (slot < 0 || slot > 9)
         return 0;
 
-    switch (dev)
+    /*
+     * IMPORTANT: do not use Dopen as the presence probe.
+     *
+     * ps2sdk bdmfs_fatfs resolves "massN:" to volume N even when that
+     * volume has no mounted block device. fs_dopen() then enters FatFs and
+     * can block while the transport is still absent/enumerating. fs_getstat()
+     * has a dedicated root fast-path that checks mounted_bd first and returns
+     * -ENXIO immediately, without entering FatFs. This is the safe poll.
+     */
+    snprintf(root, sizeof(root), "mass%d:/", slot);
+    memset(&st, 0, sizeof(st));
+    return fileXioGetStat(root, &st) >= 0;
+}
+
+static int bdm_slot_identity(int slot, PS2BootDevice *out_dev, unsigned int *out_devnr)
+{
+    char root[16];
+    unsigned int devnr = 0xFFFFFFFFu;
+    int dfd;
+    int token;
+
+    if (!bdm_slot_mounted(slot))
+        return 0;
+
+    snprintf(root, sizeof(root), "mass%d:/", slot);
+
+    /*
+     * The root is now proven mounted, so Dopen/ioctl cannot hit the
+     * unmounted-volume FatFs path above. Identity is only needed for typed
+     * transport resolution; generic massN: uses the mount check directly.
+     */
+    dfd = fileXioDopen(root);
+    if (dfd < 0)
+        return 0;
+
+    if (fileXioIoctl2(dfd, USBMASS_IOCTL_GET_DEVICE_NUMBER,
+                      NULL, 0, &devnr, sizeof(devnr)) < 0)
     {
-    case PS2_BOOT_USB:
-        return strcmp(driver, "usb") == 0;
-    case PS2_BOOT_ATA:
-        return strcmp(driver, "ata") == 0;
-    case PS2_BOOT_MX4SIO:
-        return strcmp(driver, "sdc") == 0 || strcmp(driver, "mx4sio") == 0;
-    case PS2_BOOT_ILINK:
-        return strcmp(driver, "sd") == 0 || strcmp(driver, "ilink") == 0;
-    case PS2_BOOT_UDPBD:
-        return strcmp(driver, "udp") == 0;
-    default:
+        fileXioDclose(dfd);
         return 0;
     }
+
+    token = fileXioIoctl2(dfd, USBMASS_IOCTL_GET_DRIVERNAME,
+                          NULL, 0, NULL, 0);
+    fileXioDclose(dfd);
+
+    *out_dev = bdm_device_from_token(token);
+    if (out_devnr != NULL)
+        *out_devnr = devnr;
+    return *out_dev != PS2_BOOT_UNKNOWN;
+}
+
+static int mass_slot_from_path(const char *path)
+{
+    const char *p;
+    int slot = 0;
+    int have_digit = 0;
+
+    if (path == NULL || strncasecmp(path, "mass", 4) != 0)
+        return -1;
+
+    p = path + 4;
+    while (*p >= '0' && *p <= '9')
+    {
+        have_digit = 1;
+        slot = slot * 10 + (*p - '0');
+        if (slot > 9)
+            return -1;
+        p++;
+    }
+
+    if (!have_digit || *p != ':')
+        return -1;
+    return slot;
 }
 
 int ps2_storage_resolve_data_root(const char *probe_name)
@@ -420,6 +523,47 @@ int ps2_storage_resolve_data_root(const char *probe_name)
     if (probe_name == NULL || probe_name[0] == '\0')
         return 0;
 
+    /*
+     * Numeric massN: is a literal filesystem slot, exactly as RiptOPL treats
+     * its own boot path after an IOP reset. Do not scan another slot because
+     * it happens to contain the same filename. The transport loader brings
+     * candidate backends up in tiers; this resolver only asks whether THIS
+     * slot has reappeared and what now backs it.
+     */
+    if (sDataDevice == PS2_BOOT_BDM)
+    {
+        int literal = mass_slot_from_path(sDataDir);
+        char probe[PATH_BUF_MAX + 64];
+        int fd;
+
+        if (literal < 0)
+            return 0;
+
+        /*
+         * First wait for the literal root through the non-blocking mounted_bd
+         * fast-path. Only after that is true may we enter normal FatFs file
+         * I/O. This is the same sequencing distinction the previous build
+         * was missing.
+         */
+        if (!bdm_slot_mounted(literal))
+            return 0;
+
+        snprintf(probe, sizeof(probe), "%s%s", sDataDir, probe_name);
+        fd = open(probe, O_RDONLY);
+        if (fd < 0)
+            return 0;
+        close(fd);
+
+        sDataNeedsBdmResolve = 0;
+        ps2_log("storage: literal mass%d mounted and pack readable", literal);
+        return 1;
+    }
+
+    /*
+     * Typed BDM paths may have to find a mass slot, but identify mounted
+     * slots before touching the pack. This keeps an empty/enumerating massN:
+     * out of the blocking file-open path.
+     */
     colon = strchr(sDataDir, ':');
     if (colon == NULL)
         return 0;
@@ -429,13 +573,17 @@ int ps2_storage_resolve_data_root(const char *probe_name)
 
     for (slot = 0; slot < 10; slot++)
     {
-        char root[16];
         char dir[PATH_BUF_MAX];
         char probe[PATH_BUF_MAX + 64];
-        char driver[32];
-        int fd, dfd, io;
+        PS2BootDevice mounted_dev;
+        unsigned int devnr;
+        int fd;
 
-        snprintf(root, sizeof(root), "mass%d:/", slot);
+        if (!bdm_slot_identity(slot, &mounted_dev, &devnr))
+            continue;
+        if (mounted_dev != sDataDevice)
+            continue;
+
         if (relative[0] == '/' || relative[0] == '\\')
             snprintf(dir, sizeof(dir), "mass%d:%s", slot, relative);
         else
@@ -443,34 +591,22 @@ int ps2_storage_resolve_data_root(const char *probe_name)
         ensure_directory_suffix(dir, sizeof(dir), sDataDevice);
         snprintf(probe, sizeof(probe), "%s%s", dir, probe_name);
 
-        /* Opening the actual pack first both lazy-mounts FatFs and proves this
-         * volume is live. Only then ask bdmfs for the driver token: querying
-         * an empty mass slot with a return buffer can fault older bdmfs. */
+        /* The slot is mounted and of the requested family; now file I/O is
+         * safe enough to distinguish multiple devices of the same type. */
         fd = open(probe, O_RDONLY);
         if (fd < 0)
             continue;
         close(fd);
 
-        dfd = fileXioDopen(root);
-        if (dfd < 0)
-            continue;
-        memset(driver, 0, sizeof(driver));
-        io = fileXioIoctl2(dfd, USBMASS_IOCTL_GET_DRIVERNAME,
-                           NULL, 0, driver, sizeof(driver) - 1);
-        fileXioDclose(dfd);
-        if (io < 0 || !bdm_driver_matches(sDataDevice, driver))
-            continue;
-
         snprintf(sDataDir, sizeof(sDataDir), "%s", dir);
         sDataNeedsBdmResolve = 0;
-        ps2_log("storage: %s resolved to %s (driver=%s)",
-                ps2_storage_device_name(sDataDevice), sDataDir, driver);
+        ps2_log("storage: %s resolved to %s (dev=%u)",
+                ps2_storage_device_name(sDataDevice), sDataDir, devnr);
         return 1;
     }
 
     return 0;
 }
-
 
 int ps2_video_progressive(void)
 {
