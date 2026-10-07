@@ -132,6 +132,7 @@ targets:
       - dmakit
       - pad
       - mtap
+      - mc
       - filexio
       - usbd
       - patches
@@ -308,6 +309,7 @@ targets:
       - dmakit
       - pad
       - mtap
+      - mc
       - filexio
       - patches
       - sdr
@@ -320,6 +322,7 @@ targets:
       - mtapman
       - padman
       - mcman
+      - mcserv
       - libsd
       - ssb_audio
       # Common BDM + physical transports.
