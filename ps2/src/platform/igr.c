@@ -13,27 +13,17 @@
 #include <ps2/platform.h>
 #include <ps2/input.h>
 
+#include <fcntl.h>
 #include <kernel.h>
-#include <libmc.h>
+#include <unistd.h>
 
-static int mc_call(int queued)
+static int mc_boot_exists(const char *path)
 {
-    int cmd;
-    int result;
-
-    if (queued != 0)
-        return -1;
-    mcSync(0, &cmd, &result);
-    return result;
-}
-
-static int mc_boot_exists(int port)
-{
-    int fd = mc_call(mcOpen(port, 0, "/BOOT/BOOT.ELF", 1 /* O_RDONLY */));
+    int fd = open(path, O_RDONLY);
 
     if (fd < 0)
         return 0;
-    mc_call(mcClose(fd));
+    close(fd);
     return 1;
 }
 
@@ -73,18 +63,15 @@ void ps2_igr_exit(void)
     ps2_gs_prepare_exec();
 
     /*
-     * Save initialization normally brought libmc up already, but retrying it
-     * here also covers boots where saving was unavailable earlier. We only
-     * call LoadExecPS2 after confirming that BOOT.ELF can actually be opened,
-     * otherwise we retain the guaranteed OSDSYS fallback.
+     * MCMAN exposes mc0:/mc1: through the normal filesystem API, so IGR does
+     * not bind libmc/MCSERV either. Probe BOOT.ELF directly; a missing card or
+     * file falls through to OSDSYS without introducing another synchronous
+     * RPC dependency on the exit path.
      */
-    if (mcInit(MC_TYPE_XMC) >= 0)
-    {
-        if (mc_boot_exists(0))
-            chainload_boot_elf("mc0:/BOOT/BOOT.ELF");
-        if (mc_boot_exists(1))
-            chainload_boot_elf("mc1:/BOOT/BOOT.ELF");
-    }
+    if (mc_boot_exists("mc0:/BOOT/BOOT.ELF"))
+        chainload_boot_elf("mc0:/BOOT/BOOT.ELF");
+    if (mc_boot_exists("mc1:/BOOT/BOOT.ELF"))
+        chainload_boot_elf("mc1:/BOOT/BOOT.ELF");
 
     ps2_log("IGR: BOOT.ELF unavailable; returning to OSDSYS");
     ExecOSD(1, browser_argv);
