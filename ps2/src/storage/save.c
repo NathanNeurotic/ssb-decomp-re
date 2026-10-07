@@ -263,11 +263,14 @@ static void save_thread(void *arg)
     seq_b = load_slot(1, NULL);
     if (seq_b > chosen_seq)
     {
-        if (load_slot(1, sLoadBuf) >= 0)
-        {
-            chosen_seq = seq_b;
-            chosen_slot = 1;
-        }
+        /*
+         * load_slot() validates into sWriteBuf even when dst == NULL. Reuse
+         * that already-read image instead of issuing a third full 32 KiB card
+         * read just to select slot B.
+         */
+        memcpy(sLoadBuf, sWriteBuf + sizeof(PS2SaveHeader), SRAM_SIZE);
+        chosen_seq = seq_b;
+        chosen_slot = 1;
     }
 
     WaitSema(sLock);
