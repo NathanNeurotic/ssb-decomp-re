@@ -117,8 +117,7 @@ int ps2_main(int argc, char *argv[])
                   ps2_storage_boot_dir());
     }
 
-    if (ps2_storage_data_device() != PS2_BOOT_CDROM &&
-        ps2_storage_data_device() != PS2_BOOT_MMCE)
+    if (ps2_storage_data_device() != PS2_BOOT_CDROM)
     {
         ps2_log_enable_save(1);
         ps2_log_save();
