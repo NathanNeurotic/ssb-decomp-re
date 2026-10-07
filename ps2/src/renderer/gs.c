@@ -21,6 +21,7 @@
 
 #include <debug.h>
 #include <dmaKit.h>
+#include <ee_regs.h>
 #include <gsKit.h>
 #include <kernel.h>
 
@@ -48,6 +49,9 @@ static GSGLOBAL *sGsGlobal;
 static uint64_t sPktBuf[2][PKT_BUF_QWORDS * 2] __attribute__((aligned(64)));
 static int sPktCur;
 static volatile int sPktInFlight; /* a buffer was kicked and not yet waited on */
+static volatile int sGsFaulted;
+
+#define GS_WAIT_TIMEOUT_US 2000000u
 
 /* The game's framebuffers (RDRAM on N64) - defined by the linker glue
  * (ps2/src/platform/arena.S) so every scene's arena-size arithmetic holds. */
@@ -153,13 +157,27 @@ static void pkt_close_cnt(void)
     gPS2Pkt.cnt[0] = DMATAG(qwc, DMATAG_CNT, 0);
 }
 
-static void dma_wait_gif(void)
+static int dma_wait_gif(void)
 {
-    if (sPktInFlight)
+    uint32_t start;
+
+    if (!sPktInFlight)
+        return 1;
+
+    start = ps2_time_us();
+    while ((*R_EE_D2_CHCR & 0x00000100u) != 0)
     {
-        dmaKit_wait(DMA_CHANNEL_GIF, 0);
-        sPktInFlight = 0;
+        if ((uint32_t)(ps2_time_us() - start) >= GS_WAIT_TIMEOUT_US)
+        {
+            sPktInFlight = 0;
+            sGsFaulted = 1;
+            ps2_log("GS: GIF DMA did not complete within 2 s");
+            return 0;
+        }
     }
+
+    sPktInFlight = 0;
+    return 1;
 }
 
 /* Terminate the current buffer's chain and start its DMA. */
@@ -191,7 +209,8 @@ static void pkt_kick(void)
     gPS2RenderStats.packet_bytes += bytes;
     gPS2RenderStats.kicks++;
 
-    dma_wait_gif();
+    if (!dma_wait_gif())
+        ps2_panic("GIF DMA timeout before packet submission");
     FlushCache(0); /* write back the packet (and any texel data it references) */
     dmaKit_send_chain(DMA_CHANNEL_GIF, gPS2Pkt.base, bytes / 16);
     sPktInFlight = 1;
@@ -247,9 +266,19 @@ void ps2_pkt_finish(void)
     ps2_pkt_ad(GSR_FINISH, 0);
     *PGS_CSR = PGS_CSR_FINISH; /* clear FINISH */
     pkt_kick();
-    dma_wait_gif();
-    while (!(*PGS_CSR & PGS_CSR_FINISH))
+    if (!dma_wait_gif())
+        ps2_panic("GIF DMA timeout waiting for GS FINISH");
     {
+        uint32_t start = ps2_time_us();
+
+        while (!(*PGS_CSR & PGS_CSR_FINISH))
+        {
+            if ((uint32_t)(ps2_time_us() - start) >= GS_WAIT_TIMEOUT_US)
+            {
+                sGsFaulted = 1;
+                ps2_panic("GS FINISH timeout");
+            }
+        }
     }
 }
 
@@ -509,7 +538,12 @@ void ps2_gs_prepare_exec(void)
     /* IGR raises the calling thread above the renderer before reaching here,
      * so no new GIF work can be queued. Let the current DMA complete, then
      * blank both display circuits while the next ELF/OSDSYS takes over. */
-    dma_wait_gif();
+    /*
+     * IGR must never become trapped behind a wedged renderer. A failed wait
+     * is already logged by dma_wait_gif(); blank the display and continue to
+     * the chainload/OSDSYS fallback rather than panicking inside the exit path.
+     */
+    (void)dma_wait_gif();
     *PGS_PMODE = PGS_PMODE_VAL(0, 0, 1, 0);
     *PGS_BGCOLOR = 0;
 }
@@ -553,9 +587,13 @@ void ps2_gs_show_panic(const char *msg)
     int y = 40;
     size_t off = 0, len = strlen(msg);
 
-    if (!sGsReady)
+    if (!sGsReady || sGsFaulted)
     {
-        /* before our GS setup: use ps2sdk's self-contained text screen */
+        /*
+         * If GIF/GS itself faulted, do not recurse through ps2_pkt_finish()
+         * while trying to render the panic. Fall back to ps2sdk's standalone
+         * debug screen instead.
+         */
         init_scr();
         scr_setbgcolor(0x600000);
         scr_clear();
