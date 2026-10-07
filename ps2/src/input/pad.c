@@ -91,6 +91,46 @@ static uint32_t sIgrHoldStart[PS2_INPUT_MAX_PLAYERS];
 static uint8_t sIgrHolding[PS2_INPUT_MAX_PLAYERS];
 static int sInitDone;
 
+static int rpc_server_ready(uint32_t id, int timeout_ms)
+{
+    SifRpcClientData_t probe __attribute__((aligned(64)));
+    int elapsed = 0;
+
+    memset(&probe, 0, sizeof(probe));
+    while (elapsed < timeout_ms)
+    {
+        int rc = sceSifBindRpc(&probe, id, 0);
+
+        if (rc < 0)
+            return 0;
+        if (probe.server != NULL)
+            return 1;
+        DelayThread(1000);
+        elapsed++;
+    }
+    return 0;
+}
+
+static int pad_rpc_ready(void)
+{
+    /* libpad supports both the current and old PADMAN RPC pairs. Prove one
+     * complete pair exists before entering libpad's own unbounded bind loops. */
+    if (rpc_server_ready(0x80000100u, 250) &&
+        rpc_server_ready(0x80000101u, 250))
+        return 1;
+    if (rpc_server_ready(0x8000010Fu, 250) &&
+        rpc_server_ready(0x8000011Fu, 250))
+        return 1;
+    return 0;
+}
+
+static int mtap_rpc_ready(void)
+{
+    return rpc_server_ready(0x80000901u, 150) &&
+           rpc_server_ready(0x80000902u, 150) &&
+           rpc_server_ready(0x80000903u, 150);
+}
+
 static void igr_update(int player, uint16_t held)
 {
     uint32_t now = ps2_vblank_count();
@@ -164,14 +204,33 @@ static int detect_multitap(int port)
     return 1;
 }
 
-void ps2_input_init(void)
+int ps2_input_init(void)
 {
     int i;
+    int have_mtap = 0;
 
-    mtapInit();
-    padInit(0);
-    sMtap[0] = detect_multitap(0);
-    sMtap[1] = detect_multitap(1);
+    if (!pad_rpc_ready())
+    {
+        ps2_log("input: PADMAN RPC servers unavailable");
+        return 0;
+    }
+    if (padInit(0) <= 0)
+    {
+        ps2_log("input: padInit failed after RPC preflight");
+        return 0;
+    }
+
+    /*
+     * Multitap is optional. libmtap's mtapInit() otherwise spins forever if
+     * MTAPMAN did not start, so only enter it after all three servers exist.
+     */
+    if (mtap_rpc_ready() && mtapInit() == 1)
+        have_mtap = 1;
+    else
+        ps2_log("input: MTAP RPC unavailable; continuing with direct ports");
+
+    sMtap[0] = have_mtap ? detect_multitap(0) : 0;
+    sMtap[1] = have_mtap ? detect_multitap(1) : 0;
     assign_slots();
 
     for (i = 0; i < PS2_INPUT_MAX_PLAYERS; i++)
@@ -222,6 +281,7 @@ void ps2_input_init(void)
         ps2_input_poll();
         ps2_log("input: multitap port1=%d port2=%d, %d pad(s) ready after %d frames", sMtap[0], sMtap[1], n, tries);
     }
+    return 1;
 }
 
 static int8_t stick_to_n64(uint8_t raw, int invert)
