@@ -111,10 +111,20 @@ void *ps2_mem_alloc(PS2MemCategory cat, uint32_t size, uint32_t align)
 {
     void *p;
 
+    if ((unsigned)cat >= PS2_MEM_CATEGORY_COUNT)
+        ps2_panic("invalid memory category %u", (unsigned)cat);
+    if (size == 0)
+        size = 1;
+    if (size > UINT32_MAX - 63u)
+        ps2_panic("memory allocation size overflow: %u bytes", (unsigned)size);
+
     if (align < 16)
     {
         align = 16; /* EE DMA / cache line friendliness */
     }
+    if ((align & (align - 1u)) != 0)
+        ps2_panic("invalid memory alignment %u", (unsigned)align);
+
     size = (size + 63u) & ~63u; /* whole cache lines: safe to invalidate */
     p = memalign(align, size);
 
