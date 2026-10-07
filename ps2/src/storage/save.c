@@ -16,6 +16,7 @@
 #include <ps2/platform.h>
 
 #include <kernel.h>
+#include <delaythread.h>
 #define NEWLIB_PORT_AWARE
 #include <fileio.h>
 #include <sifrpc.h>
@@ -172,11 +173,10 @@ static void flush_now(void)
     int n;
 
     /*
-     * MCMAN itself registers an ioman/iomanX "mc" filesystem driver. Use it
-     * through the same normal file API as every other backend instead of
-     * binding libmc to MCSERV. The latter has unbounded synchronous RPC paths
-     * and was able to freeze the entire boot after storage had already
-     * succeeded on hardware.
+     * MCMAN itself registers the "mc" filesystem. Save traffic uses the
+     * legacy FILEIO client rather than fileXio so a card probe/write never
+     * takes the persistent SSB64.DAT stream's RPC client or lock with it.
+     * MCSERV/libmc remains completely out of the runtime.
      */
     WaitSema(sLock);
     memcpy(sWriteBuf + sizeof(*h), sSram, SRAM_SIZE);
