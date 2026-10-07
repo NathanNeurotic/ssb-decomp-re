@@ -310,7 +310,6 @@ targets:
       - mtap
       - filexio
       - patches
-      - sdr
       - debug
       - m
     embed_irx:
