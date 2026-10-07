@@ -510,11 +510,27 @@ int ps2_storage_resolve_data_root(const char *probe_name)
 
         if (literal < 0)
             return 0;
+        char probe[PATH_BUF_MAX + 64];
+        int fd;
+
         if (!bdm_slot_identity(literal, &mounted_dev, &devnr))
             return 0;
 
+        /*
+         * Identity appearing is not yet enough: USB enumeration/FatFs mount
+         * completion is timing-sensitive on real hardware. Do not latch this
+         * mass slot until the exact adjacent pack is actually readable.
+         * Because identity is already live, this probe occurs only after the
+         * unsafe unresolved-slot window that previously wedged open().
+         */
+        snprintf(probe, sizeof(probe), "%s%s", sDataDir, probe_name);
+        fd = open(probe, O_RDONLY);
+        if (fd < 0)
+            return 0;
+        close(fd);
+
         sDataNeedsBdmResolve = 0;
-        ps2_log("storage: literal mass%d ready (%s dev=%u)",
+        ps2_log("storage: literal mass%d ready (%s dev=%u, pack readable)",
                 literal, ps2_storage_device_name(mounted_dev), devnr);
         return 1;
     }
