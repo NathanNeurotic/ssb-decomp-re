@@ -24,6 +24,8 @@
 #define SAVE_VERSION 1
 #define FLUSH_DELAY_VBLANKS 60 /* write once the game has been quiet for ~1 s */
 
+extern void ps2_delay_vblanks(int n);
+
 typedef struct PS2SaveHeader
 {
     char magic[8];
@@ -180,8 +182,6 @@ static void save_thread(void *arg)
     (void)arg;
     for (;;)
     {
-        extern void ps2_delay_vblanks(int n);
-
         ps2_delay_vblanks(15);
         if (sDirty && (ps2_vblank_count() - sDirtyVBlank) >= FLUSH_DELAY_VBLANKS)
         {
