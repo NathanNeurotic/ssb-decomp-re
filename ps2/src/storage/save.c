@@ -202,7 +202,7 @@ static void save_thread(void *arg)
     }
 }
 
-void ps2_save_init(void)
+int ps2_save_init(void)
 {
     ee_sema_t sema = { 0 };
     ee_thread_t th = { 0 };
@@ -213,6 +213,12 @@ void ps2_save_init(void)
     sema.init_count = 1;
     sema.max_count = 1;
     sLock = CreateSema(&sema);
+    if (sLock < 0)
+    {
+        ps2_log("save: SRAM lock creation failed (%d)", sLock);
+        return 0;
+    }
+
     memset(sSram, 0, sizeof(sSram));
     sDirty = 0;
     sNextRetryVBlank = 0;
@@ -223,10 +229,12 @@ void ps2_save_init(void)
      * Missing card, missing directory and first-run/no-save all degrade to an
      * empty SRAM image without blocking game boot.
      */
+    ps2_log("save: checking mc0 SRAM slot A");
     seq_a = load_slot(0, tmp);
     if (seq_a >= 0)
         memcpy(sSram, tmp, SRAM_SIZE);
 
+    ps2_log("save: checking mc0 SRAM slot B");
     seq_b = load_slot(1, tmp);
     if (seq_b > seq_a)
         memcpy(sSram, tmp, SRAM_SIZE);
@@ -254,9 +262,20 @@ void ps2_save_init(void)
     th.initial_priority = 110; /* below every game thread */
     sThreadId = CreateThread(&th);
     if (sThreadId >= 0)
-        StartThread(sThreadId, NULL);
+    {
+        if (StartThread(sThreadId, NULL) < 0)
+        {
+            ps2_log("save: background flush thread failed to start; SRAM remains in RAM");
+            DeleteThread(sThreadId);
+            sThreadId = -1;
+        }
+    }
     else
+    {
         ps2_log("save: background flush thread unavailable; SRAM remains in RAM");
+    }
+
+    return 1;
 }
 
 void ps2_sram_read(uint32_t offset, void *dst, uint32_t size)
