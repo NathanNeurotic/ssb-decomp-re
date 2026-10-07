@@ -40,11 +40,16 @@ The boot layer derives the launch/data device from `argv[0]` and supports
 `host:`, generic `massN:` BDM mounts, explicit USB, internal ATA/exFAT BDM,
 MX4SIO, iLink, MMCE, APA/PFS HDD, UDPBD, UDPFS, memory card and `cdrom0:`.
 
-For launchers that expose a BDM device only as `massN:`, the port deliberately
-**keeps the inherited IOP/filesystem alive instead of guessing that `mass:`
-means USB**. Explicit transport identities such as `usb0:`, `ata0:`,
-`mx4sio0:`, `ilink0:` and `udpbd:` are rebuilt from a clean IOP and then
-resolved to the actual `massN:` filesystem containing `SSB64.DAT`.
+Launches from `massN:` work from any launcher (OPL, RiptOPL, wLaunchELF,
+launcHER, ...) and do not depend on the launcher's IOP surviving: whether it
+does is launcher-specific (RiptOPL's "Reboot IOP", for example, leaves a bare
+ROM IOP). The port halts any USB host controller the launcher left running,
+resets the IOP exactly once, loads its own BDM + USB stack and finds the
+`massN:` slot that holds the same relative path to `SSB64.DAT`. If the pack is
+not on USB after 5 s, MX4SIO, iLink and ATA are added to the live stack
+without another reset. Explicit transport identities such as `usb0:`,
+`ata0:`, `mx4sio0:`, `ilink0:` and `udpbd:` are rebuilt the same way and
+resolved to the `massN:` filesystem of that transport.
 
 The asset pack can also live on a different device from the ELF:
 
@@ -58,9 +63,8 @@ ssb64.elf --data=udpfs:/SSB64/
 This is particularly useful when the launcher lives on a memory card, since
 `SSB64.DAT` is much larger than a standard 8 MiB card. For cross-device
 `--data=` use, prefer a typed transport such as `usb0:`, `ata0:`,
-`mx4sio0:` or `ilink0:`. A generic `massN:` data path is only usable when
-the launcher has already mounted that exact BDM filesystem; `massN:` does not
-encode which transport driver would be needed to recreate it.
+`mx4sio0:` or `ilink0:`; a generic `massN:` data path is located by probing
+(USB first) as described above.
 
 Network modes inherit
 the PS2's address from `mc0:/SYS-CONF/IPCONFIG.DAT` or
@@ -185,9 +189,18 @@ select another device.
 
 The IOP policy is deliberately transport-aware:
 
-- `host:`, generic `massN:`, and bare inherited `pfsN:` mounts are kept
-  alive because resetting the IOP would destroy information that `argv[0]`
-  does not contain.
+- `host:` and bare inherited `pfsN:` mounts are kept alive because
+  resetting the IOP would destroy information that `argv[0]` does not
+  contain.
+- Every other path resets the IOP exactly once. Before that reset, a small
+  module (`ssb_usb_quiesce`) halts any OHCI USB controller the launcher left
+  running: PS2SDK's usbd does not stop it on IOP reboot, so it would keep
+  DMAing into IOP RAM while the new kernel loads, which hung the reset from
+  some launchers. No path resets the IOP again once its USB stack is up;
+  on hardware the stick never came back after a second reset.
+- Generic `massN:` is a connection-order alias, not a transport. It is rebuilt
+  as USB first and resolved by finding the slot that holds `SSB64.DAT`;
+  MX4SIO/iLink/ATA are added to the live stack after 5 s if needed.
 - Explicit USB, ATA/exFAT, MX4SIO, iLink, UDPBD, UDPFS, MMCE, APA/PFS and
   optical paths can be reconstructed from embedded drivers after a clean IOP
   reset.
@@ -202,7 +215,7 @@ The embedded IOP stacks are:
 | data path | IOP stack / handling |
 |---|---|
 | `host:` | inherited ps2link/PCSX2 filesystem |
-| `massN:` | inherited BDM filesystem, transport-agnostic |
+| `massN:` | bdm + bdmfs_fatfs + usbd_mini + usbmass_bd_mini; after 5 s without the pack, + iLink, ATA, MX4SIO |
 | `usbN:` | bdm + bdmfs_fatfs + usbd_mini + usbmass_bd_mini |
 | `ataN:` | ps2dev9 + bdm + bdmfs_fatfs + BDM-enabled ps2atad |
 | `mx4sioN:` | bdm + bdmfs_fatfs + mx4sio_bd |
