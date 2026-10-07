@@ -22,7 +22,7 @@
 #include <unistd.h>
 
 #define SRAM_SIZE (32 * 1024)
-#define SAVE_DIR "mc0:/SSB64PS2"
+#define SAVE_DIR "mc0:SSB64PS2"
 #define SAVE_VERSION 1
 #define FLUSH_DELAY_VBLANKS 60 /* write once the game has been quiet for ~1 s */
 
@@ -42,7 +42,6 @@ static volatile int sDirty;
 static volatile uint32_t sDirtyVBlank;
 static uint32_t sSequence;
 static int sNextSlot;
-static int sCardOk;
 static int sLock = -1;
 static int sThreadId = -1;
 static uint32_t sNextRetryVBlank;
