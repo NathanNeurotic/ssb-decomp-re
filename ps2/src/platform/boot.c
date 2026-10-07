@@ -128,19 +128,27 @@ int ps2_main(int argc, char *argv[])
     }
 
     /*
-     * Load SRAM from MCMAN's direct mc0: filesystem before opening pad/
-     * multitap clients. This avoids libmc/MCSERV entirely and keeps memory
-     * card I/O ahead of other SIO2 clients during boot.
+     * Bring PAD/MTAP clients up before touching the memory card. Real hardware
+     * already proved this controller path healthy, and a damaged/slow card
+     * must not be allowed to interfere with libpad's one-time RPC setup.
+     */
+    ps2_log("boot: initializing controller backend");
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
+    if (!ps2_input_init())
+        ps2_panic("controller RPC initialization failed");
+    ps2_log("boot: controller backend initialized");
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
+
+    /*
+     * SRAM discovery runs in its own worker and has a finite boot budget.
+     * Existing SRAM is still resolved before syMainLoop; on timeout the game
+     * proceeds with RAM-backed SRAM and persistence disabled for this run.
      */
     ps2_log("boot: initializing save backend");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
     if (!ps2_save_init())
         ps2_panic("SRAM backend initialization failed");
     ps2_log("boot: save backend initialized");
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
-
-    if (!ps2_input_init())
-        ps2_panic("controller RPC initialization failed");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
     ps2_log("boot: scheduling audio backend");
