@@ -10,6 +10,10 @@
 #include <PR/sp.h>
 #include <PR/rcp.h>
 
+#ifdef PLATFORM_PS2
+extern void ps2_panic(const char *fmt, ...) __attribute__((noreturn));
+#endif
+
 // // // // // // // // // // // //
 //                               //
 //   GLOBAL / STATIC VARIABLES   //
@@ -69,9 +73,27 @@ void syDmaCopy(OSPiHandle *handle, uintptr_t phys, uintptr_t virtual, size_t siz
 
         if (!(gSYSchedulerIsSoftReset))
         {
+#ifdef PLATFORM_PS2
+            if (osEPiStartDma(handle, &mesg, direction) != 0)
+                ps2_panic("PI DMA completion failed (dev=0x%08lx size=%lu)",
+                          (unsigned long)phys, (unsigned long)mesg.size);
+#else
             osEPiStartDma(handle, &mesg, direction);
+#endif
+            osRecvMesg(&sSYDmaMesgQueue, NULL, OS_MESG_BLOCK);
         }
-        osRecvMesg(&sSYDmaMesgQueue, NULL, OS_MESG_BLOCK);
+#ifdef PLATFORM_PS2
+        else
+        {
+            /* No DMA was submitted, therefore no completion can exist. */
+            return;
+        }
+#else
+        else
+        {
+            osRecvMesg(&sSYDmaMesgQueue, NULL, OS_MESG_BLOCK);
+        }
+#endif
         size -= 0x10000;
         phys += 0x10000;
         virtual += 0x10000;
@@ -82,11 +104,23 @@ void syDmaCopy(OSPiHandle *handle, uintptr_t phys, uintptr_t virtual, size_t siz
         mesg.devAddr  = phys;
         mesg.size     = size;
 
-        if (!(gSYSchedulerIsSoftReset)) 
-        { 
+        if (!(gSYSchedulerIsSoftReset))
+        {
+#ifdef PLATFORM_PS2
+            if (osEPiStartDma(handle, &mesg, direction) != 0)
+                ps2_panic("PI DMA completion failed (dev=0x%08lx size=%lu)",
+                          (unsigned long)phys, (unsigned long)mesg.size);
+#else
             osEPiStartDma(handle, &mesg, direction);
+#endif
+            osRecvMesg(&sSYDmaMesgQueue, NULL, OS_MESG_BLOCK);
         }
-        osRecvMesg(&sSYDmaMesgQueue, NULL, OS_MESG_BLOCK);
+#ifndef PLATFORM_PS2
+        else
+        {
+            osRecvMesg(&sSYDmaMesgQueue, NULL, OS_MESG_BLOCK);
+        }
+#endif
     }
 }
 
