@@ -24,9 +24,9 @@ extern void ps2_ultra_threads_init(void);
 extern void ps2_vi_init(void);
 extern int ps2_input_init(void);
 extern int ps2_assets_init(void);
-extern void ps2_save_init(void);
+extern int ps2_save_init(void);
 extern void ps2_audio_init(void);
-extern void ps2_render_thread_init(void);
+extern int ps2_render_thread_init(void);
 extern void ps2_arena_init(void);
 extern void ps2_overlay_state_init(void);
 
@@ -130,7 +130,8 @@ int ps2_main(int argc, char *argv[])
      */
     ps2_log("boot: initializing save backend");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
-    ps2_save_init();
+    if (!ps2_save_init())
+        ps2_panic("SRAM backend initialization failed");
     ps2_log("boot: save backend initialized");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
@@ -142,7 +143,8 @@ int ps2_main(int argc, char *argv[])
     ps2_audio_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
-    ps2_render_thread_init();
+    if (!ps2_render_thread_init())
+        ps2_panic("render worker initialization failed");
 
     mem = ps2_mem_stats();
     ps2_log("mem: %u KiB committed (code/static %u KiB), budget %u KiB", (unsigned)(mem->total_used >> 10),
