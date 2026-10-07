@@ -14,6 +14,7 @@
 #include <ps2/input.h>
 
 #include <delaythread.h>
+#define NEWLIB_PORT_AWARE
 #include <fileio-common.h>
 #include <kernel.h>
 #include <sifrpc.h>
