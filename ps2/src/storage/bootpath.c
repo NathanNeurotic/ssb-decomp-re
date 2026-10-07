@@ -584,12 +584,25 @@ int ps2_storage_resolve_data_root(const char *probe_name)
         if (mounted_dev != sDataDevice)
             continue;
 
-        if (relative[0] == '/' || relative[0] == '\\')
-            snprintf(dir, sizeof(dir), "mass%d:%s", slot, relative);
-        else
-            snprintf(dir, sizeof(dir), "mass%d:/%s", slot, relative);
+        {
+            int nw;
+
+            if (relative[0] == '/' || relative[0] == '\\')
+                nw = snprintf(dir, sizeof(dir), "mass%d:%s", slot, relative);
+            else
+                nw = snprintf(dir, sizeof(dir), "mass%d:/%s", slot, relative);
+            if (nw < 0 || (size_t)nw >= sizeof(dir))
+            {
+                ps2_log("storage: resolved BDM path is too long");
+                return 0;
+            }
+        }
         ensure_directory_suffix(dir, sizeof(dir), sDataDevice);
-        snprintf(probe, sizeof(probe), "%s%s", dir, probe_name);
+        if (snprintf(probe, sizeof(probe), "%s%s", dir, probe_name) >= (int)sizeof(probe))
+        {
+            ps2_log("storage: BDM probe path is too long");
+            return 0;
+        }
 
         /* The slot is mounted and of the requested family; now file I/O is
          * safe enough to distinguish multiple devices of the same type. */
