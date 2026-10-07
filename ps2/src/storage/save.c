@@ -404,7 +404,7 @@ void ps2_sram_read(uint32_t offset, void *dst, uint32_t size)
         memset(dst, 0, size);
         return;
     }
-    if (offset + size > SRAM_SIZE)
+    if (size > SRAM_SIZE - offset)
     {
         size = SRAM_SIZE - offset;
     }
@@ -419,7 +419,7 @@ void ps2_sram_write(uint32_t offset, const void *src, uint32_t size)
     {
         return;
     }
-    if (offset + size > SRAM_SIZE)
+    if (size > SRAM_SIZE - offset)
     {
         size = SRAM_SIZE - offset;
     }
