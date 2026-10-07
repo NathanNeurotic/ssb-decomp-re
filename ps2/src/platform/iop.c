@@ -208,9 +208,10 @@ static int mount_hdd_partition(void)
     return -1;
 }
 
-void ps2_iop_init(void)
+int ps2_iop_init(void)
 {
     int preserve_iop = ps2_storage_requires_iop_preserve();
+    int required_ok = 1;
 
     sLoadedCount = 0;
     sIopWasReset = 0;
@@ -243,18 +244,28 @@ void ps2_iop_init(void)
     if (sIopWasReset)
         sbv_patch_fileio();
 
-    LOAD_IRX(iomanx);
-    LOAD_IRX(filexio);
+    /*
+     * After our own reset these modules must actually load. On preserved IOP
+     * paths a duplicate module may legitimately reject the load because the
+     * launcher's service is already resident; fileXioInit()/the later RPC
+     * preflights remain the authoritative readiness tests there.
+     */
+    if (LOAD_IRX(iomanx) < 0 && sIopWasReset)
+        required_ok = 0;
+    if (LOAD_IRX(filexio) < 0 && sIopWasReset)
+        required_ok = 0;
 
     /*
      * Keep the SIO2 client order already proven on hardware and documented by
-     * PS2SDK's multitap sample: MTAPMAN/PADMAN before MCMAN. MCSERV/libmc
-     * remain absent; the bounded save worker uses MCMAN's mc: filesystem only
-     * after controller initialization has completed.
+     * PS2SDK's multitap sample: MTAPMAN/PADMAN before MCMAN. PADMAN is
+     * required; MTAPMAN and MCMAN are optional enhancements and may fail
+     * without making the game itself unbootable.
      */
-    LOAD_IRX(sio2man);
+    if (LOAD_IRX(sio2man) < 0 && sIopWasReset)
+        required_ok = 0;
     LOAD_IRX(mtapman);
-    LOAD_IRX(padman);
+    if (LOAD_IRX(padman) < 0 && sIopWasReset)
+        required_ok = 0;
     LOAD_IRX(mcman);
 
     /*
@@ -274,7 +285,11 @@ void ps2_iop_init(void)
 
     /* Bind only after the host-side USB module ordering above, matching
      * RiptOPL's sysReset() sequence on hardware. */
-    fileXioInit();
+    if (fileXioInit() < 0)
+    {
+        ps2_log("IOP: fileXio RPC client failed to initialize");
+        required_ok = 0;
+    }
 
     /*
      * Keep SPU2 completely outside the storage/input-critical boot path.
@@ -286,6 +301,13 @@ void ps2_iop_init(void)
 
     ps2_log("IOP: %s, %d base modules",
             sIopWasReset ? "reset" : "kept (inherited filesystem)", sLoadedCount);
+
+    if (!required_ok)
+    {
+        ps2_log("IOP: required base service initialization failed");
+        return -1;
+    }
+    return 0;
 }
 
 int ps2_iop_mmce_prepare_runtime_stream(void)
