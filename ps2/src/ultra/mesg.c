@@ -73,6 +73,10 @@ void ps2_mesg_forget_thread(OSThread *t)
 
 void osCreateMesgQueue(OSMesgQueue *mq, OSMesg *msg, s32 count)
 {
+    if (mq == NULL || msg == NULL || count <= 0)
+        ps2_panic("osCreateMesgQueue invalid args mq=%p msg=%p count=%ld",
+                  mq, msg, (long)count);
+
     mq->mtqueue = NULL;
     mq->fullqueue = NULL;
     mq->validCount = 0;
