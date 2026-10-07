@@ -140,13 +140,13 @@ int ps2_assets_init(void)
             {
                 if (ps2_storage_data_device() == PS2_BOOT_BDM)
                 {
-                    if (attempt == 15)
-                        ps2_iop_load_bdm_fallback_transports(); /* MX4SIO */
-                    else if (attempt == 30)
-                        ps2_iop_load_bdm_fallback_transports(); /* iLink + ATA */
+                    if (attempt == 50)
+                        ps2_iop_load_bdm_fallback_transports(); /* MX4SIO after ~5 s */
+                    else if (attempt == 100)
+                        ps2_iop_load_bdm_fallback_transports(); /* iLink + ATA after ~10 s */
                 }
 
-                if (attempt == 0 || attempt == 15 || attempt == 30 || attempt == 100)
+                if (attempt == 0 || attempt == 50 || attempt == 100 || attempt == 150)
                     ps2_log("assets: waiting for BDM slot identity (try %d)", attempt + 1);
 
                 ps2_delay_vblanks(6);
