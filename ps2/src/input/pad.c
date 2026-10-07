@@ -37,6 +37,9 @@
 #define PS2B_CROSS    0x4000
 #define PS2B_SQUARE   0x8000
 
+#define PS2_IGR_COMBO (PS2B_L1 | PS2B_L2 | PS2B_R1 | PS2B_R2 | PS2B_START | PS2B_SELECT)
+#define PS2_IGR_HOLD_VBLANKS 60u
+
 typedef struct PadMapEntry
 {
     uint16_t ps2;
@@ -65,7 +68,7 @@ static const PadMapEntry sDefaultMap[] = {
     { PS2B_RIGHT, N64_BTN_DR },
 };
 
-#define STICK_DEADZONE 10     /* of 127 */
+#define STICK_DEADZONE 16     /* of 127 */
 #define STICK_N64_MAX 80      /* full deflection of an N64 stick */
 #define RSTICK_C_THRESHOLD 64 /* right stick -> C buttons */
 
@@ -83,7 +86,28 @@ static PadSlot sSlots[PS2_INPUT_MAX_PLAYERS] __attribute__((aligned(64)));
 static int sMtap[2];
 static PS2InputState sState[PS2_INPUT_MAX_PLAYERS];
 static uint16_t sRawHeld[PS2_INPUT_MAX_PLAYERS];
+static uint32_t sIgrStart[PS2_INPUT_MAX_PLAYERS];
+static uint8_t sIgrHolding[PS2_INPUT_MAX_PLAYERS];
 static int sInitDone;
+
+static void igr_update(int player, uint16_t held)
+{
+    uint32_t now = ps2_vblank_count();
+
+    if ((held & PS2_IGR_COMBO) != PS2_IGR_COMBO)
+    {
+        sIgrHolding[player] = 0;
+        return;
+    }
+    if (!sIgrHolding[player])
+    {
+        sIgrHolding[player] = 1;
+        sIgrStart[player] = now;
+        return;
+    }
+    if ((uint32_t)(now - sIgrStart[player]) >= PS2_IGR_HOLD_VBLANKS)
+        ps2_igr_exit();
+}
 
 static void assign_slots(void)
 {
@@ -288,6 +312,7 @@ void ps2_input_poll(void)
         }
         held = (uint16_t)(0xFFFF ^ pad.btns);
         sRawHeld[i] = held;
+        igr_update(i, held);
 
         for (m = 0; m < sizeof(sDefaultMap) / sizeof(sDefaultMap[0]); m++)
         {
@@ -346,6 +371,24 @@ int ps2_input_overlay_toggle_pressed(void)
 int ps2_input_has_rumble(int player)
 {
     return (player >= 0 && player < PS2_INPUT_MAX_PLAYERS) && sSlots[player].open && sSlots[player].has_actuator;
+}
+
+void ps2_input_quiesce(void)
+{
+    int i;
+
+    sInitDone = 0;
+    for (i = 0; i < PS2_INPUT_MAX_PLAYERS; i++)
+    {
+        if (sSlots[i].open && sSlots[i].has_actuator)
+        {
+            char act[6] = { 0, 0, 0, 0, 0, 0 };
+            padSetActDirect(sSlots[i].port, sSlots[i].slot, act);
+        }
+        sSlots[i].rumble_on = 0;
+        sRawHeld[i] = 0;
+        sIgrHolding[i] = 0;
+    }
 }
 
 void ps2_input_set_rumble(int player, int on)
