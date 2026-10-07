@@ -566,7 +566,7 @@ void ps2_gs_show_panic(const char *msg)
     pkt_open(sPktCur);
     ps2_gs_clear(0, 0x000060, 0);
     ps2_gs_text(8, 16, 0x4040FF, "SSB64 PS2 - FATAL ERROR");
-    while (off < len && y < 230)
+    while (off < len && y < 150)
     {
         size_t n = len - off;
 
@@ -579,6 +579,44 @@ void ps2_gs_show_panic(const char *msg)
         ps2_gs_text(8, y, 0xFFFFFF, line);
         off += n;
         y += 10;
+    }
+
+    /*
+     * Hardware failures cannot rely on stdout or a writable data device.
+     * Put the tail of the in-memory boot log directly on the fatal screen so
+     * one test distinguishes "slot never mounted" from "pack open failed".
+     * ps2_panic() appended two lines ("*** PANIC ***" and msg) immediately
+     * before calling us, so omit those and show the useful history preceding
+     * them.
+     */
+    if (y < 220)
+    {
+        int count = ps2_log_line_count();
+        int first = count - 10;
+        int last = count - 2;
+        int i;
+
+        if (first < 0)
+            first = 0;
+        if (last < first)
+            last = first;
+
+        y += 4;
+        ps2_gs_text(8, y, 0x80C0FF, "Recent boot log:");
+        y += 10;
+
+        for (i = first; i < last && y < 230; i++)
+        {
+            const char *src = ps2_log_line(i);
+            size_t n = strlen(src);
+
+            if (n > 38)
+                n = 38;
+            memcpy(line, src, n);
+            line[n] = '\0';
+            ps2_gs_text(8, y, 0xC0C0C0, line);
+            y += 10;
+        }
     }
     ps2_pkt_finish();
     ps2_gs_present_now(0);
