@@ -151,12 +151,17 @@ int ps2_main(int argc, char *argv[])
     ps2_log("boot: save backend initialized");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
-    ps2_log("boot: scheduling audio backend");
+    ps2_log("boot: initializing audio backend");
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
     ps2_audio_init();
+    ps2_log("boot: audio backend initialized");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
+    ps2_log("boot: initializing render worker");
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
     if (!ps2_render_thread_init())
         ps2_panic("render worker initialization failed");
+    ps2_log("boot: render worker initialized");
 
     mem = ps2_mem_stats();
     ps2_log("mem: %u KiB committed (code/static %u KiB), budget %u KiB", (unsigned)(mem->total_used >> 10),
