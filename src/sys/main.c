@@ -1,6 +1,6 @@
 #include "main.h"
 
-// #include "scenemgr/scene_manager.h"
+#include <sc/scmanager.h>
 #include <sys/debug.h>
 #include <sys/dma.h>
 #include <sys/taskman.h>
