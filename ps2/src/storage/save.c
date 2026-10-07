@@ -345,6 +345,7 @@ int ps2_save_init(void)
 
     ps2_mem_reclassify_static(PS2_MEM_SCRATCH,
                               sizeof(sWriteBuf) + sizeof(sLoadBuf));
+    ps2_mem_reclassify_static(PS2_MEM_THREADS, sizeof(sThreadStack));
 
     th.func = (void *)save_thread;
     th.stack = sThreadStack;
