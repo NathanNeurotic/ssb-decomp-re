@@ -418,6 +418,38 @@ int ps2_spu_ready(void)
     return sReady;
 }
 
+void ps2_spu_shutdown(void)
+{
+    int i;
+
+    if (!sReady)
+        return;
+
+    /*
+     * IGR cleanup only. Do not change the normal per-frame audio path.
+     * Give any already-running async batch a short bounded window to finish;
+     * if it does not, proceed to OSDSYS rather than hanging here.
+     */
+    if (sRpcPending)
+    {
+        for (i = 0; i < 1000 && sceSifCheckStatRpc(&sAudioRpc); i++)
+            DelayThread(50);
+        if (sceSifCheckStatRpc(&sAudioRpc))
+        {
+            sReady = 0;
+            return;
+        }
+        sRpcPending = 0;
+    }
+
+    sBatchCount = 0;
+    batch_add(SD_BATCH_SETSWITCH, SPU_CORE | SD_SWITCH_KOFF, 0xFFFFFF);
+    batch_add(SD_BATCH_SETPARAM, SPU_CORE | SD_PARAM_MVOLL, 0);
+    batch_add(SD_BATCH_SETPARAM, SPU_CORE | SD_PARAM_MVOLR, 0);
+    batch_submit();
+    sReady = 0;
+}
+
 int ps2_spu_find_sample(uint32_t rom_key, uint32_t len, uint32_t loop_start, uint32_t loop_end)
 {
     int lo = 0, hi = (int)sCount - 1, i;
