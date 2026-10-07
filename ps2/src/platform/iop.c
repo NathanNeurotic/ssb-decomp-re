@@ -48,7 +48,6 @@ DECLARE_IRX(sio2man);
 DECLARE_IRX(mtapman);
 DECLARE_IRX(padman);
 DECLARE_IRX(mcman);
-DECLARE_IRX(mcserv);
 DECLARE_IRX(libsd);
 DECLARE_IRX(sdr);
 DECLARE_IRX(ssb_audio);
@@ -248,11 +247,16 @@ void ps2_iop_init(void)
     LOAD_IRX(iomanx);
     LOAD_IRX(filexio);
 
+    /*
+     * Match the safe SIO2 dependency order: MCMAN owns the memory-card
+     * filesystem before pad/multitap clients start using SIO2. SSB64 saves
+     * through MCMAN's mc0: ioman driver directly, so MCSERV/libmc are not
+     * loaded at all.
+     */
     LOAD_IRX(sio2man);
+    LOAD_IRX(mcman);
     LOAD_IRX(mtapman);
     LOAD_IRX(padman);
-    LOAD_IRX(mcman);
-    LOAD_IRX(mcserv);
 
     /*
      * Match RiptOPL's proven reset ordering: the USB HOST driver is resident
@@ -336,10 +340,9 @@ int ps2_iop_mmce_prepare_runtime_stream(void)
         LOAD_IRX(ssb_mmce_stream) < 0)
         return -1;
 
-    if (LOAD_IRX(mtapman) < 0 ||
+    if (LOAD_IRX(mcman) < 0 ||
+        LOAD_IRX(mtapman) < 0 ||
         LOAD_IRX(padman) < 0 ||
-        LOAD_IRX(mcman) < 0 ||
-        LOAD_IRX(mcserv) < 0 ||
         LOAD_IRX(libsd) < 0)
         return -1;
 
