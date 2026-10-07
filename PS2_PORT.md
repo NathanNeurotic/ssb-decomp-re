@@ -215,8 +215,8 @@ The embedded IOP stacks are:
 | data path | IOP stack / handling |
 |---|---|
 | `host:` | inherited ps2link/PCSX2 filesystem |
-| `massN:` | bdm + bdmfs_fatfs + usbd_mini + usbmass_bd_mini; after 5 s without the pack, + iLink, ATA, MX4SIO |
-| `usbN:` | bdm + bdmfs_fatfs + usbd_mini + usbmass_bd_mini |
+| `massN:` | bdm + bdmfs_fatfs + ssb_usbd_mini + usbmass_bd_mini; after 5 s without the pack, + iLink, ATA, MX4SIO |
+| `usbN:` | bdm + bdmfs_fatfs + ssb_usbd_mini + usbmass_bd_mini |
 | `ataN:` | ps2dev9 + bdm + bdmfs_fatfs + BDM-enabled ps2atad |
 | `mx4sioN:` | bdm + bdmfs_fatfs + mx4sio_bd |
 | `ilinkN:` | bdm + bdmfs_fatfs + iLinkman + IEEE1394_bd |

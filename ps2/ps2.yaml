@@ -93,6 +93,26 @@ targets:
     headers: *iop_headers
     imports_lst: iop/usb_quiesce/src/imports.lst
 
+  # usbd_mini from ps2sdk before its 2024-09-04 USBD rewrite. The SDK's
+  # current driver does not bring a USB stick back after an IOP reboot that
+  # follows a launcher's own USB session (RiptOPL ships the same source for
+  # the same reason). See iop/usbd_legacy/ORIGIN.txt.
+  - name: ssb_usbd_mini
+    type: iop
+    sources:
+      - iop/usbd_legacy/src/hcd.c
+      - iop/usbd_legacy/src/hub.c
+      - iop/usbd_legacy/src/interface.c
+      - iop/usbd_legacy/src/mem.c
+      - iop/usbd_legacy/src/usbd.c
+      - iop/usbd_legacy/src/usbio.c
+      - iop/usbd_legacy/src/driver.c
+    include_dirs: [iop/usbd_legacy/src, iop/usbd_legacy/include]
+    headers: *iop_headers
+    defines: [MINI_DRIVER, USE_GP_REGISTER=0]
+    imports_lst: iop/usbd_legacy/src/imports.lst
+    exports_tab: iop/usbd_legacy/src/exports.tab
+
   - name: ssb_audio
     type: iop
     sources: [iop/audio_server/src/main.c]
@@ -317,7 +337,7 @@ targets:
       # Common BDM + physical transports.
       - bdm
       - bdmfs_fatfs
-      - usbd_mini
+      - ssb_usbd_mini
       - usbmass_bd_mini
       - dev9:ps2dev9
       - ata_bd:ps2atad

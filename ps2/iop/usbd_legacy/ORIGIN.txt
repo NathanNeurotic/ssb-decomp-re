@@ -1,0 +1,23 @@
+Vendored from ps2dev/ps2sdk (https://github.com/ps2dev/ps2sdk), iop/usb/usbd.
+Pinned to commit 314d87e71e298b06b7ec459a97dd0b54a3e0cb5c (2024-04-01), the last state
+before ps2sdk's "USBD feature update" rewrite of 2024-09-04 (b1f7ff96).
+
+Built as ssb_usbd_mini (-DMINI_DRIVER, as ps2sdk's own iop/usb/usbd_mini does) and
+loaded in place of the SDK's prebuilt usbd_mini.irx.
+
+Why: with the post-rewrite driver, a USB stick that a previous USB stack had been
+driving is not brought back after the next IOP reboot. SSB64 launched from
+mass0: (RiptOPL, real hardware, 2026-10-07) reset the IOP, loaded the SDK's
+usbd_mini + usbmass_bd_mini, and no mass slot ever served SSB64.DAT within 20 s,
+while the same build ran from MMCE. RiptOPL hit the same regression (CD-era games
+losing USB pad and sound at their first IOP reboot) and fixed it by building this
+exact source; see RiptOPL's Makefile, USBD_MINI_IRX / modules/usb/usbd-ra. Its copy
+is byte-identical to this one (line endings aside).
+
+The export table (library "usbd" 1.1) keeps every slot usbmass_bd imports
+(RegisterLdd, ScanStaticDescriptor, SetPrivateData, Open/Close/TransferPipe,
+OpenPipeAligned, GetDeviceLocation) at the same index as the current driver.
+
+LOCAL CHANGES vs upstream: none. Only the build (ps2/ps2.yaml target
+ssb_usbd_mini) is ours. Do not reformat: the value of this copy is that it still
+diffs cleanly against ps2sdk.

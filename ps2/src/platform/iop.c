@@ -9,7 +9,7 @@
  *
  * Base:      iomanX + fileXio + sio2man + mtapman + padman + mcman/mcserv
  *            + libsd/sdr
- * USB:       bdm + bdmfs_fatfs + usbd_mini + usbmass_bd_mini
+ * USB:       bdm + bdmfs_fatfs + ssb_usbd_mini (pre-rewrite usbd) + usbmass_bd_mini
  * massN:     USB stack first; MX4SIO/iLink/ATA added later only if the
  *            pack has not appeared (no reset in between)
  * ATA BDM:   ps2dev9 + bdm + bdmfs_fatfs + ps2atad
@@ -56,7 +56,7 @@ DECLARE_IRX(ssb_audio);
 
 DECLARE_IRX(bdm);
 DECLARE_IRX(bdmfs_fatfs);
-DECLARE_IRX(usbd_mini);
+DECLARE_IRX(ssb_usbd_mini);
 DECLARE_IRX(usbmass_bd_mini);
 DECLARE_IRX(mmceman);
 DECLARE_IRX(mmcedrv);
@@ -387,7 +387,7 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
          * add the other local transports without resetting the IOP. */
         if (load_bdm_core() < 0)
             return -1;
-        if (LOAD_IRX(usbd_mini) < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
+        if (LOAD_IRX(ssb_usbd_mini) < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
             ps2_log("IOP: USB mass storage unavailable; other BDM transports remain");
         return 0;
 
@@ -395,7 +395,7 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
         return LOAD_IRX(cdvd);
 
     case PS2_BOOT_USB:
-        if (load_bdm_core() < 0 || LOAD_IRX(usbd_mini) < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
+        if (load_bdm_core() < 0 || LOAD_IRX(ssb_usbd_mini) < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
             return -1;
         return 0;
 
