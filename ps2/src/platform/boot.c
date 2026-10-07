@@ -123,17 +123,19 @@ int ps2_main(int argc, char *argv[])
         ps2_log_save();
     }
 
-    ps2_input_init();
-    ps2_gs_boot_screen(PS2_BOOT_TITLE);
-
-    /* Keep the on-screen boot log truthful. Previously the screen was only
-     * redrawn before save/audio init and after both had completed, so a hang
-     * inside either subsystem misleadingly left "input: ... ready" as the
-     * final visible line. */
+    /*
+     * Initialize the memory-card client before opening pad/multitap clients.
+     * Both share SIO2; doing MC discovery first matches the conservative PS2
+     * startup ordering and avoids entering libmc while PAD/MTAP setup is still
+     * issuing controller commands.
+     */
     ps2_log("boot: initializing save backend");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
     ps2_save_init();
     ps2_log("boot: save backend initialized");
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
+
+    ps2_input_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
     ps2_log("boot: scheduling audio backend");
