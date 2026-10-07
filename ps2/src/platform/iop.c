@@ -8,7 +8,7 @@
  * driver is running, a second IOP reset leaves the stick unreachable.
  *
  * Base:      iomanX + fileXio + sio2man + mcman + mtapman + padman
- *            + libsd; dedicated ssb_audio is deferred until after storage/input
+ * Audio:     libsd + dedicated ssb_audio, both deferred until after storage/input
  * USB:       bdm + bdmfs_fatfs + usbd_mini + usbmass_bd_mini
  * massN:     USB stack first; MX4SIO/iLink/ATA added later only if the
  *            pack has not appeared (no reset in between)
