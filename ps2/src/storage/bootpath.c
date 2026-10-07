@@ -483,6 +483,34 @@ int ps2_storage_resolve_data_root(const char *probe_name)
     return 0;
 }
 
+void ps2_storage_log_bdm_probe(const char *probe_name)
+{
+    const char *colon = strchr(sDataDir, ':');
+    const char *relative = (colon != NULL) ? colon + 1 : "/";
+    int slot;
+
+    /* One line per slot: does the volume answer at all (root dopen), and
+     * what does opening the pack there return? Tells "USB never mounted"
+     * apart from "mounted, but the file did not open". */
+    for (slot = 0; slot < 4; slot++)
+    {
+        char root[16];
+        char probe[PATH_BUF_MAX + 64];
+        int dfd, fd;
+
+        snprintf(root, sizeof(root), "mass%d:/", slot);
+        snprintf(probe, sizeof(probe), "mass%d:%s%s%s", slot, (relative[0] == '/') ? "" : "/", relative,
+                 probe_name);
+        dfd = fileXioDopen(root);
+        if (dfd >= 0)
+            fileXioDclose(dfd);
+        fd = open(probe, O_RDONLY);
+        if (fd >= 0)
+            close(fd);
+        ps2_log("probe mass%d: dopen=%d open=%d", slot, dfd, fd);
+    }
+}
+
 
 int ps2_video_progressive(void)
 {

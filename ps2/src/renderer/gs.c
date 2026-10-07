@@ -556,10 +556,15 @@ void ps2_gs_show_panic(const char *msg)
     if (!sGsReady)
     {
         /* before our GS setup: use ps2sdk's self-contained text screen */
+        int i, n = ps2_log_line_count() - 2; /* minus the panic's own two lines */
+
         init_scr();
         scr_setbgcolor(0x600000);
         scr_clear();
-        scr_printf("\n  SSB64 PS2 - FATAL ERROR\n\n  %s\n", msg);
+        scr_printf("\n  SSB64 PS2 - FATAL ERROR\n\n  %s\n\n", msg);
+        /* The boot log is the only evidence a hardware tester can send. */
+        for (i = (n > 16) ? n - 16 : 0; i < n; i++)
+            scr_printf("  %.70s\n", ps2_log_line(i));
         return;
     }
     sPktInFlight = 0; /* the pipeline state is unknown; start over */
@@ -579,6 +584,19 @@ void ps2_gs_show_panic(const char *msg)
         ps2_gs_text(8, y, 0xFFFFFF, line);
         off += n;
         y += 10;
+    }
+    /* The boot log is the only evidence a hardware tester can send: show
+     * as many of its last lines as fit under the message. */
+    {
+        int i, first, n = ps2_log_line_count() - 2; /* minus the panic's own lines */
+
+        y += 6;
+        first = n - (230 - y) / 10;
+        for (i = (first > 0) ? first : 0; i < n && y < 230; i++, y += 10)
+        {
+            snprintf(line, sizeof(line), "%s", ps2_log_line(i));
+            ps2_gs_text(8, y, 0xC0C0C0, line);
+        }
     }
     ps2_pkt_finish();
     ps2_gs_present_now(0);

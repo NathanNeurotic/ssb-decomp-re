@@ -141,6 +141,13 @@ int ps2_assets_init(void)
             if (ps2_storage_data_device() == PS2_BOOT_HOST)
                 break;
 
+            if (attempt == 0 || attempt == 49 || attempt == 199)
+            {
+                ps2_log("assets: open %s rc=%d (try %d)", sPackPath, sFd, attempt + 1);
+                if (ps2_storage_data_device() == PS2_BOOT_BDM || ps2_storage_data_device() == PS2_BOOT_USB)
+                    ps2_storage_log_bdm_probe(PACK_NAME);
+            }
+
             /* Generic massN: brings up USB first. If ~5 s pass without the
              * pack on any mass slot, add the other local BDM transports to
              * the same live IOP and keep probing. */
@@ -160,7 +167,8 @@ int ps2_assets_init(void)
     if (!read_exact(&sHeader, 0, sizeof(sHeader)) || memcmp(sHeader.magic, PS2PACK_MAGIC, 8) != 0 ||
         sHeader.version != PS2PACK_VERSION)
     {
-        ps2_log("assets: %s is not a v%d SSB64 pack", path, PS2PACK_VERSION);
+        ps2_log("assets: %s is not a v%d SSB64 pack (read=%d seek=%d)", path, PS2PACK_VERSION, sLastReadGot,
+                sLastSeekRc);
         return 0;
     }
 

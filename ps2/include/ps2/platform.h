@@ -131,6 +131,8 @@ int ps2_storage_requires_iop_preserve(void);
  * udpbd identities) to the actual massN: filesystem that contains
  * probe_name. */
 int ps2_storage_resolve_data_root(const char *probe_name);
+/* Hardware diagnostics: log what every massN: slot answers for probe_name. */
+void ps2_storage_log_bdm_probe(const char *probe_name);
 int ps2_video_progressive(void);         /* 1 = 240p (ELF name contains "240p"), 0 = 480i */
 
 /* Boot-stage marker: shows a solid background colour (GS BGCOLOR with both

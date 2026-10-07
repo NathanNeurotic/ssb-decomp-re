@@ -96,23 +96,29 @@ void ps2_log_enable_save(int enable)
     sSaveEnabled = enable;
 }
 
+static int write_log_file(const char *path)
+{
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+
+    if (fd < 0)
+    {
+        return 0;
+    }
+    write(fd, sText, (size_t)sTextLen);
+    close(fd);
+    return 1;
+}
+
 void ps2_log_save(void)
 {
     char path[288];
-    int fd;
 
     if (!sSaveEnabled)
     {
         return;
     }
     ps2_storage_path(path, sizeof(path), "SSB64.LOG");
-    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if (fd < 0)
-    {
-        return;
-    }
-    write(fd, sText, (size_t)sTextLen);
-    close(fd);
+    write_log_file(path);
 }
 
 int ps2_log_line_count(void)
@@ -145,7 +151,19 @@ void ps2_panic(const char *fmt, ...)
     push_line("*** PANIC ***");
     push_line(buf);
     ps2_gs_show_panic(buf);
-    ps2_log_save();
+
+    /* A boot-time panic usually means the data device itself is the
+     * problem, so the log may not be writable there: fall back to the
+     * memory cards (mcman/mcserv are loaded with the base IOP modules). */
+    {
+        char path[288];
+
+        ps2_storage_path(path, sizeof(path), "SSB64.LOG");
+        if (!write_log_file(path) && !write_log_file("mc0:/SSB64.LOG"))
+        {
+            write_log_file("mc1:/SSB64.LOG");
+        }
+    }
 
     for (;;)
     {
