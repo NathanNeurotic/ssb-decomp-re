@@ -99,7 +99,7 @@ typedef enum PS2BootDevice
 {
     PS2_BOOT_UNKNOWN,
     PS2_BOOT_HOST,       /* host: (ps2link / PCSX2 host fs) */
-    PS2_BOOT_BDM,        /* generic massN: inherited BDM filesystem */
+    PS2_BOOT_BDM,        /* generic massN: (transport found by probing) */
     PS2_BOOT_USB,        /* explicit usbN: transport identity */
     PS2_BOOT_MC,         /* mc0:/mc1: */
     PS2_BOOT_ATA,        /* ata: BDM (internal/exFAT) */
@@ -124,12 +124,12 @@ PS2BootDevice ps2_storage_boot_device(void);
 const char *ps2_storage_launch_path(void);
 const char *ps2_storage_hdd_mount_source(void);
 /* True when the selected data path depends on an inherited IOP filesystem
- * (host:, generic massN:, or a bare pfsN: mount whose transport/source
- * cannot be reconstructed from argv[0]). */
+ * (host:, or a bare pfsN: mount whose transport/source cannot be
+ * reconstructed from argv[0]). */
 int ps2_storage_requires_iop_preserve(void);
-/* Resolve typed BDM launch identities (usb/ata/mx4sio/ilink/udpbd) to the
- * actual massN: filesystem that contains probe_name. Generic massN: paths
- * deliberately keep the inherited launcher IOP and are already usable. */
+/* Resolve BDM launch paths (generic massN: and typed usb/ata/mx4sio/ilink/
+ * udpbd identities) to the actual massN: filesystem that contains
+ * probe_name. */
 int ps2_storage_resolve_data_root(const char *probe_name);
 int ps2_video_progressive(void);         /* 1 = 240p (ELF name contains "240p"), 0 = 480i */
 
@@ -141,6 +141,11 @@ void ps2_boot_stage(const char *name, uint32_t rgb);
 /* Installs the EE exception handlers that turn a crash into a register dump
  * on screen (and into the log file when possible). */
 void ps2_crash_init(void);
+
+/* In-game reset: quiesce the native PS2 runtime and leave the game. */
+void ps2_igr_exit(void) __attribute__((noreturn));
+/* Stop outstanding GIF DMA and blank the display before chainloading. */
+void ps2_gs_prepare_exec(void);
 
 /* Writes the in-memory log to <boot dir>SSB64.LOG (boot device drivers
  * must be loaded). Safe to call repeatedly; each call rewrites the file. */
@@ -166,6 +171,8 @@ void ps2_file_close(int fd);
 
 void ps2_iop_init(void);                 /* reset IOP + load base modules */
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
+/* massN: only: add non-USB BDM transports to the live stack (once, no reset). */
+int ps2_iop_load_bdm_fallback_transports(void);
 int ps2_iop_load_audio_driver(void); /* deferred SDR server; safe to call after storage/input */
 int ps2_iop_mmce_prepare_runtime_stream(void);
 int  ps2_iop_module_loaded(const char *name);
