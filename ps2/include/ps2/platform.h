@@ -86,7 +86,7 @@ void ps2_mem_free(PS2MemCategory cat, void *p, uint32_t size);
 uint64_t ps2_time_ticks(void);           /* EE bus clock ticks (147.456 MHz) */
 uint32_t ps2_time_us(void);              /* microseconds, wraps */
 uint32_t ps2_vblank_count(void);         /* VBlank-start interrupts since boot */
-int ps2_vblank_init(void);
+void ps2_vblank_init(void);
 /* Register the libultra VI event (osViSetEvent) target. */
 struct OSMesgQueue_s;
 void ps2_vblank_set_event(struct OSMesgQueue_s *mq, void *msg, uint32_t retrace_count);
@@ -169,7 +169,7 @@ void ps2_file_close(int fd);
 /* IOP modules (ps2/src/platform/iop.c)                                */
 /* ------------------------------------------------------------------ */
 
-int ps2_iop_init(void);                  /* reset IOP + load required base modules */
+void ps2_iop_init(void);                 /* reset IOP + load base modules */
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 /* massN: only: add non-USB BDM transports to the live stack (once, no reset). */
 int ps2_iop_load_bdm_fallback_transports(void);
