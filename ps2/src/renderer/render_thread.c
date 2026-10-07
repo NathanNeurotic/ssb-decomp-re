@@ -32,8 +32,10 @@ static int sThreadId = -1;
 static uint32_t sTasksDone;
 static uint8_t sStack[64 * 1024] __attribute__((aligned(64)));
 
-/* libultra side (ps2/src/ultra/sp.c): posts OS_EVENT_SP / OS_EVENT_DP. */
-extern void ps2_render_task_done(void *cookie);
+/* libultra side (ps2/src/ultra/sp.c): preserve the N64's two-stage
+ * RSP/RDP completion instead of serializing both behind the GS FINISH wait. */
+extern void ps2_render_sp_done(void *cookie);
+extern void ps2_render_dp_done(void *cookie);
 
 void ps2_render_enqueue(const void *dl, void *cookie)
 {
@@ -92,6 +94,15 @@ static void render_one(const RenderJob *job)
         ps2_gs_frame_setup(target);
         ps2_overlay_draw();
     }
+    /*
+     * Display-list translation is the PS2 equivalent of the RSP stage. At
+     * this point the EE no longer needs the game's display-list memory, so
+     * release SP_DONE before waiting for the GS/RDP-equivalent stage. This
+     * lets the scheduler/game prepare subsequent work while the GS consumes
+     * the packet, restoring the overlap the original hardware relied on.
+     */
+    ps2_render_sp_done(job->cookie);
+
     ps2_pkt_finish();
 
     gPS2RenderStats.gfx_us = ps2_time_us() - t0;
@@ -140,7 +151,7 @@ static void render_thread(void *arg)
         sTail = (sTail + 1) % RENDER_QUEUE;
 
         render_one(&job);
-        ps2_render_task_done(job.cookie);
+        ps2_render_dp_done(job.cookie);
         {
             extern void ps2_crash_test_poll(void);
 
