@@ -155,7 +155,11 @@ s32 osEPiStartDma(OSPiHandle *handle, OSIoMesg *mb, s32 direction)
 
     if (mb->hdr.retQueue != NULL)
     {
-        osSendMesg(mb->hdr.retQueue, (OSMesg)mb, OS_MESG_NOBLOCK);
+        if (osSendMesg(mb->hdr.retQueue, (OSMesg)mb, OS_MESG_NOBLOCK) != 0)
+        {
+            ps2_log("PI: completion queue unexpectedly full");
+            return -1;
+        }
     }
     return 0;
 }
