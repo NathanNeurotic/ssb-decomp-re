@@ -381,10 +381,20 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
         return 0;
 
     case PS2_BOOT_BDM:
-        /* Generic massN: does not say which transport backs it. USB is by
-         * far the common case, so bring it up first; a missing USB driver is
-         * not fatal because ps2_iop_load_bdm_fallback_transports() can still
-         * add the other local transports without resetting the IOP. */
+        /*
+         * Normal massN: sidecar launches preserve the launcher's proven
+         * filesystem first. If that mount is actually gone, assets.c invokes
+         * ps2_iop_recover_generic_bdm() and rebuilds the BDM transports on
+         * this live IOP without another reset.
+         *
+         * Explicit --data=massN: is reconstructible and keeps the clean-stack
+         * behavior used by typed BDM paths.
+         */
+        if (ps2_storage_requires_iop_preserve())
+        {
+            ps2_log("IOP: preserving inherited massN: storage stack");
+            return 0;
+        }
         if (load_bdm_core() < 0)
             return -1;
         if (LOAD_IRX(ssb_usbd_mini) < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
@@ -476,6 +486,33 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
         ps2_log("IOP: unsupported/ambiguous data device; refusing USB fallback");
         return -1;
     }
+}
+
+int ps2_iop_recover_generic_bdm(void)
+{
+    static int sRecoveryStarted;
+
+    if (ps2_storage_data_device() != PS2_BOOT_BDM ||
+        !ps2_storage_requires_iop_preserve() ||
+        sRecoveryStarted)
+        return 0;
+
+    sRecoveryStarted = 1;
+    ps2_log("IOP: inherited massN: sidecar unavailable; recovering BDM without reset");
+
+    /*
+     * Do not reset here. A launcher may already have reset the IOP after
+     * loading our ELF, and real hardware proved that a second reset after USB
+     * comes up can make the device disappear. Establish the core and USB on
+     * the current IOP; duplicate module loads are harmless because the actual
+     * success criterion is reopening SSB64.DAT, not the module return code.
+     */
+    LOAD_IRX(bdm);
+    LOAD_IRX(bdmfs_fatfs);
+    LOAD_IRX(ssb_usbd_mini);
+    LOAD_IRX(usbmass_bd_mini);
+    ps2_storage_begin_bdm_recovery();
+    return 1;
 }
 
 int ps2_iop_load_bdm_fallback_transports(void)
