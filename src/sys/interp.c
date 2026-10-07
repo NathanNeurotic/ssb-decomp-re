@@ -294,7 +294,7 @@ f32 syInterpGetFracFrame(SYInterpDesc *desc, f32 t)
 {
     f32 *point; // v0
     s32 id;
-    f32 frac_frame; // sp5C
+    f32 frac_frame = 0.0F; // invalid kind falls back to segment start
     f32 time_scale;
     f32 min = 0.0F;
     f32 max = 1.0F;
