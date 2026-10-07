@@ -1196,17 +1196,35 @@ void sySchedulerSoftReset(void);
 // jp: 0x8000241C 
 void sySchedulerThreadMain(void *arg)
 {
+#if defined(PLATFORM_PS2)
+    OSMesg mesg;
+#else
     s32 mesg;
+#endif
 
     // the wonders of matching
     sSYSchedulerClients = NULL;
 
+#if defined(PLATFORM_PS2)
+    /*
+     * These globals intentionally point at different task subtypes. Avoid the
+     * original chained assignment on PS2 so the compiler never propagates one
+     * incompatible pointer type through the chain.
+     */
+    sSYSchedulerMainQueueHead = NULL;
+    sSYSchedulerMainQueueTail = NULL;
+    sSYSchedulerCurrentTaskGfx = NULL;
+    sSYSchedulerCurrentTaskAudio = NULL;
+    sSYSchedulerPausedQueueHead = NULL;
+    sSYSchedulerPausedQueueTail = NULL;
+#else
     sSYSchedulerMainQueueHead =
     sSYSchedulerMainQueueTail =
     sSYSchedulerCurrentTaskGfx =
     sSYSchedulerCurrentTaskAudio =
     sSYSchedulerPausedQueueHead =
     sSYSchedulerPausedQueueTail = NULL;
+#endif
     scCurrentQueue3Task = scQueue3Head = D_80044EE0_406F0 = NULL;
 
     sSYSchedulerIsViModePending = FALSE;
@@ -1268,9 +1286,15 @@ void sySchedulerThreadMain(void *arg)
 
     while (TRUE)
     {
+#if defined(PLATFORM_PS2)
+        osRecvMesg(&gSYSchedulerTaskMesgQueue, &mesg, OS_MESG_BLOCK);
+
+        switch ((intptr_t)mesg)
+#else
         osRecvMesg(&gSYSchedulerTaskMesgQueue, (OSMesg)&mesg, OS_MESG_BLOCK);
 
         switch (mesg)
+#endif
         {
         case INTR_VRETRACE:
             sySchedulerVRetrace();
@@ -1301,7 +1325,11 @@ void sySchedulerThreadMain(void *arg)
         default:
             if (gSYSchedulerIsSoftReset == FALSE)
             {
+#if defined(PLATFORM_PS2)
+                sySchedulerPrepTask((SYTaskInfo *)mesg);
+#else
                 sySchedulerPrepTask(mesg);
+#endif
             }
         }
     }
