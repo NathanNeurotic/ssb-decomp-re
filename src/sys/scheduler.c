@@ -211,7 +211,9 @@ s32 func_80000B54(UNUSED SYTaskInfo *t)
     {
         return FALSE;
     }
-    curr = &sSYSchedulerPausedQueueHead->info;
+    curr = (sSYSchedulerPausedQueueHead != NULL)
+               ? &sSYSchedulerPausedQueueHead->info
+               : NULL;
 
     while (curr != NULL)
     {
@@ -235,7 +237,7 @@ s32 func_80000B54(UNUSED SYTaskInfo *t)
     {
         return FALSE;
     }
-    curr = &scQueue3Head->info;
+    curr = (scQueue3Head != NULL) ? &scQueue3Head->info : NULL;
 
     while (curr != NULL)
     {
@@ -370,7 +372,9 @@ void sySchedulerRemovePausedQueue(SYTaskGfx *task)
 // append to head of scQueue3Head/D_80044EE0_406F0 queue
 void func_80000E24(SYTaskGfx *task) {
     task->info.next = NULL;
-    task->info.prev = &D_80044EE0_406F0->info;
+    task->info.prev = (D_80044EE0_406F0 != NULL)
+                          ? &D_80044EE0_406F0->info
+                          : NULL;
     if (D_80044EE0_406F0 != NULL) {
         D_80044EE0_406F0->info.next = &task->info;
     } else {
@@ -876,7 +880,9 @@ s32 sySchedulerExecuteTask(SYTaskInfo *task)
                 v1 = sSYSchedulerCurrentTaskGfx;
             }
 
-            v0 = &sSYSchedulerPausedQueueHead->info;
+            v0 = (sSYSchedulerPausedQueueHead != NULL)
+                     ? &sSYSchedulerPausedQueueHead->info
+                     : NULL;
             while (v0 != NULL) {
                 if (v0->type == nSYTaskTypeGfx) {
                     if (((SYTaskGfx*) v0)->task_id == t->task_id) {
@@ -897,16 +903,18 @@ s32 sySchedulerExecuteTask(SYTaskInfo *task)
                 v0 = v0->next;
             }
 
-            v0 = &scCurrentQueue3Task->info;
+            v0 = (scCurrentQueue3Task != NULL)
+                     ? &scCurrentQueue3Task->info
+                     : NULL;
             if (v0 != NULL) {
                 if (v0->type == nSYTaskTypeGfx) {
-                    if (sSYSchedulerCurrentTaskGfx->task_id == t->task_id) {
-                        v1 = (void*) v0;
+                    if (scCurrentQueue3Task->task_id == t->task_id) {
+                        v1 = scCurrentQueue3Task;
                     }
                 }
             }
 
-            v0 = &scQueue3Head->info;
+            v0 = (scQueue3Head != NULL) ? &scQueue3Head->info : NULL;
             while (v0 != NULL) {
                 if (v0->type == nSYTaskTypeGfx) {
                     if (((SYTaskGfx*) v0)->task_id == t->task_id) {
