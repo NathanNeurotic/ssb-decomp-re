@@ -138,6 +138,29 @@ int ps2_assets_init(void)
                 break;
             }
 
+            /*
+             * Preserve-first generic BDM recovery.
+             *
+             * The launcher's massN: number is not durable. Before touching
+             * the storage stack, look for the exact same relative sidecar on
+             * any currently-live mass slot. If no inherited slot can open it,
+             * recover BDM + USB once on the current IOP (no reset) and let the
+             * normal resolver rediscover whichever massN: appears.
+             */
+            if (ps2_storage_data_device() == PS2_BOOT_BDM &&
+                ps2_storage_requires_iop_preserve())
+            {
+                if (ps2_storage_recover_mass_sidecar(PACK_NAME))
+                    continue;
+
+                if (attempt == 10)
+                {
+                    ps2_boot_stage("assets: inherited mass sidecar unavailable; recovering BDM without reset", 0);
+                    ps2_iop_recover_generic_bdm();
+                    continue;
+                }
+            }
+
             if (ps2_storage_data_device() == PS2_BOOT_HOST)
                 break;
 
