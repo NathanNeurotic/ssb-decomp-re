@@ -308,7 +308,6 @@ targets:
       - dmakit
       - pad
       - mtap
-      - mc
       - filexio
       - patches
       - sdr
