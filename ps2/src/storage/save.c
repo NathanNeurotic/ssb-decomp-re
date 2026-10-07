@@ -16,13 +16,11 @@
 #include <ps2/platform.h>
 
 #include <kernel.h>
-#include <fcntl.h>
+#include <libmc.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #define SRAM_SIZE (32 * 1024)
-#define SAVE_DIR "mc0:SSB64PS2"
+#define SAVE_DIR "/SSB64PS2"
 #define SAVE_VERSION 1
 #define FLUSH_DELAY_VBLANKS 60 /* write once the game has been quiet for ~1 s */
 
@@ -42,9 +40,9 @@ static volatile int sDirty;
 static volatile uint32_t sDirtyVBlank;
 static uint32_t sSequence;
 static int sNextSlot;
+static int sCardOk;
 static int sLock = -1;
 static int sThreadId = -1;
-static uint32_t sNextRetryVBlank;
 static uint8_t sThreadStack[16 * 1024] __attribute__((aligned(64)));
 
 static uint32_t crc32_calc(const uint8_t *p, uint32_t n)
@@ -64,36 +62,24 @@ static uint32_t crc32_calc(const uint8_t *p, uint32_t n)
     return ~crc;
 }
 
-static int read_full_fd(int fd, void *dst, int size)
+static int mc_call(int r)
 {
-    uint8_t *p = (uint8_t *)dst;
-    int done = 0;
+    int cmd, result;
 
-    while (done < size)
+    if (r != 0)
     {
-        int n = read(fd, p + done, size - done);
-
-        if (n <= 0)
-            return -1;
-        done += n;
+        return -1;
     }
-    return done;
+    mcSync(0, &cmd, &result);
+    return result;
 }
 
-static int write_full_fd(int fd, const void *src, int size)
+static int card_present(void)
 {
-    const uint8_t *p = (const uint8_t *)src;
-    int done = 0;
+    int type = 0, free_kb = 0, format = 0;
+    int r = mc_call(mcGetInfo(0, 0, &type, &free_kb, &format));
 
-    while (done < size)
-    {
-        int n = write(fd, p + done, size - done);
-
-        if (n <= 0)
-            return -1;
-        done += n;
-    }
-    return done;
+    return (r >= -2) && (type == MC_TYPE_PS2) && format;
 }
 
 static const char *slot_name(int slot)
@@ -105,20 +91,21 @@ static const char *slot_name(int slot)
 static int64_t load_slot(int slot, uint8_t *dst)
 {
     PS2SaveHeader *h = (PS2SaveHeader *)sWriteBuf;
-    int fd = open(slot_name(slot), O_RDONLY);
+    int fd = mc_call(mcOpen(0, 0, slot_name(slot), 1 /* O_RDONLY */));
     int n;
 
     if (fd < 0)
+    {
         return -1;
+    }
+    n = mc_call(mcRead(fd, sWriteBuf, sizeof(sWriteBuf)));
+    mc_call(mcClose(fd));
 
-    n = read_full_fd(fd, sWriteBuf, sizeof(sWriteBuf));
-    close(fd);
-
-    if (n != (int)sizeof(sWriteBuf) || memcmp(h->magic, "SSB64SAV", 8) != 0 ||
-        h->version != SAVE_VERSION || h->size != SRAM_SIZE ||
-        crc32_calc(sWriteBuf + sizeof(*h), SRAM_SIZE) != h->crc)
+    if (n != (int)sizeof(sWriteBuf) || memcmp(h->magic, "SSB64SAV", 8) != 0 || h->version != SAVE_VERSION ||
+        h->size != SRAM_SIZE || crc32_calc(sWriteBuf + sizeof(*h), SRAM_SIZE) != h->crc)
+    {
         return -1;
-
+    }
     memcpy(dst, sWriteBuf + sizeof(*h), SRAM_SIZE);
     return h->sequence;
 }
@@ -127,58 +114,44 @@ static void flush_now(void)
 {
     PS2SaveHeader *h = (PS2SaveHeader *)sWriteBuf;
     uint32_t snapshot_vblank;
-    int fd;
-    int n;
+    int fd, n;
 
-    /*
-     * MCMAN itself registers an ioman/iomanX "mc" filesystem driver. Use it
-     * through the same normal file API as every other backend instead of
-     * binding libmc to MCSERV. The latter has unbounded synchronous RPC paths
-     * and was able to freeze the entire boot after storage had already
-     * succeeded on hardware.
-     */
     WaitSema(sLock);
     memcpy(sWriteBuf + sizeof(*h), sSram, SRAM_SIZE);
     snapshot_vblank = sDirtyVBlank;
     SignalSema(sLock);
 
+    if (!sCardOk && !(sCardOk = card_present()))
+    {
+        return;
+    }
     memset(h, 0, sizeof(*h));
     memcpy(h->magic, "SSB64SAV", 8);
     h->version = SAVE_VERSION;
-    h->sequence = sSequence + 1;
+    h->sequence = ++sSequence;
     h->size = SRAM_SIZE;
     h->crc = crc32_calc(sWriteBuf + sizeof(*h), SRAM_SIZE);
 
-    /* mkdir fails harmlessly when the directory already exists. */
-    mkdir(SAVE_DIR, 0777);
-
-    fd = open(slot_name(sNextSlot), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    mc_call(mcMkDir(0, 0, SAVE_DIR)); /* fails harmlessly if it exists */
+    fd = mc_call(mcOpen(0, 0, slot_name(sNextSlot), 0x0200 | 0x0002 /* O_CREAT|O_WRONLY */));
     if (fd < 0)
     {
-        sNextRetryVBlank = ps2_vblank_count() + 300; /* retry in ~5 s */
-        ps2_log("save: mc0 unavailable; keeping SRAM dirty in RAM");
+        ps2_log("save: cannot open %s (%d)", slot_name(sNextSlot), fd);
+        sCardOk = 0;
         return;
     }
-
-    n = write_full_fd(fd, sWriteBuf, sizeof(sWriteBuf));
-    close(fd);
+    n = mc_call(mcWrite(fd, sWriteBuf, sizeof(sWriteBuf)));
+    mc_call(mcClose(fd));
     if (n != (int)sizeof(sWriteBuf))
     {
-        sNextRetryVBlank = ps2_vblank_count() + 300;
-        ps2_log("save: write failed (%d); keeping SRAM dirty in RAM", n);
+        ps2_log("save: write failed (%d)", n);
+        sCardOk = 0;
         return;
     }
-
-    sSequence++;
     ps2_log("save: wrote %s seq %u", slot_name(sNextSlot), (unsigned)sSequence);
     sNextSlot ^= 1;
-    sNextRetryVBlank = 0;
 
-    /*
-     * A game write may have arrived while the card write was in flight. Only
-     * clear dirty if the snapshot we persisted is still the newest SRAM
-     * generation; otherwise the save thread will flush the newer one later.
-     */
+    /* Do not lose a newer game write that arrived while MCSERV was writing. */
     WaitSema(sLock);
     if (sDirty && sDirtyVBlank == snapshot_vblank)
         sDirty = 0;
@@ -191,14 +164,12 @@ static void save_thread(void *arg)
     for (;;)
     {
         extern void ps2_delay_vblanks(int n);
-        uint32_t now;
 
         ps2_delay_vblanks(15);
-        now = ps2_vblank_count();
-        if (sDirty &&
-            (uint32_t)(now - sDirtyVBlank) >= FLUSH_DELAY_VBLANKS &&
-            (sNextRetryVBlank == 0 || (int32_t)(now - sNextRetryVBlank) >= 0))
+        if (sDirty && (ps2_vblank_count() - sDirtyVBlank) >= FLUSH_DELAY_VBLANKS)
+        {
             flush_now();
+        }
     }
 }
 
@@ -214,37 +185,33 @@ void ps2_save_init(void)
     sema.max_count = 1;
     sLock = CreateSema(&sema);
     memset(sSram, 0, sizeof(sSram));
-    sDirty = 0;
-    sNextRetryVBlank = 0;
 
-    /*
-     * No libmc/MCSERV bootstrap here. MCMAN already exposes mc0: as a normal
-     * filesystem through iomanX, so load the two alternating images directly.
-     * Missing card, missing directory and first-run/no-save all degrade to an
-     * empty SRAM image without blocking game boot.
-     */
-    seq_a = load_slot(0, tmp);
-    if (seq_a >= 0)
-        memcpy(sSram, tmp, SRAM_SIZE);
-
-    seq_b = load_slot(1, tmp);
-    if (seq_b > seq_a)
-        memcpy(sSram, tmp, SRAM_SIZE);
-
-    if (seq_a >= 0 || seq_b >= 0)
+    ps2_log("save: binding MCSERV RPC");
+    if (mcInit(MC_TYPE_XMC) < 0)
     {
-        sSequence = (uint32_t)((seq_a > seq_b) ? seq_a : seq_b);
+        sCardOk = 0;
+        ps2_log("save: mcInit failed, saving disabled");
+    }
+    else if ((sCardOk = card_present()))
+    {
+        seq_a = load_slot(0, tmp);
+        if (seq_a >= 0)
+        {
+            memcpy(sSram, tmp, SRAM_SIZE);
+        }
+        seq_b = load_slot(1, tmp);
+        if (seq_b > seq_a)
+        {
+            memcpy(sSram, tmp, SRAM_SIZE);
+        }
+        sSequence = (uint32_t)((seq_a > seq_b) ? seq_a : (seq_b > 0 ? seq_b : 0));
         sNextSlot = (seq_a > seq_b) ? 1 : 0;
-        ps2_log("save: mc0 direct I/O ready (slot A %d, slot B %d)",
-                (int)seq_a, (int)seq_b);
+        ps2_log("save: memory card 1 ready (slot A %d, slot B %d)", (int)seq_a, (int)seq_b);
     }
     else
     {
-        sSequence = 0;
-        sNextSlot = 0;
-        ps2_log("save: no valid mc0 save; starting with empty SRAM");
+        ps2_log("save: no formatted memory card in slot 1; saves stay in RAM");
     }
-
     ps2_mem_reclassify_static(PS2_MEM_SCRATCH, sizeof(sWriteBuf) + sizeof(tmp));
 
     th.func = (void *)save_thread;
