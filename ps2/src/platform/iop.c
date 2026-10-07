@@ -4,10 +4,14 @@
  * The launch device and the data device are intentionally separate.  host:
  * keeps the ps2link/PCSX2 IOP alive; every other launch starts from a clean
  * IOP and reconstructs only the stack required by the selected data device.
+ * Exactly one reset happens per boot for BDM devices: once the USB host
+ * driver is running, a second IOP reset leaves the stick unreachable.
  *
  * Base:      iomanX + fileXio + sio2man + mtapman + padman + mcman/mcserv
  *            + libsd/sdr
  * USB:       bdm + bdmfs_fatfs + usbd_mini + usbmass_bd_mini
+ * massN:     USB stack first; MX4SIO/iLink/ATA added later only if the
+ *            pack has not appeared (no reset in between)
  * ATA BDM:   ps2dev9 + bdm + bdmfs_fatfs + ps2atad
  * MX4SIO:    bdm + bdmfs_fatfs + mx4sio_bd
  * iLink:     bdm + bdmfs_fatfs + iLinkman + IEEE1394_bd
@@ -216,9 +220,13 @@ void ps2_iop_init(void)
     SifInitRpc(0);
 
     /* host: and bare pfsN: data paths depend on services/mounts owned by the
-     * launcher.  Everything else is rebuilt from a known IOP state. */
+     * launcher.  Everything else, including generic massN:, is rebuilt from
+     * a known IOP state. Disable stdout mirroring before that reset so a
+     * stale console RPC cannot deadlock real hardware. */
     if (!preserve_iop)
     {
+        ps2_log_console(0);
+        ps2_boot_stage("IOP: reset request", 0xC0C000);
         while (!SifIopReset("", 0))
         {
         }
@@ -239,15 +247,37 @@ void ps2_iop_init(void)
 
     LOAD_IRX(iomanx);
     LOAD_IRX(filexio);
-    /* Even when the inherited IOP already had fileXio loaded and the duplicate
-     * module load is rejected, bind the EE RPC client to the live service. */
-    fileXioInit();
 
+    /*
+     * Bring up the supported memory-card RPC stack before pad/multitap
+     * clients. This preserves the hardware-good 59baa97 save backend while
+     * keeping SIO2 dependency order deterministic on rebuilt IOPs.
+     */
     LOAD_IRX(sio2man);
-    LOAD_IRX(mtapman);
-    LOAD_IRX(padman);
     LOAD_IRX(mcman);
     LOAD_IRX(mcserv);
+    LOAD_IRX(mtapman);
+    LOAD_IRX(padman);
+
+    /*
+     * Match RiptOPL's proven reset ordering: the USB HOST driver is resident
+     * before the EE fileXio RPC client binds. The post-reset BDM/FAT and mass
+     * driver are still loaded later by ps2_iop_load_boot_device_drivers().
+     *
+     * Do this only for USB-capable data paths. Other backends keep their
+     * existing module set and ordering.
+     */
+    if (ps2_storage_data_device() == PS2_BOOT_BDM ||
+        ps2_storage_data_device() == PS2_BOOT_USB)
+    {
+        if (LOAD_IRX(usbd_mini) < 0)
+            ps2_log("IOP: RiptOPL USB host failed during base init");
+    }
+
+    /* Bind only after the host-side USB module ordering above, matching
+     * RiptOPL's sysReset() sequence on hardware. */
+    fileXioInit();
+
     LOAD_IRX(libsd);
     /*
      * Real hardware has already proven the embedded sdr server can wedge this
@@ -311,10 +341,10 @@ int ps2_iop_mmce_prepare_runtime_stream(void)
         LOAD_IRX(ssb_mmce_stream) < 0)
         return -1;
 
-    if (LOAD_IRX(mtapman) < 0 ||
-        LOAD_IRX(padman) < 0 ||
-        LOAD_IRX(mcman) < 0 ||
+    if (LOAD_IRX(mcman) < 0 ||
         LOAD_IRX(mcserv) < 0 ||
+        LOAD_IRX(mtapman) < 0 ||
+        LOAD_IRX(padman) < 0 ||
         LOAD_IRX(libsd) < 0)
         return -1;
 
@@ -345,15 +375,25 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
     switch (dev)
     {
     case PS2_BOOT_HOST:
-    case PS2_BOOT_BDM:
     case PS2_BOOT_MC:
+        return 0;
+
+    case PS2_BOOT_BDM:
+        /* Generic massN: does not say which transport backs it. USB is by
+         * far the common case, so bring it up first; a missing USB driver is
+         * not fatal because ps2_iop_load_bdm_fallback_transports() can still
+         * add the other local transports without resetting the IOP. */
+        if (load_bdm_core() < 0)
+            return -1;
+        if (LOAD_IRX(usbmass_bd_mini) < 0)
+            ps2_log("IOP: USB mass storage unavailable; other BDM transports remain");
         return 0;
 
     case PS2_BOOT_CDROM:
         return LOAD_IRX(cdvd);
 
     case PS2_BOOT_USB:
-        if (load_bdm_core() < 0 || LOAD_IRX(usbd_mini) < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
+        if (load_bdm_core() < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
             return -1;
         return 0;
 
@@ -434,6 +474,41 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
         ps2_log("IOP: unsupported/ambiguous data device; refusing USB fallback");
         return -1;
     }
+}
+
+int ps2_iop_load_bdm_fallback_transports(void)
+{
+    static int sTier;
+
+    if (ps2_storage_data_device() != PS2_BOOT_BDM)
+        return 0;
+
+    /*
+     * Match RiptOPL's literal-mass recovery order instead of loading every
+     * possible backend at once. USB is already the initial tier. If the exact
+     * massN: slot has not reappeared, add MX4SIO alone; only then add the
+     * expensive iLink + ATA transports. Nothing here resets the IOP.
+     */
+    if (sTier == 0)
+    {
+        sTier = 1;
+        ps2_log("IOP: mass recovery tier 2: MX4SIO");
+        LOAD_IRX(mx4sio_bd);
+        return 1;
+    }
+
+    if (sTier == 1)
+    {
+        sTier = 2;
+        ps2_log("IOP: mass recovery tier 3: iLink + ATA");
+        if (LOAD_IRX(iLinkman) >= 0)
+            LOAD_IRX(IEEE1394_bd);
+        if (LOAD_IRX(ps2dev9) >= 0 && LOAD_IRX(ps2atad) >= 0)
+            sleep(1);
+        return 1;
+    }
+
+    return 0;
 }
 
 int ps2_iop_module_loaded(const char *name)
