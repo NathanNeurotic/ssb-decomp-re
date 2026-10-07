@@ -214,20 +214,30 @@ int ps2_input_init(void)
         ps2_log("input: PADMAN RPC servers unavailable");
         return 0;
     }
+
+    /*
+     * PS2SDK's libmtap contract requires mtapInit() before padInit(). Keep
+     * that documented order (and the order already proven on this hardware),
+     * but only enter libmtap after its three RPC servers have passed bounded
+     * preflight checks.
+     */
+    if (mtap_rpc_ready())
+    {
+        if (mtapInit() == 1)
+            have_mtap = 1;
+        else
+            ps2_log("input: mtapInit failed; continuing with direct ports");
+    }
+    else
+    {
+        ps2_log("input: MTAP RPC unavailable; continuing with direct ports");
+    }
+
     if (padInit(0) <= 0)
     {
         ps2_log("input: padInit failed after RPC preflight");
         return 0;
     }
-
-    /*
-     * Multitap is optional. libmtap's mtapInit() otherwise spins forever if
-     * MTAPMAN did not start, so only enter it after all three servers exist.
-     */
-    if (mtap_rpc_ready() && mtapInit() == 1)
-        have_mtap = 1;
-    else
-        ps2_log("input: MTAP RPC unavailable; continuing with direct ports");
 
     sMtap[0] = have_mtap ? detect_multitap(0) : 0;
     sMtap[1] = have_mtap ? detect_multitap(1) : 0;
