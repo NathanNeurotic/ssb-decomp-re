@@ -119,7 +119,40 @@ int ps2_assets_init(void)
         sFd = -1;
         for (attempt = 0; attempt < 200; attempt++)
         {
-            ps2_storage_resolve_data_root(PACK_NAME);
+            int root_ready = ps2_storage_resolve_data_root(PACK_NAME);
+
+            /*
+             * Do not touch SSB64.DAT until the BDM filesystem says the
+             * intended slot is actually mounted. On hardware, calling open()
+             * on massN: while USB is still enumerating can block inside the
+             * filesystem and prevent this retry loop from ever advancing.
+             *
+             * RiptOPL solves the same boot problem by resolving the literal
+             * mass slot first, then escalating transports in bounded tiers.
+             */
+            if (!root_ready &&
+                (ps2_storage_data_device() == PS2_BOOT_BDM ||
+                 ps2_storage_data_device() == PS2_BOOT_USB ||
+                 ps2_storage_data_device() == PS2_BOOT_ATA ||
+                 ps2_storage_data_device() == PS2_BOOT_MX4SIO ||
+                 ps2_storage_data_device() == PS2_BOOT_ILINK ||
+                 ps2_storage_data_device() == PS2_BOOT_UDPBD))
+            {
+                if (ps2_storage_data_device() == PS2_BOOT_BDM)
+                {
+                    if (attempt == 15)
+                        ps2_iop_load_bdm_fallback_transports(); /* MX4SIO */
+                    else if (attempt == 30)
+                        ps2_iop_load_bdm_fallback_transports(); /* iLink + ATA */
+                }
+
+                if (attempt == 0 || attempt == 15 || attempt == 30 || attempt == 100)
+                    ps2_log("assets: waiting for BDM slot identity (try %d)", attempt + 1);
+
+                ps2_delay_vblanks(6);
+                continue;
+            }
+
             ps2_storage_path(path, sizeof(path), PACK_NAME);
             snprintf(sPackPath, sizeof(sPackPath), "%s", path);
             sFd = ps2_file_open_read(sPackPath);
@@ -140,6 +173,7 @@ int ps2_assets_init(void)
 
             if (ps2_storage_data_device() == PS2_BOOT_HOST)
                 break;
+
             ps2_delay_vblanks(6);
         }
     }
