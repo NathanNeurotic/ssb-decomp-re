@@ -124,10 +124,9 @@ int ps2_main(int argc, char *argv[])
     }
 
     /*
-     * Initialize the memory-card client before opening pad/multitap clients.
-     * Both share SIO2; doing MC discovery first matches the conservative PS2
-     * startup ordering and avoids entering libmc while PAD/MTAP setup is still
-     * issuing controller commands.
+     * Load SRAM from MCMAN's direct mc0: filesystem before opening pad/
+     * multitap clients. This avoids libmc/MCSERV entirely and keeps memory
+     * card I/O ahead of other SIO2 clients during boot.
      */
     ps2_log("boot: initializing save backend");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
