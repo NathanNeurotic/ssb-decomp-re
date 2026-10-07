@@ -43,6 +43,7 @@
     extern unsigned char name##_irx[] __attribute__((aligned(16))); \
     extern unsigned int size_##name##_irx
 
+DECLARE_IRX(ssb_usb_quiesce);
 DECLARE_IRX(iomanx);
 DECLARE_IRX(filexio);
 DECLARE_IRX(sio2man);
@@ -236,6 +237,28 @@ static int mount_hdd_partition(void)
     return -1;
 }
 
+/*
+ * A launcher that used USB leaves its OHCI controller running, and PS2SDK's
+ * usbd does not stop it on IOP reboot. It then keeps DMAing into IOP RAM
+ * while the new kernel boots, which hung our reset from some launchers. Halt
+ * it from inside the inherited IOP first; the module is a no-op when USB was
+ * never enabled and never stays resident.
+ */
+static void quiesce_inherited_usb(void)
+{
+    int result = 0;
+    int id;
+
+    ps2_boot_stage("IOP: stopping inherited USB controller", 0x008080);
+    SifLoadFileInit();
+    SifInitIopHeap();
+    sbv_patch_enable_lmb();
+    id = SifExecModuleBuffer(ssb_usb_quiesce_irx, size_ssb_usb_quiesce_irx, 0, NULL, &result);
+    SifExitIopHeap();
+    SifLoadFileExit();
+    ps2_log("IOP: inherited USB quiesce id=%d res=%d", id, result);
+}
+
 void ps2_iop_init(void)
 {
     int preserve_iop = ps2_storage_requires_iop_preserve();
@@ -252,7 +275,8 @@ void ps2_iop_init(void)
     if (!preserve_iop)
     {
         ps2_log_console(0);
-        ps2_boot_stage("IOP: reset request", 0x800080);
+        quiesce_inherited_usb();
+        ps2_boot_stage("IOP: reset request", 0xC0C000);
         while (!SifIopReset("", 0))
         {
         }
