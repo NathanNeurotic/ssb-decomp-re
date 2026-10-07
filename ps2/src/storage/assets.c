@@ -140,13 +140,21 @@ int ps2_assets_init(void)
             {
                 if (ps2_storage_data_device() == PS2_BOOT_BDM)
                 {
-                    if (attempt == 15)
+                    /*
+                     * This is the required game-data resolve, not RiptOPL's
+                     * short first-run config bootstrap. Give USB the full
+                     * 3-second RiptOPL resolve budget before touching MX4SIO,
+                     * which shares SIO2 with PAD/MC. Hardware showed USB
+                     * mounting after our old 1.5-second threshold, causing an
+                     * unnecessary mx4sio_bd load on a USB boot.
+                     */
+                    if (attempt == 30)
                         ps2_iop_load_bdm_fallback_transports(); /* MX4SIO */
-                    else if (attempt == 30)
+                    else if (attempt == 60)
                         ps2_iop_load_bdm_fallback_transports(); /* iLink + ATA */
                 }
 
-                if (attempt == 0 || attempt == 15 || attempt == 30 || attempt == 100)
+                if (attempt == 0 || attempt == 30 || attempt == 60 || attempt == 100)
                     ps2_log("assets: waiting for BDM slot identity (try %d)", attempt + 1);
 
                 ps2_delay_vblanks(6);
