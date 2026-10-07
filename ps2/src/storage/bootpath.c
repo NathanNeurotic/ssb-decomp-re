@@ -25,6 +25,7 @@
 
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h>
+#include <ps2sdkapi.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -43,6 +44,10 @@ static char sHddMountSource[HDD_SOURCE_MAX] = "";
 static int sProgressive;
 static int sDataNeedsExistingIop;
 static int sDataNeedsBdmResolve;
+static uint32_t sBdmDriverToken;
+static uint32_t sBdmDeviceNumber;
+static int sBdmIdentityValid;
+static int sBdmIdentityLaunchVerified;
 
 static int starts_with_ci(const char *s, const char *prefix)
 {
@@ -330,6 +335,8 @@ void ps2_storage_set_boot_path(const char *argv0)
     sHddMountSource[0] = '\0';
     sDataNeedsExistingIop = 0;
     sDataNeedsBdmResolve = 0;
+    sBdmIdentityValid = 0;
+    sBdmIdentityLaunchVerified = 0;
 
     if (argv0 == NULL || argv0[0] == '\0')
     {
@@ -362,6 +369,8 @@ int ps2_storage_set_data_path(const char *path)
 {
     if (path == NULL || path[0] == '\0')
         return 0;
+    sBdmIdentityValid = 0;
+    sBdmIdentityLaunchVerified = 0;
     return set_data_location(path, 0);
 }
 
@@ -395,71 +404,159 @@ int ps2_storage_requires_iop_preserve(void)
     return sDataNeedsExistingIop;
 }
 
-static int bdm_driver_matches(PS2BootDevice dev, const char *driver)
+static int bdm_driver_token_matches(PS2BootDevice dev, uint32_t token)
 {
-    if (driver == NULL || driver[0] == '\0')
-        return 0;
+    char driver[5];
+
+    memcpy(driver, &token, 4);
+    driver[4] = '\0';
 
     switch (dev)
     {
     case PS2_BOOT_USB:
-        return strcmp(driver, "usb") == 0;
+        return strncmp(driver, "usb", 3) == 0;
     case PS2_BOOT_ATA:
-        return strcmp(driver, "ata") == 0;
+        return strncmp(driver, "ata", 3) == 0;
     case PS2_BOOT_MX4SIO:
-        return strcmp(driver, "sdc") == 0 || strcmp(driver, "mx4sio") == 0;
+        return strncmp(driver, "sdc", 3) == 0 || strncmp(driver, "mx4s", 4) == 0;
     case PS2_BOOT_ILINK:
-        return strcmp(driver, "sd") == 0 || strcmp(driver, "ilink") == 0;
+        return strncmp(driver, "sd", 2) == 0 || strncmp(driver, "ilin", 4) == 0;
     case PS2_BOOT_UDPBD:
-        return strcmp(driver, "udp") == 0;
+        return strncmp(driver, "udp", 3) == 0;
     default:
+        return 1;
+    }
+}
+
+static int bdm_identity_from_fd(int fd, uint32_t *driver_token, uint32_t *device_number)
+{
+    uint32_t dev = 0xFFFFFFFFu;
+    int token;
+    int rc;
+
+    /*
+     * bdmfs_fatfs GET_DRIVERNAME has a historical NULL-device bug when an
+     * output buffer is supplied. With rdata == NULL it safely returns the
+     * first four bytes of mounted_bd->name as the ioctl2 return value.
+     * GET_DEVICE_NUMBER checks mounted_bd before writing its output.
+     *
+     * Both calls are made on the actual DAT descriptor, so identity cannot
+     * race a second root/directory handle from another mount generation.
+     */
+    token = _ps2sdk_ioctl2(fd, USBMASS_IOCTL_GET_DRIVERNAME,
+                           NULL, 0, NULL, 0);
+    if (token <= 0)
+        return 0;
+
+    rc = _ps2sdk_ioctl2(fd, USBMASS_IOCTL_GET_DEVICE_NUMBER,
+                        NULL, 0, &dev, sizeof(dev));
+    if (rc < 0 || dev == 0xFFFFFFFFu)
+        return 0;
+
+    *driver_token = (uint32_t)token;
+    *device_number = dev;
+    return 1;
+}
+
+int ps2_storage_validate_bdm_fd(int fd, int allow_capture)
+{
+    uint32_t token;
+    uint32_t devnum;
+    char driver[5];
+
+    if (sDataDevice != PS2_BOOT_BDM &&
+        sDataDevice != PS2_BOOT_USB &&
+        sDataDevice != PS2_BOOT_ATA &&
+        sDataDevice != PS2_BOOT_MX4SIO &&
+        sDataDevice != PS2_BOOT_ILINK &&
+        sDataDevice != PS2_BOOT_UDPBD)
+        return 1;
+
+    if (fd < 0 || !bdm_identity_from_fd(fd, &token, &devnum))
+    {
+        ps2_log("storage: BDM identity unavailable on DAT fd=%d", fd);
         return 0;
     }
+
+    if (sDataDevice != PS2_BOOT_BDM &&
+        !bdm_driver_token_matches(sDataDevice, token))
+    {
+        memcpy(driver, &token, 4);
+        driver[4] = '\0';
+        ps2_log("storage: rejecting %s DAT fd=%d (driver=%s dev=%u)",
+                ps2_storage_device_name(sDataDevice), fd, driver,
+                (unsigned)devnum);
+        return 0;
+    }
+
+    if (sBdmIdentityValid)
+    {
+        if (token != sBdmDriverToken || devnum != sBdmDeviceNumber)
+        {
+            char expected[5];
+
+            memcpy(driver, &token, 4);
+            driver[4] = '\0';
+            memcpy(expected, &sBdmDriverToken, 4);
+            expected[4] = '\0';
+            ps2_log("storage: BDM identity changed on DAT fd=%d: %s/%u != %s/%u",
+                    fd, driver, (unsigned)devnum, expected,
+                    (unsigned)sBdmDeviceNumber);
+            return 0;
+        }
+        return 1;
+    }
+
+    if (!allow_capture)
+    {
+        ps2_log("storage: refusing BDM DAT fd=%d without identity baseline", fd);
+        return 0;
+    }
+
+    sBdmDriverToken = token;
+    sBdmDeviceNumber = devnum;
+    sBdmIdentityValid = 1;
+    sBdmIdentityLaunchVerified =
+        (sDataDevice == PS2_BOOT_BDM && sDataNeedsExistingIop);
+
+    memcpy(driver, &token, 4);
+    driver[4] = '\0';
+    ps2_log("storage: captured BDM identity %s/%u (%s)",
+            driver, (unsigned)devnum,
+            sBdmIdentityLaunchVerified ? "launch-verified" : "recovery baseline");
+    return 1;
 }
 
 int ps2_storage_recover_mass_sidecar(const char *probe_name)
 {
-    char relative[PATH_BUF_MAX];
-    const char *colon;
-    int slot;
+    char probe[PATH_BUF_MAX + 64];
+    int fd;
+    int ok;
 
-    if (sDataDevice != PS2_BOOT_BDM || probe_name == NULL || probe_name[0] == '\0')
+    if (sDataDevice != PS2_BOOT_BDM ||
+        !sDataNeedsExistingIop ||
+        probe_name == NULL || probe_name[0] == '\0')
         return 0;
 
-    colon = strchr(sDataDir, ':');
-    if (colon == NULL)
+    /*
+     * Do not scan other massN: slots here. Before any recovery, only the exact
+     * mass slot encoded by argv[0] is evidence about the launch device.
+     * Verify its adjacent DAT and capture driver/device identity on that same
+     * descriptor. If this fails, the original identity is unrecoverable and
+     * the caller must enter the explicit best-effort rebuild path.
+     */
+    snprintf(probe, sizeof(probe), "%s%s", sDataDir, probe_name);
+    fd = open(probe, O_RDONLY);
+    if (fd < 0)
         return 0;
 
-    snprintf(relative, sizeof(relative), "%s", colon + 1);
-    if (relative[0] == '\0')
-        snprintf(relative, sizeof(relative), "/");
+    ok = ps2_storage_validate_bdm_fd(fd, 1);
+    close(fd);
+    if (!ok)
+        return 0;
 
-    for (slot = 0; slot < 10; slot++)
-    {
-        char dir[PATH_BUF_MAX];
-        char probe[PATH_BUF_MAX + 64];
-        int fd;
-
-        if (relative[0] == '/' || relative[0] == '\\')
-            snprintf(dir, sizeof(dir), "mass%d:%s", slot, relative);
-        else
-            snprintf(dir, sizeof(dir), "mass%d:/%s", slot, relative);
-        ensure_directory_suffix(dir, sizeof(dir), PS2_BOOT_BDM);
-        snprintf(probe, sizeof(probe), "%s%s", dir, probe_name);
-
-        /* The sidecar file itself is the authority. Do not query a transport
-         * token on an empty slot; older bdmfs builds can fault doing that. */
-        fd = open(probe, O_RDONLY);
-        if (fd < 0)
-            continue;
-        close(fd);
-
-        snprintf(sDataDir, sizeof(sDataDir), "%s", dir);
-        ps2_log("storage: inherited BDM sidecar found at %s", sDataDir);
-        return 1;
-    }
-
-    return 0;
+    ps2_log("storage: inherited BDM sidecar verified at %s", sDataDir);
+    return 1;
 }
 
 void ps2_storage_begin_bdm_recovery(void)
@@ -491,13 +588,11 @@ int ps2_storage_resolve_data_root(const char *probe_name)
 
     for (slot = 0; slot < 10; slot++)
     {
-        char root[16];
         char dir[PATH_BUF_MAX];
         char probe[PATH_BUF_MAX + 64];
-        char driver[32];
-        int fd, dfd, io;
+        int fd;
+        int identity_ok;
 
-        snprintf(root, sizeof(root), "mass%d:/", slot);
         if (relative[0] == '/' || relative[0] == '\\')
             snprintf(dir, sizeof(dir), "mass%d:%s", slot, relative);
         else
@@ -505,33 +600,28 @@ int ps2_storage_resolve_data_root(const char *probe_name)
         ensure_directory_suffix(dir, sizeof(dir), sDataDevice);
         snprintf(probe, sizeof(probe), "%s%s", dir, probe_name);
 
-        /* Opening the actual pack first both lazy-mounts FatFs and proves this
-         * volume is live. Only then ask bdmfs for the driver token: querying
-         * an empty mass slot with a return buffer can fault older bdmfs. */
+        /*
+         * Open the actual pack and identify THAT descriptor. Never close the
+         * probe and then query massN:/ through a separate directory handle:
+         * mount order can change between those operations.
+         *
+         * If the launch identity survived, only that physical BDM device is
+         * accepted. If a launcher reset the IOP before us, there is no prior
+         * physical identity left to recover; the first matching DAT after our
+         * rebuild becomes an explicitly best-effort baseline for later opens.
+         */
         fd = open(probe, O_RDONLY);
         if (fd < 0)
             continue;
+        identity_ok = ps2_storage_validate_bdm_fd(fd, 1);
         close(fd);
-
-        memset(driver, 0, sizeof(driver));
-        io = -1;
-        dfd = fileXioDopen(root);
-        if (dfd >= 0)
-        {
-            io = fileXioIoctl2(dfd, USBMASS_IOCTL_GET_DRIVERNAME,
-                               NULL, 0, driver, sizeof(driver) - 1);
-            fileXioDclose(dfd);
-        }
-        /* Generic massN: does not name a transport; the relative path that
-         * just opened already identifies the volume, and the driver token is
-         * only logged. Typed paths must match their transport. */
-        if (sDataDevice != PS2_BOOT_BDM && (io < 0 || !bdm_driver_matches(sDataDevice, driver)))
+        if (!identity_ok)
             continue;
 
         snprintf(sDataDir, sizeof(sDataDir), "%s", dir);
         sDataNeedsBdmResolve = 0;
-        ps2_log("storage: %s resolved to %s (driver=%s)",
-                ps2_storage_device_name(sDataDevice), sDataDir, driver);
+        ps2_log("storage: %s resolved to %s on validated DAT descriptor",
+                ps2_storage_device_name(sDataDevice), sDataDir);
         return 1;
     }
 
