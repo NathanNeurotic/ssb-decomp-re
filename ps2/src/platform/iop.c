@@ -1,17 +1,17 @@
 /*
  * IOP bring-up for real launch/data devices.
  *
- * The launch device and the data device are intentionally separate.  host:
- * keeps the ps2link/PCSX2 IOP alive; every other launch starts from a clean
- * IOP and reconstructs only the stack required by the selected data device.
- * Exactly one reset happens per boot for BDM devices: once the USB host
- * driver is running, a second IOP reset leaves the stick unreachable.
+ * The launch device and the data device are intentionally separate. host:,
+ * bare pfsN:, and massN: sidecar launches keep their inherited IOP. Other
+ * launches start from a clean IOP and reconstruct the selected data device.
+ * A missing inherited massN: sidecar triggers BDM recovery on the live IOP;
+ * resetting again after USB starts can leave the stick unreachable.
  *
  * Base:      iomanX + fileXio + sio2man + mtapman + padman + mcman/mcserv
  *            + libsd/sdr
  * USB:       bdm + bdmfs_fatfs + ssb_usbd_mini (pre-rewrite usbd) + usbmass_bd_mini
- * massN:     USB stack first; MX4SIO/iLink/ATA added later only if the
- *            pack has not appeared (no reset in between)
+ * massN:     inherited stack first; if absent, rebuild USB on the live IOP;
+ *            MX4SIO/iLink/ATA added later if the pack has not appeared
  * ATA BDM:   ps2dev9 + bdm + bdmfs_fatfs + ps2atad
  * MX4SIO:    bdm + bdmfs_fatfs + mx4sio_bd
  * iLink:     bdm + bdmfs_fatfs + iLinkman + IEEE1394_bd

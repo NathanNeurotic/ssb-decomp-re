@@ -189,18 +189,21 @@ select another device.
 
 The IOP policy is deliberately transport-aware:
 
-- `host:` and bare inherited `pfsN:` mounts are kept alive because
-  resetting the IOP would destroy information that `argv[0]` does not
-  contain.
-- Every other path resets the IOP exactly once. Before that reset, a small
+- `host:`, bare inherited `pfsN:` mounts, and `massN:` sidecar launches
+  keep the launcher's IOP services. For `massN:`, the
+  game first opens the sidecar from the inherited mount. If it is gone, the
+  game loads BDM and USB on the current IOP and resolves the relative asset
+  path again. An explicit `--data=massN:` uses the clean-stack path.
+- Reconstructible paths reset the IOP once. Before that reset, a small
   module (`ssb_usb_quiesce`) halts any OHCI USB controller the launcher left
   running: PS2SDK's usbd does not stop it on IOP reboot, so it would keep
   DMAing into IOP RAM while the new kernel loads, which hung the reset from
   some launchers. No path resets the IOP again once its USB stack is up;
   on hardware the stick never came back after a second reset.
-- Generic `massN:` is a connection-order alias, not a transport. It is rebuilt
-  as USB first and resolved by finding the slot that holds `SSB64.DAT`;
-  MX4SIO/iLink/ATA are added to the live stack after 5 s if needed.
+- Generic `massN:` is a connection-order alias, not a transport. If its
+  inherited mount is unavailable, USB is loaded first and the slot holding
+  the same relative `SSB64.DAT` path is found; MX4SIO/iLink/ATA are added
+  to the live stack after 5 s if needed.
 - Explicit USB, ATA/exFAT, MX4SIO, iLink, UDPBD, UDPFS, MMCE, APA/PFS and
   optical paths can be reconstructed from embedded drivers after a clean IOP
   reset.
@@ -215,7 +218,7 @@ The embedded IOP stacks are:
 | data path | IOP stack / handling |
 |---|---|
 | `host:` | inherited ps2link/PCSX2 filesystem |
-| `massN:` | bdm + bdmfs_fatfs + ssb_usbd_mini + usbmass_bd_mini; after 5 s without the pack, + iLink, ATA, MX4SIO |
+| `massN:` | inherited mount first; if unavailable, load bdm + bdmfs_fatfs + ssb_usbd_mini + usbmass_bd_mini on the live IOP; after 5 s without the pack, + iLink, ATA, MX4SIO |
 | `usbN:` | bdm + bdmfs_fatfs + ssb_usbd_mini + usbmass_bd_mini |
 | `ataN:` | ps2dev9 + bdm + bdmfs_fatfs + BDM-enabled ps2atad |
 | `mx4sioN:` | bdm + bdmfs_fatfs + mx4sio_bd |
