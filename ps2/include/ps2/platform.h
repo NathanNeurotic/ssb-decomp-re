@@ -131,6 +131,10 @@ int ps2_storage_requires_iop_preserve(void);
  * udpbd identities) to the actual massN: filesystem that contains
  * probe_name. */
 int ps2_storage_resolve_data_root(const char *probe_name);
+/* Generic massN: sidecar recovery: search live slots, or switch the same
+ * relative path into post-recovery mass-slot resolution. */
+int ps2_storage_recover_mass_sidecar(const char *probe_name);
+void ps2_storage_begin_bdm_recovery(void);
 /* Hardware diagnostics: log what every massN: slot answers for probe_name. */
 void ps2_storage_log_bdm_probe(const char *probe_name);
 int ps2_video_progressive(void);         /* 1 = 240p (ELF name contains "240p"), 0 = 480i */
@@ -174,6 +178,7 @@ void ps2_file_close(int fd);
 void ps2_iop_init(void);                 /* reset IOP + load base modules */
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 /* massN: only: add non-USB BDM transports to the live stack (once, no reset). */
+int ps2_iop_recover_generic_bdm(void);
 int ps2_iop_load_bdm_fallback_transports(void);
 int ps2_iop_load_audio_driver(void); /* deferred SDR server; safe to call after storage/input */
 int ps2_iop_mmce_prepare_runtime_stream(void);
