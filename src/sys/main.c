@@ -55,6 +55,7 @@ void __osSetWatchLo(u32); // Only define this for US region as it breaks the JP 
 extern unsigned int ps2_time_us(void);
 extern void ps2_log(const char *fmt, ...);
 extern void ps2_panic(const char *fmt, ...) __attribute__((noreturn));
+extern OSMesgQueue gSYMainThreadingMesgQueue;
 
 static void syMainWaitBootReady(const char *name)
 {
