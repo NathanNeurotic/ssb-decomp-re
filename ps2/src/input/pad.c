@@ -37,6 +37,10 @@
 #define PS2B_CROSS    0x4000
 #define PS2B_SQUARE   0x8000
 
+/* Match RiptOPL/OPL IGR: hold all four shoulders + START + SELECT. */
+#define PS2_IGR_COMBO (PS2B_L1 | PS2B_L2 | PS2B_R1 | PS2B_R2 | PS2B_START | PS2B_SELECT)
+#define PS2_IGR_HOLD_VBLANKS 60u /* ~1 second at NTSC 59.94 Hz */
+
 typedef struct PadMapEntry
 {
     uint16_t ps2;
@@ -83,7 +87,30 @@ static PadSlot sSlots[PS2_INPUT_MAX_PLAYERS] __attribute__((aligned(64)));
 static int sMtap[2];
 static PS2InputState sState[PS2_INPUT_MAX_PLAYERS];
 static uint16_t sRawHeld[PS2_INPUT_MAX_PLAYERS];
+static uint32_t sIgrHoldStart[PS2_INPUT_MAX_PLAYERS];
+static uint8_t sIgrHolding[PS2_INPUT_MAX_PLAYERS];
 static int sInitDone;
+
+static void igr_update(int player, uint16_t held)
+{
+    uint32_t now = ps2_vblank_count();
+
+    if ((held & PS2_IGR_COMBO) != PS2_IGR_COMBO)
+    {
+        sIgrHolding[player] = 0;
+        return;
+    }
+    if (!sIgrHolding[player])
+    {
+        sIgrHolding[player] = 1;
+        sIgrHoldStart[player] = now;
+        return;
+    }
+    if ((uint32_t)(now - sIgrHoldStart[player]) >= PS2_IGR_HOLD_VBLANKS)
+    {
+        ps2_igr_exit();
+    }
+}
 
 static void assign_slots(void)
 {
@@ -264,6 +291,7 @@ void ps2_input_poll(void)
         if (!s->open)
         {
             st->connected = 0;
+            sIgrHolding[i] = 0;
             continue;
         }
         state = padGetState(s->port, s->slot);
@@ -275,6 +303,7 @@ void ps2_input_poll(void)
         {
             st->connected = 0;
             s->analog_set = 0;
+            sIgrHolding[i] = 0;
             continue;
         }
         if (!s->analog_set && state == PAD_STATE_STABLE)
@@ -284,10 +313,12 @@ void ps2_input_poll(void)
         if (padRead(s->port, s->slot, &pad) == 0)
         {
             st->connected = 0;
+            sIgrHolding[i] = 0;
             continue;
         }
         held = (uint16_t)(0xFFFF ^ pad.btns);
         sRawHeld[i] = held;
+        igr_update(i, held);
 
         for (m = 0; m < sizeof(sDefaultMap) / sizeof(sDefaultMap[0]); m++)
         {
@@ -319,6 +350,25 @@ void ps2_input_poll(void)
         }
         st->buttons = n64;
         st->connected = 1;
+    }
+}
+
+void ps2_input_quiesce(void)
+{
+    int i;
+    char act[6] = { 0, 0, 0, 0, 0, 0 };
+
+    /* Freeze input first so no later poll can restart an actuator while the
+     * IGR path is chainloading the next ELF. Keep PADMAN itself resident;
+     * LoadExecPS2/ExecOSD owns the final process/IOP transition. */
+    sInitDone = 0;
+    for (i = 0; i < PS2_INPUT_MAX_PLAYERS; i++)
+    {
+        if (sSlots[i].open && sSlots[i].has_actuator)
+            padSetActDirect(sSlots[i].port, sSlots[i].slot, act);
+        sSlots[i].rumble_on = 0;
+        sRawHeld[i] = 0;
+        sIgrHolding[i] = 0;
     }
 }
 
