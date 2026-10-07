@@ -393,6 +393,9 @@ int ps2_spu_init(void)
             uint32_t last_off = head.entries_offset +
                                 (head.count - 1) * (uint32_t)sizeof(last);
 
+            uint32_t entries_end =
+                head.entries_offset + head.count * (uint32_t)sizeof(PS2SpuSampleEntry);
+
             ps2_rom_read(PS2_SPU_SAMPLES_VROM + last_off, &last, sizeof(last));
             if (last.data_off > region_bytes ||
                 last.data_size > region_bytes - last.data_off)
@@ -401,6 +404,11 @@ int ps2_spu_init(void)
                 return -1;
             }
             size = last.data_off + last.data_size;
+            if (size < entries_end || size < sizeof(head))
+            {
+                ps2_log("audio: SPU sample set does not contain its metadata table");
+                return -1;
+            }
         }
     }
     ps2_log("audio: SPU init stage 2/6 - sample set %u KiB, %u entries",
@@ -417,7 +425,16 @@ int ps2_spu_init(void)
     sEntries = (const PS2SpuSampleEntry *)(sSet + head.entries_offset);
     sCount = head.count;
     for (i = 0; i < sCount; i++)
+    {
+        const PS2SpuSampleEntry *e = &sEntries[i];
+
+        if (e->data_off > size || e->data_size > size - e->data_off)
+        {
+            ps2_log("audio: invalid sample entry %u range; audio stays silent", (unsigned)i);
+            return -1;
+        }
         sResidentOf[i] = -1;
+    }
 
     ps2_log("audio: SPU init stage 4/6 - binding dedicated RPC");
     if (audio_rpc_bind() < 0)
