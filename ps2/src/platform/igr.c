@@ -13,30 +13,74 @@
 #include <ps2/platform.h>
 #include <ps2/input.h>
 
-#include <fcntl.h>
+#include <delaythread.h>
+#include <fileio-common.h>
 #include <kernel.h>
-#include <unistd.h>
+#include <sifrpc.h>
+#include <string.h>
 
-static int mc_boot_exists(const char *path)
+static int mc_boot_probe(const char *path)
 {
-    int fd = open(path, O_RDONLY);
+    SifRpcClientData_t client __attribute__((aligned(64)));
+    struct _fio_open_arg arg __attribute__((aligned(64)));
+    int result __attribute__((aligned(64))) = -1;
+    int elapsed;
 
-    if (fd < 0)
-        return 0;
-    close(fd);
-    return 1;
+    /*
+     * Do not use libc open()/fileXio on the exit path: a stalled storage RPC
+     * must not make IGR itself unresponsive. Bind a private FILEIO client and
+     * submit OPEN asynchronously. If MCMAN/SIO2 or FILEIO does not answer
+     * within the bounded window, skip BOOT.ELF and return to OSDSYS.
+     */
+    memset(&client, 0, sizeof(client));
+    for (elapsed = 0; elapsed < 250; elapsed++)
+    {
+        int rc = sceSifBindRpc(&client, 0x80000001u, 0);
+
+        if (rc < 0)
+            return -1;
+        if (client.server != NULL)
+            break;
+        DelayThread(1000);
+    }
+    if (client.server == NULL)
+        return -1;
+
+    memset(&arg, 0, sizeof(arg));
+    arg.mode = FIO_O_RDONLY;
+    strncpy(arg.name, path, sizeof(arg.name) - 1);
+
+    if (sceSifCallRpc(&client, FIO_F_OPEN, SIF_RPC_M_NOWAIT,
+                      &arg, sizeof(arg), &result, sizeof(result),
+                      NULL, NULL) < 0)
+        return -1;
+
+    for (elapsed = 0; elapsed < 500; elapsed++)
+    {
+        if (!sceSifCheckStatRpc(&client))
+            return result >= 0 ? 1 : 0;
+        DelayThread(1000);
+    }
+
+    ps2_log("IGR: %s probe timed out; skipping memory-card chainload", path);
+    return -1;
 }
 
-static void chainload_boot_elf(const char *path) __attribute__((noreturn));
-
-static void chainload_boot_elf(const char *path)
+static int chainload_boot_elf(const char *path)
 {
     char *argv[1];
 
     argv[0] = (char *)path;
     ps2_log("IGR: launching %s", path);
     LoadExecPS2(path, 1, argv);
-    __builtin_unreachable();
+
+    /*
+     * LoadExecPS2 normally never returns. If the kernel loader rejects the
+     * target after our probe, returning here lets IGR try the next fallback
+     * rather than invoking undefined behaviour through a false noreturn.
+     */
+    ps2_log("IGR: LoadExecPS2 returned for %s", path);
+    return 0;
 }
 
 void ps2_igr_exit(void)
@@ -62,16 +106,18 @@ void ps2_igr_exit(void)
     ps2_input_quiesce();
     ps2_gs_prepare_exec();
 
-    /*
-     * MCMAN exposes mc0:/mc1: through the normal filesystem API, so IGR does
-     * not bind libmc/MCSERV either. Probe BOOT.ELF directly; a missing card or
-     * file falls through to OSDSYS without introducing another synchronous
-     * RPC dependency on the exit path.
-     */
-    if (mc_boot_exists("mc0:/BOOT/BOOT.ELF"))
-        chainload_boot_elf("mc0:/BOOT/BOOT.ELF");
-    if (mc_boot_exists("mc1:/BOOT/BOOT.ELF"))
-        chainload_boot_elf("mc1:/BOOT/BOOT.ELF");
+    {
+        int mc0 = mc_boot_probe("mc0:/BOOT/BOOT.ELF");
+
+        if (mc0 > 0)
+            chainload_boot_elf("mc0:/BOOT/BOOT.ELF");
+        /*
+         * A timeout means the card/SIO2 path is unhealthy. Do not queue a
+         * second card request behind it; preserve the guaranteed OSDSYS exit.
+         */
+        if (mc0 >= 0 && mc_boot_probe("mc1:/BOOT/BOOT.ELF") > 0)
+            chainload_boot_elf("mc1:/BOOT/BOOT.ELF");
+    }
 
     ps2_log("IGR: BOOT.ELF unavailable; returning to OSDSYS");
     ExecOSD(1, browser_argv);
