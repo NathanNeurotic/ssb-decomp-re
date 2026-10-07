@@ -20,11 +20,17 @@
 #include <sifrpc.h>
 #include <string.h>
 
+/*
+ * Dedicated IGR FILEIO client/buffers live for the process lifetime. A timed
+ * out SIF RPC may still complete later; static storage prevents that late DMA
+ * from targeting a stack frame that no longer exists.
+ */
+static SifRpcClientData_t sIgrFileClient __attribute__((aligned(64)));
+static struct _fio_open_arg sIgrOpenArg __attribute__((aligned(64)));
+static int sIgrOpenResult __attribute__((aligned(64))) = -1;
+
 static int mc_boot_probe(const char *path)
 {
-    SifRpcClientData_t client __attribute__((aligned(64)));
-    struct _fio_open_arg arg __attribute__((aligned(64)));
-    int result __attribute__((aligned(64))) = -1;
     int elapsed;
 
     /*
@@ -33,33 +39,35 @@ static int mc_boot_probe(const char *path)
      * submit OPEN asynchronously. If MCMAN/SIO2 or FILEIO does not answer
      * within the bounded window, skip BOOT.ELF and return to OSDSYS.
      */
-    memset(&client, 0, sizeof(client));
+    memset(&sIgrFileClient, 0, sizeof(sIgrFileClient));
     for (elapsed = 0; elapsed < 250; elapsed++)
     {
-        int rc = sceSifBindRpc(&client, 0x80000001u, 0);
+        int rc = sceSifBindRpc(&sIgrFileClient, 0x80000001u, 0);
 
         if (rc < 0)
             return -1;
-        if (client.server != NULL)
+        if (sIgrFileClient.server != NULL)
             break;
         DelayThread(1000);
     }
-    if (client.server == NULL)
+    if (sIgrFileClient.server == NULL)
         return -1;
 
-    memset(&arg, 0, sizeof(arg));
-    arg.mode = FIO_O_RDONLY;
-    strncpy(arg.name, path, sizeof(arg.name) - 1);
+    memset(&sIgrOpenArg, 0, sizeof(sIgrOpenArg));
+    sIgrOpenArg.mode = FIO_O_RDONLY;
+    strncpy(sIgrOpenArg.name, path, sizeof(sIgrOpenArg.name) - 1);
+    sIgrOpenResult = -1;
 
-    if (sceSifCallRpc(&client, FIO_F_OPEN, SIF_RPC_M_NOWAIT,
-                      &arg, sizeof(arg), &result, sizeof(result),
+    if (sceSifCallRpc(&sIgrFileClient, FIO_F_OPEN, SIF_RPC_M_NOWAIT,
+                      &sIgrOpenArg, sizeof(sIgrOpenArg),
+                      &sIgrOpenResult, sizeof(sIgrOpenResult),
                       NULL, NULL) < 0)
         return -1;
 
     for (elapsed = 0; elapsed < 500; elapsed++)
     {
-        if (!sceSifCheckStatRpc(&client))
-            return result >= 0 ? 1 : 0;
+        if (!sceSifCheckStatRpc(&sIgrFileClient))
+            return sIgrOpenResult >= 0 ? 1 : 0;
         DelayThread(1000);
     }
 
