@@ -46,7 +46,10 @@ static int sNextSlot;
 static int sLock = -1;
 static int sThreadId = -1;
 static int sFioReady;
+static volatile int sLoadComplete;
+static volatile int sPersistenceDisabled;
 static uint32_t sNextRetryVBlank;
+static uint8_t sLoadBuf[SRAM_SIZE] __attribute__((aligned(64)));
 static uint8_t sThreadStack[16 * 1024] __attribute__((aligned(64)));
 
 static uint32_t crc32_calc(const uint8_t *p, uint32_t n)
@@ -161,7 +164,8 @@ static int64_t load_slot(int slot, uint8_t *dst)
         crc32_calc(sWriteBuf + sizeof(*h), SRAM_SIZE) != h->crc)
         return -1;
 
-    memcpy(dst, sWriteBuf + sizeof(*h), SRAM_SIZE);
+    if (dst != NULL)
+        memcpy(dst, sWriteBuf + sizeof(*h), SRAM_SIZE);
     return h->sequence;
 }
 
@@ -234,7 +238,69 @@ static void flush_now(void)
 
 static void save_thread(void *arg)
 {
+    int64_t seq_a, seq_b;
+    int64_t chosen_seq = -1;
+    int chosen_slot = 0;
+
     (void)arg;
+
+    /*
+     * Card discovery is deliberately off the boot thread. sio2man ultimately
+     * waits without a timeout for the hardware interrupt; if a damaged card,
+     * adapter or SIO2 state never completes, only this optional save worker
+     * can block. The boot thread has its own deadline below and proceeds with
+     * RAM-backed SRAM.
+     */
+    ps2_log("save: worker checking mc0 SRAM slot A");
+    seq_a = load_slot(0, sLoadBuf);
+    if (seq_a >= 0)
+    {
+        chosen_seq = seq_a;
+        chosen_slot = 0;
+    }
+
+    ps2_log("save: worker checking mc0 SRAM slot B");
+    seq_b = load_slot(1, NULL);
+    if (seq_b > chosen_seq)
+    {
+        if (load_slot(1, sLoadBuf) >= 0)
+        {
+            chosen_seq = seq_b;
+            chosen_slot = 1;
+        }
+    }
+
+    WaitSema(sLock);
+    if (!sPersistenceDisabled)
+    {
+        if (chosen_seq >= 0)
+        {
+            memcpy(sSram, sLoadBuf, SRAM_SIZE);
+            sSequence = (uint32_t)chosen_seq;
+            sNextSlot = chosen_slot ^ 1;
+        }
+        else
+        {
+            sSequence = 0;
+            sNextSlot = 0;
+        }
+        sLoadComplete = 1;
+    }
+    SignalSema(sLock);
+
+    if (sPersistenceDisabled)
+    {
+        ps2_log("save: card load exceeded boot budget; persistence disabled for this run");
+        for (;;)
+            SleepThread();
+    }
+
+    if (chosen_seq >= 0)
+        ps2_log("save: loaded mc0 SRAM seq %u from slot %c",
+                (unsigned)chosen_seq, chosen_slot ? 'B' : 'A');
+    else
+        ps2_log("save: no valid mc0 save; starting with empty SRAM");
+
     for (;;)
     {
         extern void ps2_delay_vblanks(int n);
@@ -253,8 +319,7 @@ int ps2_save_init(void)
 {
     ee_sema_t sema = { 0 };
     ee_thread_t th = { 0 };
-    int64_t seq_a, seq_b;
-    static uint8_t tmp[SRAM_SIZE] __attribute__((aligned(64)));
+    int waited_ms;
     extern void *_gp;
 
     sema.init_count = 1;
@@ -269,39 +334,14 @@ int ps2_save_init(void)
     memset(sSram, 0, sizeof(sSram));
     sDirty = 0;
     sFioReady = 0;
+    sLoadComplete = 0;
+    sPersistenceDisabled = 0;
+    sSequence = 0;
+    sNextSlot = 0;
     sNextRetryVBlank = 0;
 
-    /*
-     * No libmc/MCSERV bootstrap here. MCMAN already exposes mc0: as a normal
-     * filesystem through iomanX, so load the two alternating images directly.
-     * Missing card, missing directory and first-run/no-save all degrade to an
-     * empty SRAM image without blocking game boot.
-     */
-    ps2_log("save: checking mc0 SRAM slot A");
-    seq_a = load_slot(0, tmp);
-    if (seq_a >= 0)
-        memcpy(sSram, tmp, SRAM_SIZE);
-
-    ps2_log("save: checking mc0 SRAM slot B");
-    seq_b = load_slot(1, tmp);
-    if (seq_b > seq_a)
-        memcpy(sSram, tmp, SRAM_SIZE);
-
-    if (seq_a >= 0 || seq_b >= 0)
-    {
-        sSequence = (uint32_t)((seq_a > seq_b) ? seq_a : seq_b);
-        sNextSlot = (seq_a > seq_b) ? 1 : 0;
-        ps2_log("save: mc0 direct I/O ready (slot A %d, slot B %d)",
-                (int)seq_a, (int)seq_b);
-    }
-    else
-    {
-        sSequence = 0;
-        sNextSlot = 0;
-        ps2_log("save: no valid mc0 save; starting with empty SRAM");
-    }
-
-    ps2_mem_reclassify_static(PS2_MEM_SCRATCH, sizeof(sWriteBuf) + sizeof(tmp));
+    ps2_mem_reclassify_static(PS2_MEM_SCRATCH,
+                              sizeof(sWriteBuf) + sizeof(sLoadBuf));
 
     th.func = (void *)save_thread;
     th.stack = sThreadStack;
@@ -309,18 +349,45 @@ int ps2_save_init(void)
     th.gp_reg = &_gp;
     th.initial_priority = 110; /* below every game thread */
     sThreadId = CreateThread(&th);
-    if (sThreadId >= 0)
+    if (sThreadId < 0)
     {
-        if (StartThread(sThreadId, NULL) < 0)
-        {
-            ps2_log("save: background flush thread failed to start; SRAM remains in RAM");
-            DeleteThread(sThreadId);
-            sThreadId = -1;
-        }
+        ps2_log("save: worker unavailable; continuing with RAM-backed SRAM");
+        return 1;
     }
-    else
+    if (StartThread(sThreadId, NULL) < 0)
     {
-        ps2_log("save: background flush thread unavailable; SRAM remains in RAM");
+        ps2_log("save: worker failed to start; continuing with RAM-backed SRAM");
+        DeleteThread(sThreadId);
+        sThreadId = -1;
+        return 1;
+    }
+
+    /*
+     * A healthy/no-card path normally resolves quickly. Give persistence up
+     * to three seconds, but never let optional memory-card hardware hold the
+     * game boot forever.
+     */
+    for (waited_ms = 0; waited_ms < 3000; waited_ms += 10)
+    {
+        if (sLoadComplete)
+            break;
+        DelayThread(10 * 1000);
+    }
+
+    if (!sLoadComplete)
+    {
+        /*
+         * Serialize cancellation with the worker's eventual commit. Once this
+         * flag is set, a late SIO2 completion may return, but it can never
+         * replace SRAM after gameplay has begun.
+         */
+        WaitSema(sLock);
+        if (!sLoadComplete)
+            sPersistenceDisabled = 1;
+        SignalSema(sLock);
+
+        if (sPersistenceDisabled)
+            ps2_log("save: mc0 probe timed out after 3 s; using RAM-backed SRAM only");
     }
 
     return 1;
