@@ -119,8 +119,12 @@ int ps2_main(int argc, char *argv[])
 
     if (ps2_storage_data_device() != PS2_BOOT_CDROM)
     {
+        /*
+         * Enable crash-time log persistence, but do not synchronously write a
+         * diagnostic file on the boot thread. Optional logging must never be
+         * another storage operation that can delay or wedge game startup.
+         */
         ps2_log_enable_save(1);
-        ps2_log_save();
     }
 
     /*
@@ -152,7 +156,7 @@ int ps2_main(int argc, char *argv[])
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
     ps2_log("boot: starting game");
-    ps2_log_save();
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
     /* syMainLoop creates the idle thread (libultra priority 127), which in
      * turn starts the game's main thread; this boot thread then just parks
      * at the lowest priority. */
