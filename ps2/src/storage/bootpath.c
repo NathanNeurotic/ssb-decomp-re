@@ -15,8 +15,8 @@
  *                                         mount source hdd0:+OPL
  *   udpfs:/SSB64/ssb64.elf            -> udpfs:/SSB64/
  *
- * massN: is resolved after the IOP reset by probing every massN: slot for
- * the same relative path (USB first, then the other local BDM transports).
+ * A live massN: sidecar keeps its mount. Otherwise, after the IOP reset,
+ * probe every massN: slot for the same relative path.
  *
  * A bare bdm: path is deliberately NOT guessed: it does not identify which
  * transport must be reconstructed after an IOP reset.
@@ -274,11 +274,9 @@ static int set_data_location(const char *path, int path_is_file)
          * exact massN: filesystem alive long enough to load our ELF. Keep
          * that working mount first instead of immediately tearing it down.
          *
-         * If the launcher reset its IOP after loading the ELF, the inherited
-         * mass slot will be gone; assets.c then rebuilds BDM/USB on the live
-         * IOP without a second reset and rediscoveries the same relative DAT
-         * path. Explicit --data=massN: remains reconstructible and uses the
-         * clean-stack resolver directly.
+         * If the launcher reset its IOP after loading the ELF, iop.c detects
+         * the missing sidecar before module loading and rebuilds from a clean
+         * IOP. Explicit --data=massN: also uses the clean-stack resolver.
          */
         sDataNeedsExistingIop = path_is_file ? 1 : 0;
         sDataNeedsBdmResolve = path_is_file ? 0 : 1;
@@ -467,7 +465,10 @@ int ps2_storage_recover_mass_sidecar(const char *probe_name)
 void ps2_storage_begin_bdm_recovery(void)
 {
     if (sDataDevice == PS2_BOOT_BDM)
+    {
+        sDataNeedsExistingIop = 0;
         sDataNeedsBdmResolve = 1;
+    }
 }
 
 int ps2_storage_resolve_data_root(const char *probe_name)

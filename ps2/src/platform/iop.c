@@ -2,15 +2,15 @@
  * IOP bring-up for real launch/data devices.
  *
  * The launch device and the data device are intentionally separate. host:,
- * bare pfsN:, and massN: sidecar launches keep their inherited IOP. Other
- * launches start from a clean IOP and reconstruct the selected data device.
- * A missing inherited massN: sidecar triggers BDM recovery on the live IOP;
- * resetting again after USB starts can leave the stick unreachable.
+ * bare pfsN:, and massN: launches with a live adjacent sidecar keep their
+ * inherited IOP. Other launches start from a clean IOP and reconstruct the
+ * selected data device. A sidecar lost after startup may still recover BDM
+ * on the live IOP; resetting after USB starts can leave the stick unreachable.
  *
  * Base:      iomanX + fileXio + sio2man + mtapman + padman + mcman/mcserv
  *            + libsd/sdr
  * USB:       bdm + bdmfs_fatfs + ssb_usbd_mini (pre-rewrite usbd) + usbmass_bd_mini
- * massN:     inherited stack first; if absent, rebuild USB on the live IOP;
+ * massN:     keep a live inherited sidecar, else rebuild BDM/USB from reset;
  *            MX4SIO/iLink/ATA added later if the pack has not appeared
  * ATA BDM:   ps2dev9 + bdm + bdmfs_fatfs + ps2atad
  * MX4SIO:    bdm + bdmfs_fatfs + mx4sio_bd
@@ -236,19 +236,41 @@ static void quiesce_inherited_usb(void)
 void ps2_iop_init(void)
 {
     int preserve_iop = ps2_storage_requires_iop_preserve();
+    int missing_inherited_sidecar = 0;
 
     sLoadedCount = 0;
     sIopWasReset = 0;
 
     SifInitRpc(0);
 
-    /* host: and bare pfsN: data paths depend on services/mounts owned by the
-     * launcher.  Everything else, including generic massN:, is rebuilt from
-     * a known IOP state. Disable stdout mirroring before that reset so a
-     * stale console RPC cannot deadlock real hardware. */
+    /* A launcher may reset the IOP after loading a massN: ELF. An absent BDM
+     * proves that mount is gone. If fileXio is already available, also probe
+     * the actual adjacent DAT; massN: alone says nothing about transport. */
+    if (preserve_iop && ps2_storage_data_device() == PS2_BOOT_BDM)
+    {
+        SifLoadFileInit();
+        missing_inherited_sidecar = SifSearchModuleByName("bdm") < 0;
+        if (!missing_inherited_sidecar && SifSearchModuleByName("fileXio") >= 0 && fileXioInit() >= 0)
+        {
+            missing_inherited_sidecar = !ps2_storage_recover_mass_sidecar("SSB64.DAT");
+            fileXioExit();
+        }
+        SifLoadFileExit();
+        if (missing_inherited_sidecar)
+        {
+            ps2_storage_begin_bdm_recovery();
+            preserve_iop = 0;
+        }
+    }
+
+    /* host: and bare pfsN: require the launcher's filesystem; massN: keeps
+     * it only when the adjacent sidecar opened above. Disable stdout
+     * mirroring before a reset so a stale console RPC cannot deadlock. */
     if (!preserve_iop)
     {
         ps2_log_console(0);
+        if (missing_inherited_sidecar)
+            ps2_log("IOP: inherited mass sidecar absent; rebuilding from a clean IOP");
         quiesce_inherited_usb();
         ps2_boot_stage("IOP: reset request", 0xC0C000);
         while (!SifIopReset("", 0))
@@ -381,15 +403,8 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
         return 0;
 
     case PS2_BOOT_BDM:
-        /*
-         * Normal massN: sidecar launches preserve the launcher's proven
-         * filesystem first. If that mount is actually gone, assets.c invokes
-         * ps2_iop_recover_generic_bdm() and rebuilds the BDM transports on
-         * this live IOP without another reset.
-         *
-         * Explicit --data=massN: is reconstructible and keeps the clean-stack
-         * behavior used by typed BDM paths.
-         */
+        /* Preserve only an inherited mount whose adjacent DAT opened before
+         * module loading. Otherwise this is the clean-stack BDM path. */
         if (ps2_storage_requires_iop_preserve())
         {
             ps2_log("IOP: preserving inherited massN: storage stack");

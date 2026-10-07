@@ -123,9 +123,8 @@ PS2BootDevice ps2_storage_data_device(void);
 PS2BootDevice ps2_storage_boot_device(void);
 const char *ps2_storage_launch_path(void);
 const char *ps2_storage_hdd_mount_source(void);
-/* True when the selected data path depends on an inherited IOP filesystem
- * (host:, or a bare pfsN: mount whose transport/source cannot be
- * reconstructed from argv[0]). */
+/* True when the selected data path still depends on an inherited IOP
+ * filesystem (host:, bare pfsN:, or a live massN: sidecar launch). */
 int ps2_storage_requires_iop_preserve(void);
 /* Resolve BDM launch paths (generic massN: and typed usb/ata/mx4sio/ilink/
  * udpbd identities) to the actual massN: filesystem that contains
