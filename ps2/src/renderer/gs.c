@@ -501,6 +501,19 @@ void ps2_gs_rect(int x0, int y0, int x1, int y1, uint32_t rgba)
 
 static int sGsReady;
 
+void ps2_gs_prepare_exec(void)
+{
+    if (!sGsReady)
+        return;
+
+    /* IGR raises the calling thread above the renderer before reaching here,
+     * so no new GIF work can be queued. Let the current DMA complete, then
+     * blank both display circuits while the next ELF/OSDSYS takes over. */
+    dma_wait_gif();
+    *PGS_PMODE = PGS_PMODE_VAL(0, 0, 1, 0);
+    *PGS_BGCOLOR = 0;
+}
+
 void ps2_boot_stage(const char *name, uint32_t rgb)
 {
     ps2_log("boot: %s", name);
