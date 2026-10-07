@@ -22,7 +22,7 @@ extern void ps2_gs_init(void);
 extern void ps2_gs_boot_screen(const char *title);
 extern void ps2_ultra_threads_init(void);
 extern void ps2_vi_init(void);
-extern void ps2_input_init(void);
+extern int ps2_input_init(void);
 extern int ps2_assets_init(void);
 extern void ps2_save_init(void);
 extern void ps2_audio_init(void);
@@ -134,7 +134,8 @@ int ps2_main(int argc, char *argv[])
     ps2_log("boot: save backend initialized");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
-    ps2_input_init();
+    if (!ps2_input_init())
+        ps2_panic("controller RPC initialization failed");
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
     ps2_log("boot: scheduling audio backend");
