@@ -273,7 +273,14 @@ void ps2_ultra_post_event(OSEvent e)
 {
     if (e < PS2_EVENT_COUNT && sEvents[e].mq != NULL)
     {
-        osSendMesg(sEvents[e].mq, sEvents[e].msg, OS_MESG_NOBLOCK);
+        /*
+         * Thread-context synthetic hardware completions must not be dropped.
+         * Graphics posts SP then DP back-to-back; losing only DP can leave the
+         * scheduler waiting forever for a completion that will never recur.
+         * Blocking here provides normal queue backpressure. Real interrupt
+         * context continues to use ps2_ultra_post_event_isr() below.
+         */
+        osSendMesg(sEvents[e].mq, sEvents[e].msg, OS_MESG_BLOCK);
     }
 }
 
