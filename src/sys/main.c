@@ -190,9 +190,13 @@ void syMainSetDmemStatus(void)
 
 void syMainThreadStackOverflow(s32 tid)
 {
+#if defined(PLATFORM_PS2)
+    ps2_panic("game thread stack canary failed (id=%d)", tid);
+#else
     syDebugPrintf("thread stack overflow  id = %d\n", tid);
 
     while (TRUE);
+#endif
 }
 
 void syMainVerifyStackProbes(void) 
