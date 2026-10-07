@@ -47,6 +47,15 @@ static int reopen_pack_stream(void)
     if (new_fd < 0)
         return 0;
 
+    /* Revalidate identity on the same descriptor we are about to retain.
+     * This rejects a massN: slot that was rebound to another BDM device. */
+    if (!ps2_storage_validate_bdm_fd(new_fd, 0))
+    {
+        ps2_log("assets: rejected reopened pack with changed/unknown BDM identity");
+        ps2_file_close(new_fd);
+        return 0;
+    }
+
     if (sFd >= 0)
         ps2_file_close(sFd);
     sFd = new_fd;
@@ -130,6 +139,18 @@ int ps2_assets_init(void)
                 snprintf(path, sizeof(path), "host:%s", PACK_NAME);
                 snprintf(sPackPath, sizeof(sPackPath), "%s", path);
                 sFd = ps2_file_open_read(sPackPath);
+            }
+
+            /*
+             * The resolver may have opened this path moments earlier, but the
+             * mass slot can be rebound between opens. Validate the identity on
+             * the persistent descriptor itself before trusting it.
+             */
+            if (sFd >= 0 && !ps2_storage_validate_bdm_fd(sFd, 1))
+            {
+                ps2_log("assets: rejected persistent pack with changed/unknown BDM identity");
+                ps2_file_close(sFd);
+                sFd = -1;
             }
 
             if (sFd >= 0)
