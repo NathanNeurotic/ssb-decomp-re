@@ -107,11 +107,26 @@ static void audio_rpc_complete(void *arg)
 
 static int audio_rpc_drain(void)
 {
+    uint32_t start;
+
     if (!sRpcPending)
         return (int)sRpcRecv[0];
 
+    start = ps2_time_us();
     while (sceSifCheckStatRpc(&sAudioRpc))
+    {
+        if ((uint32_t)(ps2_time_us() - start) >= 50000u)
+        {
+            /*
+             * Never let a dead audio RPC strand the whole game/IGR path.
+             * The client is no longer safe to reuse after this point, so
+             * callers treat the failure as a permanent audio disable.
+             */
+            sRpcPending = 0;
+            return -1;
+        }
         DelayThread(50);
+    }
 
     sRpcPending = 0;
     return (int)sRpcRecv[0];
@@ -416,6 +431,32 @@ int ps2_spu_init(void)
 int ps2_spu_ready(void)
 {
     return sReady;
+}
+
+void ps2_spu_shutdown(void)
+{
+    if (!sReady)
+        return;
+
+    /*
+     * IGR must never leave one of the game's voices latched behind a black
+     * screen. Key off every voice and mute both cores. batch_submit() uses
+     * the same dedicated audio RPC as gameplay; audio_rpc_drain() is bounded
+     * so a damaged server cannot turn this cleanup into another IGR hang.
+     */
+    sBatchCount = 0;
+    batch_add(SD_BATCH_SETSWITCH, 0 | SD_SWITCH_KOFF, 0xFFFFFF);
+    batch_add(SD_BATCH_SETSWITCH, 1 | SD_SWITCH_KOFF, 0xFFFFFF);
+    batch_add(SD_BATCH_SETPARAM, 0 | SD_PARAM_MVOLL, 0);
+    batch_add(SD_BATCH_SETPARAM, 0 | SD_PARAM_MVOLR, 0);
+    batch_add(SD_BATCH_SETPARAM, 1 | SD_PARAM_MVOLL, 0);
+    batch_add(SD_BATCH_SETPARAM, 1 | SD_PARAM_MVOLR, 0);
+    batch_submit();
+
+    if (sRpcPending && audio_rpc_drain() < 0)
+        ps2_log("IGR: audio RPC did not drain; continuing exit");
+
+    sReady = 0;
 }
 
 int ps2_spu_find_sample(uint32_t rom_key, uint32_t len, uint32_t loop_start, uint32_t loop_end)
