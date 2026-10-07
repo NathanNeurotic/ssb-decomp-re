@@ -164,7 +164,8 @@ void ps2_file_close(int fd);
 /* IOP modules (ps2/src/platform/iop.c)                                */
 /* ------------------------------------------------------------------ */
 
-void ps2_iop_init(void);                 /* reset IOP + load base modules */
+void ps2_iop_init(void);                 /* reset/rebuild or bind inherited launcher IOP */
+int ps2_iop_prepare_runtime_services(void); /* after DAT open: add missing pad/MC/libsd only */
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 int ps2_iop_load_audio_driver(void); /* deferred SDR server; safe to call after storage/input */
 int ps2_iop_mmce_prepare_runtime_stream(void);

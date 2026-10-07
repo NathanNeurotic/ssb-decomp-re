@@ -30,6 +30,7 @@
 #include <loadfile.h>
 #include <sbv_patches.h>
 #include <sifrpc.h>
+#include <smod.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -76,6 +77,7 @@ DECLARE_IRX(secrsif);
 static const char *sLoaded[MAX_TRACKED_MODULES];
 static int sLoadedCount;
 static int sIopWasReset;
+static int sInheritedIop;
 
 static int load_irx(const char *name, void *buf, unsigned int size, const char *args, int args_len)
 {
@@ -212,35 +214,50 @@ void ps2_iop_init(void)
 
     sLoadedCount = 0;
     sIopWasReset = 0;
+    sInheritedIop = preserve_iop;
 
     SifInitRpc(0);
 
-    /* host: and bare pfsN: data paths depend on services/mounts owned by the
-     * launcher.  Everything else is rebuilt from a known IOP state. */
-    if (!preserve_iop)
+    /*
+     * RiptOPL's no-reset elfldr and launcHER's normal app loader both hand
+     * child ELFs a LIVE IOP/filesystem. A massN: argv[0] is proof that the
+     * parent could already read this very directory. Do not reset that IOP,
+     * and just as importantly do not overlay replacement iomanX/fileXio,
+     * sio2man, pad or MC modules before opening our sidecar DAT.
+     *
+     * The previous code claimed to preserve the filesystem but then loaded a
+     * second base stack into it. Real hardware showed both failure modes:
+     * the mounted mass volume disappeared, and selectively skipping only
+     * iomanX/fileXio could hang during the remaining duplicate module loads.
+     */
+    if (preserve_iop)
     {
-        while (!SifIopReset("", 0))
-        {
-        }
-        while (!SifIopSync())
-        {
-        }
-        SifInitRpc(0);
-        sIopWasReset = 1;
+        SifLoadFileInit();
+        SifInitIopHeap();
+        if (fileXioInit() < 0)
+            ps2_log("IOP: inherited fileXio client bind failed");
+        ps2_log("IOP: inherited launcher IOP left unchanged");
+        return;
     }
+
+    while (!SifIopReset("", 0))
+    {
+    }
+    while (!SifIopSync())
+    {
+    }
+    SifInitRpc(0);
+    sIopWasReset = 1;
 
     SifLoadFileInit();
     SifInitIopHeap();
 
     sbv_patch_enable_lmb();
     sbv_patch_disable_prefix_check();
-    if (sIopWasReset)
-        sbv_patch_fileio();
+    sbv_patch_fileio();
 
     LOAD_IRX(iomanx);
     LOAD_IRX(filexio);
-    /* Even when the inherited IOP already had fileXio loaded and the duplicate
-     * module load is rejected, bind the EE RPC client to the live service. */
     fileXioInit();
 
     LOAD_IRX(sio2man);
@@ -257,8 +274,74 @@ void ps2_iop_init(void)
      */
     ps2_log("IOP: sdr deferred for hardware-safe storage validation");
 
-    ps2_log("IOP: %s, %d base modules",
-            sIopWasReset ? "reset" : "kept (inherited filesystem)", sLoadedCount);
+    ps2_log("IOP: reset, %d base modules", sLoadedCount);
+}
+
+static int inherited_module_present(const char *name)
+{
+    smod_mod_info_t info;
+    memset(&info, 0, sizeof(info));
+    return smod_get_mod_by_name(name, &info) > 0;
+}
+
+static int ensure_inherited_module(const char *probe_name, const char *load_name,
+                                   void *buf, unsigned int size)
+{
+    if (inherited_module_present(probe_name))
+    {
+        ps2_log("IOP: inherited %s already resident (%s)", load_name, probe_name);
+        return 0;
+    }
+    return load_irx(load_name, buf, size, NULL, 0);
+}
+
+int ps2_iop_prepare_runtime_services(void)
+{
+    if (!sInheritedIop)
+        return 0;
+
+    /*
+     * Only now -- after SSB64.DAT is open and validated on the parent's live
+     * mount -- add services the game itself needs. Never replace filesystem
+     * or SIO2 ownership underneath a live massN: descriptor.
+     *
+     * Both reference launchers load sio2man before handing off. Requiring the
+     * existing instance is important for MX4SIO: loading another sio2man over
+     * an inherited SIO2-backed storage stack is exactly the kind of takeover
+     * this path exists to avoid.
+     */
+    if (!inherited_module_present("sio2man"))
+    {
+        ps2_log("IOP: inherited launcher has no sio2man; refusing unsafe replacement");
+        return -1;
+    }
+
+    sbv_patch_enable_lmb();
+    sbv_patch_disable_prefix_check();
+
+    /*
+     * Probe the IRX module IDs, not our embed aliases:
+     *   mtapman -> "multitap_manager"
+     *   mcman   -> "mcman_cex"
+     *   libsd   -> "freesd"
+     * These are the IDs declared by the PS2SDK modules used by both
+     * reference launchers. Using the embed aliases here would miss an
+     * already-resident module and load a duplicate into the inherited IOP.
+     */
+    if (ensure_inherited_module("multitap_manager", "mtapman",
+                                mtapman_irx, size_mtapman_irx) < 0 ||
+        ensure_inherited_module("padman", "padman",
+                                padman_irx, size_padman_irx) < 0 ||
+        ensure_inherited_module("mcman_cex", "mcman",
+                                mcman_irx, size_mcman_irx) < 0 ||
+        ensure_inherited_module("mcserv", "mcserv",
+                                mcserv_irx, size_mcserv_irx) < 0 ||
+        ensure_inherited_module("freesd", "libsd",
+                                libsd_irx, size_libsd_irx) < 0)
+        return -1;
+
+    ps2_log("IOP: runtime pad/MC/audio prerequisites ready on inherited stack");
+    return 0;
 }
 
 int ps2_iop_mmce_prepare_runtime_stream(void)
@@ -445,6 +528,8 @@ int ps2_iop_module_loaded(const char *name)
         if (strcmp(sLoaded[i], name) == 0)
             return 1;
     }
+    if (sInheritedIop)
+        return inherited_module_present(name);
     return 0;
 }
 

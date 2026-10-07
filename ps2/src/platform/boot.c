@@ -123,6 +123,14 @@ int ps2_main(int argc, char *argv[])
         ps2_log_save();
     }
 
+    /*
+     * On inherited launch environments, do not add pad/MC/audio-side IOP
+     * modules until the persistent DAT stream is already open. This preserves
+     * the exact filesystem stack that RiptOPL/launcHER used to load us.
+     */
+    if (ps2_iop_prepare_runtime_services() < 0)
+        ps2_panic("inherited launcher IOP is missing required runtime services");
+
     ps2_input_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
