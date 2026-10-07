@@ -48,6 +48,7 @@ DECLARE_IRX(sio2man);
 DECLARE_IRX(mtapman);
 DECLARE_IRX(padman);
 DECLARE_IRX(mcman);
+DECLARE_IRX(mcserv);
 DECLARE_IRX(libsd);
 DECLARE_IRX(sdr);
 DECLARE_IRX(ssb_audio);
@@ -248,13 +249,15 @@ void ps2_iop_init(void)
     LOAD_IRX(filexio);
 
     /*
-     * Match the safe SIO2 dependency order: MCMAN owns the memory-card
-     * filesystem before pad/multitap clients start using SIO2. SSB64 saves
-     * through MCMAN's mc0: ioman driver directly, so MCSERV/libmc are not
-     * loaded at all.
+     * Use PS2SDK's supported memory-card stack, in dependency order:
+     * SIO2MAN -> MCMAN -> MCSERV. The EE save layer binds libmc before
+     * ps2_input_init() opens PAD/MTAP clients, so memory-card RPC owns a
+     * clean SIO2 path during boot instead of attempting raw mc0: file I/O
+     * through an interface MCMAN does not provide to the EE by itself.
      */
     LOAD_IRX(sio2man);
     LOAD_IRX(mcman);
+    LOAD_IRX(mcserv);
     LOAD_IRX(mtapman);
     LOAD_IRX(padman);
 
