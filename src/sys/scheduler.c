@@ -17,6 +17,10 @@
 #include <PR/sptask.h>
 #include <PR/ultratypes.h>
 
+#if defined(PLATFORM_PS2)
+extern void ps2_panic(const char *fmt, ...) __attribute__((noreturn));
+#endif
+
 /*
     28 00 u32	type;
     2C 04 u32	flags;
@@ -1091,8 +1095,13 @@ void sySchedulerSpTaskDone(void)
     
                 if (sSYSchedulerRdpOutputBufferID < sSYSchedulerRdpCache)
                 {
+#if defined(PLATFORM_PS2)
+                    ps2_panic("scheduler RDP output buffer overflow (size=%d)",
+                              sSYSchedulerRdpOutputBufferID);
+#else
                     syDebugPrintf("rdp_output_buff over !! size = %d\n byte", sSYSchedulerRdpOutputBufferID);
                     while (TRUE);
+#endif
                 }
                 sSYSchedulerCurrentTaskGfx->info.state = nSYSchedulerStatusTaskQueued;
                 func_80000E24(sSYSchedulerCurrentTaskGfx);
@@ -1219,7 +1228,11 @@ void sySchedulerThreadMain(void *arg)
         break;
         
     case OS_TV_PAL:
+#if defined(PLATFORM_PS2)
+        ps2_panic("scheduler entered unsupported PAL TV mode");
+#else
         while (TRUE);
+#endif
         break;
         
     case OS_TV_MPAL:
