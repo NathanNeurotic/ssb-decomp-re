@@ -338,9 +338,9 @@ int ps2_iop_mmce_prepare_runtime_stream(void)
         LOAD_IRX(ssb_mmce_stream) < 0)
         return -1;
 
-    if (LOAD_IRX(mcman) < 0 ||
-        LOAD_IRX(mtapman) < 0 ||
-        LOAD_IRX(padman) < 0)
+    if (LOAD_IRX(mtapman) < 0 ||
+        LOAD_IRX(padman) < 0 ||
+        LOAD_IRX(mcman) < 0)
         return -1;
 
     ps2_log("IOP: final MMCE game stack ready (MMCEDRV before PAD/MC)");
