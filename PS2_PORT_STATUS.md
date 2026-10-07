@@ -56,8 +56,9 @@ The storage/launch rewrite is implemented on
 
 - launch device and data device are separate; `--data=<directory>` supports
   cross-device asset placement;
-- generic `massN:` paths preserve the launcher's mounted BDM stack instead of
-  being guessed as USB;
+- generic `massN:` paths halt the launcher's USB controller, reset the IOP
+  once, rebuild BDM + USB (other BDM transports after 5 s) and locate the slot
+  holding `SSB64.DAT` (hardware-verified on USB, 2026-10-06);
 - explicit `usb/ata/mx4sio/ilink/udpbd` identities load the correct transport
   and resolve to the matching `massN:` filesystem containing `SSB64.DAT`;
 - unknown/bare `bdm:` identities are rejected rather than silently routed to

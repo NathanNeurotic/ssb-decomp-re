@@ -9,11 +9,14 @@
  *
  * Canonical examples:
  *   usb:/SSB64/ssb64.elf              -> mass0:/SSB64/
- *   mass1:/SSB64/ssb64.elf            -> mass1:/SSB64/
+ *   mass1:/SSB64/ssb64.elf            -> massN:/SSB64/ (slot found by probe)
  *   mx4sio:/SSB64/ssb64.elf           -> mx4sio:/SSB64/
  *   hdd0:+OPL:pfs:/SSB64/ssb64.elf    -> pfs0:/SSB64/
  *                                         mount source hdd0:+OPL
  *   udpfs:/SSB64/ssb64.elf            -> udpfs:/SSB64/
+ *
+ * massN: is resolved after the IOP reset by probing every massN: slot for
+ * the same relative path (USB first, then the other local BDM transports).
  *
  * A bare bdm: path is deliberately NOT guessed: it does not identify which
  * transport must be reconstructed after an IOP reset.
@@ -266,12 +269,16 @@ static int set_data_location(const char *path, int path_is_file)
     }
     else if (dev == PS2_BOOT_BDM)
     {
-        /* massN: names an already-mounted BDM filesystem but does not encode
-         * whether the transport is USB, ATA, MX4SIO, iLink, or network. Do
-         * not guess and destroy the correct stack with an IOP reset: inherit
-         * the launcher's mount exactly as supplied. */
-        sDataNeedsExistingIop = 1;
-        sDataNeedsBdmResolve = 0;
+        /* massN: is a connection-order alias, not a live handle we can
+         * inherit: whether the launcher's mount survives to this ELF depends
+         * on the launcher (RiptOPL's "Reboot IOP" leaves a bare ROM IOP with
+         * no mass: device and no fileXio server). Reset once like every other
+         * reconstructible device, bring up our own BDM stack, and locate the
+         * volume that holds the same relative path. Never reset again after
+         * that stack is up: hardware showed USB does not come back from a
+         * second reset in the same boot. */
+        sDataNeedsExistingIop = 0;
+        sDataNeedsBdmResolve = 1;
         strncpy(tmp, path, sizeof(tmp) - 1);
         tmp[sizeof(tmp) - 1] = '\0';
         if (path_is_file)
@@ -451,14 +458,19 @@ int ps2_storage_resolve_data_root(const char *probe_name)
             continue;
         close(fd);
 
-        dfd = fileXioDopen(root);
-        if (dfd < 0)
-            continue;
         memset(driver, 0, sizeof(driver));
-        io = fileXioIoctl2(dfd, USBMASS_IOCTL_GET_DRIVERNAME,
-                           NULL, 0, driver, sizeof(driver) - 1);
-        fileXioDclose(dfd);
-        if (io < 0 || !bdm_driver_matches(sDataDevice, driver))
+        io = -1;
+        dfd = fileXioDopen(root);
+        if (dfd >= 0)
+        {
+            io = fileXioIoctl2(dfd, USBMASS_IOCTL_GET_DRIVERNAME,
+                               NULL, 0, driver, sizeof(driver) - 1);
+            fileXioDclose(dfd);
+        }
+        /* Generic massN: does not name a transport; the relative path that
+         * just opened already identifies the volume, and the driver token is
+         * only logged. Typed paths must match their transport. */
+        if (sDataDevice != PS2_BOOT_BDM && (io < 0 || !bdm_driver_matches(sDataDevice, driver)))
             continue;
 
         snprintf(sDataDir, sizeof(sDataDir), "%s", dir);
