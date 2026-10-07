@@ -414,15 +414,15 @@ static int bdm_driver_token_matches(PS2BootDevice dev, uint32_t token)
     switch (dev)
     {
     case PS2_BOOT_USB:
-        return strncmp(driver, "usb", 3) == 0;
+        return strcmp(driver, "usb") == 0;
     case PS2_BOOT_ATA:
-        return strncmp(driver, "ata", 3) == 0;
+        return strcmp(driver, "ata") == 0;
     case PS2_BOOT_MX4SIO:
-        return strncmp(driver, "sdc", 3) == 0 || strncmp(driver, "mx4s", 4) == 0;
+        return strcmp(driver, "sdc") == 0 || strcmp(driver, "mx4s") == 0;
     case PS2_BOOT_ILINK:
-        return strncmp(driver, "sd", 2) == 0 || strncmp(driver, "ilin", 4) == 0;
+        return strcmp(driver, "sd") == 0 || strcmp(driver, "ilin") == 0;
     case PS2_BOOT_UDPBD:
-        return strncmp(driver, "udp", 3) == 0;
+        return strcmp(driver, "udp") == 0;
     default:
         return 1;
     }
