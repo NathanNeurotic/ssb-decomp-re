@@ -428,6 +428,28 @@ static PS2BootDevice bdm_device_from_token(int token)
  * device-number ioctl checks mounted_bd before writing, and GET_DRIVERNAME is
  * used without a return buffer so the ps2sdk NULL-device copy bug is avoided.
  */
+static int bdm_slot_mounted(int slot)
+{
+    char root[16];
+    iox_stat_t st;
+
+    if (slot < 0 || slot > 9)
+        return 0;
+
+    /*
+     * IMPORTANT: do not use Dopen as the presence probe.
+     *
+     * ps2sdk bdmfs_fatfs resolves "massN:" to volume N even when that
+     * volume has no mounted block device. fs_dopen() then enters FatFs and
+     * can block while the transport is still absent/enumerating. fs_getstat()
+     * has a dedicated root fast-path that checks mounted_bd first and returns
+     * -ENXIO immediately, without entering FatFs. This is the safe poll.
+     */
+    snprintf(root, sizeof(root), "mass%d:/", slot);
+    memset(&st, 0, sizeof(st));
+    return fileXioGetStat(root, &st) >= 0;
+}
+
 static int bdm_slot_identity(int slot, PS2BootDevice *out_dev, unsigned int *out_devnr)
 {
     char root[16];
@@ -435,10 +457,16 @@ static int bdm_slot_identity(int slot, PS2BootDevice *out_dev, unsigned int *out
     int dfd;
     int token;
 
-    if (slot < 0 || slot > 9)
+    if (!bdm_slot_mounted(slot))
         return 0;
 
     snprintf(root, sizeof(root), "mass%d:/", slot);
+
+    /*
+     * The root is now proven mounted, so Dopen/ioctl cannot hit the
+     * unmounted-volume FatFs path above. Identity is only needed for typed
+     * transport resolution; generic massN: uses the mount check directly.
+     */
     dfd = fileXioDopen(root);
     if (dfd < 0)
         return 0;
@@ -504,25 +532,22 @@ int ps2_storage_resolve_data_root(const char *probe_name)
      */
     if (sDataDevice == PS2_BOOT_BDM)
     {
-        PS2BootDevice mounted_dev;
-        unsigned int devnr;
         int literal = mass_slot_from_path(sDataDir);
-
-        if (literal < 0)
-            return 0;
         char probe[PATH_BUF_MAX + 64];
         int fd;
 
-        if (!bdm_slot_identity(literal, &mounted_dev, &devnr))
+        if (literal < 0)
             return 0;
 
         /*
-         * Identity appearing is not yet enough: USB enumeration/FatFs mount
-         * completion is timing-sensitive on real hardware. Do not latch this
-         * mass slot until the exact adjacent pack is actually readable.
-         * Because identity is already live, this probe occurs only after the
-         * unsafe unresolved-slot window that previously wedged open().
+         * First wait for the literal root through the non-blocking mounted_bd
+         * fast-path. Only after that is true may we enter normal FatFs file
+         * I/O. This is the same sequencing distinction the previous build
+         * was missing.
          */
+        if (!bdm_slot_mounted(literal))
+            return 0;
+
         snprintf(probe, sizeof(probe), "%s%s", sDataDir, probe_name);
         fd = open(probe, O_RDONLY);
         if (fd < 0)
@@ -530,8 +555,7 @@ int ps2_storage_resolve_data_root(const char *probe_name)
         close(fd);
 
         sDataNeedsBdmResolve = 0;
-        ps2_log("storage: literal mass%d ready (%s dev=%u, pack readable)",
-                literal, ps2_storage_device_name(mounted_dev), devnr);
+        ps2_log("storage: literal mass%d mounted and pack readable", literal);
         return 1;
     }
 
