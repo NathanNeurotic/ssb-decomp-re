@@ -544,15 +544,20 @@ static Lin combine(Lin a, Lin b, Lin c, Lin d)
     return r;
 }
 
-static void eval_combiner(const GbiVtx *v, CombineOut *out)
+typedef struct CombinePlan
+{
+    int cycles;
+    uint8_t rgb[2][4], alpha[2][4];
+} CombinePlan;
+
+/* Decode state once per draw mode, rather than once per emitted vertex. */
+static void compile_combiner(CombinePlan *plan)
 {
     uint32_t w0 = R.cc_w0, w1 = R.cc_w1;
-    int cycles = ((R.om_h & (3u << 20)) == G_CYC_2CYCLE) ? 2 : 1;
-    int cyc, ch;
-    CombineOut prev, cur;
+    int cyc;
 
-    memset(&prev, 0, sizeof(prev));
-    for (cyc = 0; cyc < cycles; cyc++)
+    plan->cycles = ((R.om_h & (3u << 20)) == G_CYC_2CYCLE) ? 2 : 1;
+    for (cyc = 0; cyc < plan->cycles; cyc++)
     {
         int a, b, c, d, aa, ab, ac, ad;
 
@@ -566,13 +571,34 @@ static void eval_combiner(const GbiVtx *v, CombineOut *out)
             a = (w0 >> 5) & 0xF; c = (w0 >> 0) & 0x1F; aa = (w1 >> 21) & 0x7; ac = (w1 >> 18) & 0x7;
             b = (w1 >> 24) & 0xF; d = (w1 >> 6) & 0x7; ab = (w1 >> 3) & 0x7; ad = (w1 >> 0) & 0x7;
         }
+        plan->rgb[cyc][0] = map_rgb_a(a); plan->rgb[cyc][1] = map_rgb_b(b);
+        plan->rgb[cyc][2] = map_rgb_c(c); plan->rgb[cyc][3] = map_rgb_d(d);
+        plan->alpha[cyc][0] = map_a_abd(aa); plan->alpha[cyc][1] = map_a_abd(ab);
+        plan->alpha[cyc][2] = map_a_c(ac); plan->alpha[cyc][3] = map_a_abd(ad);
+    }
+}
+
+static Lin eval_channel(const uint8_t *selectors, int ch, const GbiVtx *v, const CombineOut *prev)
+{
+    /* All inputs are finite: (A-A)*C+D and (A-B)*0+D reduce to D.
+     * SHADE/PRIMITIVE pass-through modes need just one input evaluation. */
+    if (selectors[0] == selectors[1] || selectors[2] == IN_ZERO || selectors[2] == IN_LODFRAC)
+        return input(selectors[3], ch, v, prev);
+    return combine(input(selectors[0], ch, v, prev), input(selectors[1], ch, v, prev),
+                   input(selectors[2], ch, v, prev), input(selectors[3], ch, v, prev));
+}
+
+static void eval_combiner(const GbiVtx *v, const CombinePlan *plan, CombineOut *out)
+{
+    int cyc, ch;
+    CombineOut prev, cur;
+
+    memset(&prev, 0, sizeof(prev));
+    for (cyc = 0; cyc < plan->cycles; cyc++)
+    {
         for (ch = 0; ch < 3; ch++)
-        {
-            cur.rgb[ch] = combine(input(map_rgb_a(a), ch, v, &prev), input(map_rgb_b(b), ch, v, &prev),
-                                  input(map_rgb_c(c), ch, v, &prev), input(map_rgb_d(d), ch, v, &prev));
-        }
-        cur.a = combine(input(map_a_abd(aa), 3, v, &prev), input(map_a_abd(ab), 3, v, &prev),
-                        input(map_a_c(ac), 3, v, &prev), input(map_a_abd(ad), 3, v, &prev));
+            cur.rgb[ch] = eval_channel(plan->rgb[cyc], ch, v, &prev);
+        cur.a = eval_channel(plan->alpha[cyc], 3, v, &prev);
         prev = cur;
     }
     *out = prev;
@@ -678,6 +704,7 @@ typedef struct TexInfo
     PS2TexBinding bind;
     float off_s, off_t; /* tile origin in texels */
     float shift_s, shift_t;
+    float inv_w, inv_h;
     int wrap_s_repeat, wrap_t_repeat;
     int clamp_s_materialized, clamp_t_materialized;
 } TexInfo;
@@ -810,6 +837,8 @@ static void bind_texture(int tile_index, TexInfo *ti)
     tile_shift_mul(t->shiftt, &ti->shift_t);
     ti->off_s = (float)t->uls * 0.25f;
     ti->off_t = (float)t->ult * 0.25f;
+    ti->inv_w = 1.0f / (float)ti->bind.gs_w;
+    ti->inv_h = 1.0f / (float)ti->bind.gs_h;
     ti->valid = 1;
 }
 
@@ -840,6 +869,7 @@ typedef struct DrawMode
     int decal;      /* two passes: untextured base, then texel-alpha blended texels */
     GsState decal_gs;
     TexInfo tex;
+    CombinePlan combiner;
 } DrawMode;
 
 static void build_mode(DrawMode *dm, int for_rect)
@@ -854,6 +884,7 @@ static void build_mode(DrawMode *dm, int for_rect)
     uint64_t alpha = GSV_ALPHA(GSBL_CS, GSBL_CD, GSBL_AS, GSBL_CD, 0);
 
     memset(dm, 0, sizeof(*dm));
+    compile_combiner(&dm->combiner);
     /* Texture uploads below append to the packet: never inside a batch. */
     batch_close();
 
@@ -1043,7 +1074,7 @@ static void make_outvtx(const GbiVtx *v, const DrawMode *dm, OutVtx *o)
 {
     CombineOut co;
 
-    eval_combiner(v, &co);
+    eval_combiner(v, &dm->combiner, &co);
     o->x = v->x;
     o->y = v->y;
     o->z = v->z;
@@ -1057,8 +1088,8 @@ static void make_outvtx(const GbiVtx *v, const DrawMode *dm, OutVtx *o)
         o->g = (co.rgb[1].k + co.rgb[1].c) * 128.0f;
         o->b = (co.rgb[2].k + co.rgb[2].c) * 128.0f;
         o->a = (co.a.k + co.a.c) * 128.0f;
-        o->s = (v->s * ti->shift_s - ti->off_s) / (float)ti->bind.gs_w;
-        o->t = (v->t * ti->shift_t - ti->off_t) / (float)ti->bind.gs_h;
+        o->s = (v->s * ti->shift_s - ti->off_s) * ti->inv_w;
+        o->t = (v->t * ti->shift_t - ti->off_t) * ti->inv_h;
     }
     else
     {
@@ -1483,10 +1514,10 @@ static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int fli
         p[0] = GIFTAG_LO(2, 0, 1, st.prim, GIF_FLG_PACKED, 3);
         p[1] = (uint64_t)GSR_ST | ((uint64_t)GSR_RGBAQ << 4) | ((uint64_t)GSR_XYZ2 << 8);
         p += 2;
-        gs_packed_stq(p, u0 / (float)dm.tex.bind.gs_w, v0 / (float)dm.tex.bind.gs_h, 1.0f);
+        gs_packed_stq(p, u0 * dm.tex.inv_w, v0 * dm.tex.inv_h, 1.0f);
         gs_packed_rgba(p + 2, clamp_u8(o.r), clamp_u8(o.g), clamp_u8(o.b), clamp_u8(o.a));
         gs_packed_xyz2(p + 4, (uint32_t)((2048.0f + x0) * 16.0f), (uint32_t)((2048.0f + y0) * 16.0f), z);
-        gs_packed_stq(p + 6, u1 / (float)dm.tex.bind.gs_w, v1 / (float)dm.tex.bind.gs_h, 1.0f);
+        gs_packed_stq(p + 6, u1 * dm.tex.inv_w, v1 * dm.tex.inv_h, 1.0f);
         gs_packed_rgba(p + 8, clamp_u8(o.r), clamp_u8(o.g), clamp_u8(o.b), clamp_u8(o.a));
         gs_packed_xyz2(p + 10, (uint32_t)((2048.0f + x1) * 16.0f), (uint32_t)((2048.0f + y1) * 16.0f), z);
         gPS2Pkt.ptr = p + 12;
