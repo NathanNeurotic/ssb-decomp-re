@@ -32,3 +32,7 @@ Local standalone comparison harness: ../out/combiner-test.c. Existing renderer c
 ## Cooper release comparison and controlled renderer restoration
 
 User reports Cooper original release runs smoothly on the same console while bb113e8 remains severely laggy. Verified johnson-cooper/ssb-decomp-re v1.0 is be273112ebbdf2d5dd4f0da41d8fbe58512af3b3. Restore the seven renderer/VI files directly from that exact release, retaining only ps2_gs_prepare_exec for current IGR. This restores early DISPFB queuing, upstream GBI/texture semantics and static GS initialization, and removes the unproven combiner optimization. Storage, input and current audio transport stay intact. This isolates renderer differences; it does not establish the root cause or a console performance pass. If severe lag persists, compare the custom audio RPC transport against release SDR next, preserving hardware boot compatibility.
+
+## Console feedback and texture follow-up
+
+User confirms c17dce07f eliminates lag, but Mario hat, Pikachu face, Mario fireballs and intro light remain visually wrong. Preserve the Cooper GS/VI baseline. Reapply only masked/clamped tile materialization and signed STQ rectangle coordinates from 7e409f7b2; retain upstream combiner, diagnostics and presentation. Coordinate harness passes 8,388,608 cases. Intro light alpha/blending cause remains unresolved and requires further evidence; no console graphics or performance pass claimed for this follow-up.

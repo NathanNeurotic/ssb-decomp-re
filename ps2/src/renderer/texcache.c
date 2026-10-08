@@ -282,14 +282,19 @@ static inline uint16_t be16(const uint8_t *p)
 /* Wrap/mirror a coordinate into the source extent. */
 static inline int src_coord(int x, int size, int mirror)
 {
+    /* Conversion visits non-negative coordinates. Most samples already lie
+     * in the source; masked periods are powers of two, so repeated samples
+     * need no EE integer division in the inner conversion loop. */
+    if (x < size)
+        return x;
     if (mirror)
     {
         int period = size * 2;
-        int m = x % period;
+        int m = (size & (size - 1)) ? x % period : x & (period - 1);
 
         return (m < size) ? m : (period - 1 - m);
     }
-    return x % size;
+    return (size & (size - 1)) ? x % size : x & (size - 1);
 }
 
 static uint32_t hash_source(const PS2TexKey *k)
@@ -323,9 +328,9 @@ static int log2_ceil(int v)
 static int make_resident(TexEntry *e, int16_t idx)
 {
     const PS2TexKey *k = &e->key;
-    int sw = k->width, sh = k->height;          /* N64 texels */
-    int w = sw << (k->mirror_s ? 1 : 0);        /* GS content size */
-    int h = sh << (k->mirror_t ? 1 : 0);
+    int sw = k->width, sh = k->height;          /* source mask period */
+    int w = k->clamp_width ? k->clamp_width : (sw << (k->mirror_s ? 1 : 0));
+    int h = k->clamp_height ? k->clamp_height : (sh << (k->mirror_t ? 1 : 0));
     int tw = log2_ceil(w), th = log2_ceil(h);
     int gw, gh, psm, tbw, x, y;
     uint32_t bytes, clut_bytes = 0, blocks, clut_blocks = 0, base, clut_base = 0;
@@ -513,12 +518,14 @@ static uint32_t key_hash(const PS2TexKey *k)
     h ^= (uint32_t)(uintptr_t)k->tlut * 40503u;
     h ^= ((uint32_t)k->width << 16) ^ k->height ^ ((uint32_t)k->fmt << 5) ^ ((uint32_t)k->siz << 9) ^
          ((uint32_t)k->mirror_s << 12) ^ ((uint32_t)k->mirror_t << 13) ^ ((uint32_t)k->line_bytes << 3);
+    h ^= ((uint32_t)k->clamp_width << 16) ^ k->clamp_height;
     return h;
 }
 
 static int key_eq(const PS2TexKey *a, const PS2TexKey *b)
 {
     return a->addr == b->addr && a->tlut == b->tlut && a->width == b->width && a->height == b->height &&
+           a->clamp_width == b->clamp_width && a->clamp_height == b->clamp_height &&
            a->fmt == b->fmt && a->siz == b->siz && a->line_bytes == b->line_bytes &&
            a->tlut_type == b->tlut_type && a->mirror_s == b->mirror_s && a->mirror_t == b->mirror_t &&
            a->odd_swap == b->odd_swap;
