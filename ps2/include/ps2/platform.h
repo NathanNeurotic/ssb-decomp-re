@@ -137,6 +137,9 @@ int ps2_video_progressive(void);         /* 1 = 240p (ELF name contains "240p"),
  * display circuits off) so a hang before any graphics identifies the stage.
  * Also mirrored into the log. See PS2_PORT.md "Troubleshooting". */
 void ps2_boot_stage(const char *name, uint32_t rgb);
+#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port"
+/* Redraw the boot screen with current log text */
+void ps2_gs_boot_screen(const char *title);
 
 /* Installs the EE exception handlers that turn a crash into a register dump
  * on screen (and into the log file when possible). */

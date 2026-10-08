@@ -90,7 +90,7 @@ static void stack_free(void *stack, u32 size)
 {
     u8 *p = (u8 *)stack;
 
-    if (p >= &sCoroutineStacks[0][0] && p < &sCoroutineStacks[COROUTINE_STACK_SLOTS][0])
+    if (p >= (u8 *)sCoroutineStacks && p < (u8 *)sCoroutineStacks + sizeof(sCoroutineStacks))
     {
         s32 intr = ps2_intr_disable();
 

@@ -9,6 +9,7 @@
 #include <ps2/platform.h>
 
 #include <kernel.h>
+#include <delaythread.h>
 #include <timer.h>
 
 static volatile uint32_t sVBlankCount;
@@ -52,14 +53,9 @@ uint32_t ps2_vblank_count(void)
 /* Block the calling thread for n VBlanks (boot-time helper only). */
 void ps2_delay_vblanks(int n)
 {
-    while (n-- > 0)
-    {
-        if (sVBlankSema >= 0)
-        {
-            PollSema(sVBlankSema); /* drop a stale signal */
-            WaitSema(sVBlankSema);
-        }
-    }
+    if (n <= 0)
+        return;
+    DelayThread(n * 16667);
 }
 
 uint64_t ps2_time_ticks(void)

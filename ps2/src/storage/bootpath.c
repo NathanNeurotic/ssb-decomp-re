@@ -20,14 +20,11 @@
  */
 #include <ps2/platform.h>
 
-#define NEWLIB_PORT_AWARE
-#include <fileXio_rpc.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
-#include <usbhdfsd-common.h>
 
 #define PATH_BUF_MAX 256
 #define HDD_SOURCE_MAX 128
@@ -376,36 +373,14 @@ int ps2_storage_requires_iop_preserve(void)
     return sDataNeedsExistingIop;
 }
 
-static int bdm_driver_matches(PS2BootDevice dev, const char *driver)
-{
-    if (driver == NULL || driver[0] == '\0')
-        return 0;
-
-    switch (dev)
-    {
-    case PS2_BOOT_BDM:
-        return 1; /* Generic mass accepts ANY BDM driver */
-    case PS2_BOOT_USB:
-        return strcmp(driver, "usb") == 0;
-    case PS2_BOOT_ATA:
-        return strcmp(driver, "ata") == 0;
-    case PS2_BOOT_MX4SIO:
-        return strcmp(driver, "sdc") == 0 || strcmp(driver, "mx4sio") == 0;
-    case PS2_BOOT_ILINK:
-        return strcmp(driver, "sd") == 0 || strcmp(driver, "ilink") == 0;
-    case PS2_BOOT_UDPBD:
-        return strcmp(driver, "udp") == 0;
-    default:
-        return 0;
-    }
-}
-
 int ps2_storage_resolve_data_root(const char *probe_name)
 {
     char relative[PATH_BUF_MAX - 32];
     const char *colon;
     int literal_slot = -1;
-    int scan;
+    char probe[PATH_BUF_MAX + 64];
+    int slot;
+    int fd;
 
     if (!sDataNeedsBdmResolve)
         return 1;
@@ -428,68 +403,69 @@ int ps2_storage_resolve_data_root(const char *probe_name)
     if (relative[0] == '\0')
         snprintf(relative, sizeof(relative), "/");
 
-    /* Probe slots 0..9. Probe literal_slot first if one was specified! */
-    for (scan = 0; scan < 10; scan++)
+    /* Candidate 1: Try sDataDir directly as configured */
+    snprintf(probe, sizeof(probe), "%s%s", sDataDir, probe_name);
+    fd = open(probe, O_RDONLY);
+    if (fd >= 0)
     {
-        int slot = (scan == 0 && literal_slot >= 0) ? literal_slot
-                 : (scan <= literal_slot ? scan - 1 : scan);
-        char root[16];
-        char dir[PATH_BUF_MAX];
-        char probe[PATH_BUF_MAX + 64];
-        char driver[32];
-        int dev_index = -1;
-        int fd, dfd, io;
-
-        if (slot < 0 || slot >= 10)
-            continue;
-
-        snprintf(root, sizeof(root), "mass%d:/", slot);
-        if (relative[0] == '/' || relative[0] == '\\')
-            snprintf(dir, sizeof(dir), "mass%d:%s", slot, relative);
-        else
-            snprintf(dir, sizeof(dir), "mass%d:/%s", slot, relative);
-        ensure_directory_suffix(dir, sizeof(dir), sDataDevice);
-        snprintf(probe, sizeof(probe), "%s%s", dir, probe_name);
-
-        /* Try Candidate 1: probe in relative directory */
-        fd = open(probe, O_RDONLY);
-        if (fd < 0)
-        {
-            /* Try Candidate 2: probe in root of the volume */
-            snprintf(dir, sizeof(dir), "mass%d:/", slot);
-            snprintf(probe, sizeof(probe), "%s%s", dir, probe_name);
-            fd = open(probe, O_RDONLY);
-        }
-
-        if (fd < 0)
-            continue;
         close(fd);
+        sDataNeedsBdmResolve = 0;
+        ps2_log("storage: %s resolved to %s", ps2_storage_device_name(sDataDevice), sDataDir);
+        return 1;
+    }
 
-        /* File opened! Volume is live and contains the probe target.
-         * Now query device identity via ioctl2. */
-        memset(driver, 0, sizeof(driver));
-        io = -1;
-        dfd = fileXioDopen(root);
-        if (dfd >= 0)
+    /* Candidate 2: Try root of the same specified volume if a literal slot was given */
+    if (literal_slot >= 0)
+    {
+        snprintf(probe, sizeof(probe), "mass%d:/%s", literal_slot, probe_name);
+        fd = open(probe, O_RDONLY);
+        if (fd >= 0)
         {
-            io = fileXioIoctl2(dfd, USBMASS_IOCTL_GET_DRIVERNAME,
-                               NULL, 0, driver, sizeof(driver) - 1);
-            fileXioIoctl2(dfd, USBMASS_IOCTL_GET_DEVICE_NUMBER,
-                          NULL, 0, &dev_index, sizeof(dev_index));
-            fileXioDclose(dfd);
+            close(fd);
+            snprintf(sDataDir, sizeof(sDataDir), "mass%d:/", literal_slot);
+            sDataNeedsBdmResolve = 0;
+            ps2_log("storage: %s resolved to root %s", ps2_storage_device_name(sDataDevice), sDataDir);
+            return 1;
+        }
+    }
+
+    /* Candidate 3: Scan mass slots 0..3 for relative path and volume root */
+    for (slot = 0; slot < 4; slot++)
+    {
+        if (slot == literal_slot)
+            continue; /* Already probed above */
+
+        /* 3a: relative path */
+        if (relative[0] == '/' || relative[0] == '\\')
+            snprintf(probe, sizeof(probe), "mass%d:%s%s", slot, relative, probe_name);
+        else
+            snprintf(probe, sizeof(probe), "mass%d:/%s%s", slot, relative, probe_name);
+
+        fd = open(probe, O_RDONLY);
+        if (fd >= 0)
+        {
+            close(fd);
+            if (relative[0] == '/' || relative[0] == '\\')
+                snprintf(sDataDir, sizeof(sDataDir), "mass%d:%s", slot, relative);
+            else
+                snprintf(sDataDir, sizeof(sDataDir), "mass%d:/%s", slot, relative);
+            ensure_directory_suffix(sDataDir, sizeof(sDataDir), sDataDevice);
+            sDataNeedsBdmResolve = 0;
+            ps2_log("storage: %s resolved to mass%d (%s)", ps2_storage_device_name(sDataDevice), slot, sDataDir);
+            return 1;
         }
 
-        /* For typed devices, verify driver token matches.
-         * For generic mass, accept ANY driver (or even if ioctl2 wasn't supported). */
-        if (sDataDevice != PS2_BOOT_BDM && io >= 0 && !bdm_driver_matches(sDataDevice, driver))
-            continue;
-
-        snprintf(sDataDir, sizeof(sDataDir), "%s", dir);
-        sDataNeedsBdmResolve = 0;
-        ps2_log("storage: %s resolved to %s (driver=%s devnr=%d)",
-                ps2_storage_device_name(sDataDevice), sDataDir,
-                driver[0] ? driver : "unknown", dev_index);
-        return 1;
+        /* 3b: volume root */
+        snprintf(probe, sizeof(probe), "mass%d:/%s", slot, probe_name);
+        fd = open(probe, O_RDONLY);
+        if (fd >= 0)
+        {
+            close(fd);
+            snprintf(sDataDir, sizeof(sDataDir), "mass%d:/", slot);
+            sDataNeedsBdmResolve = 0;
+            ps2_log("storage: %s resolved to root %s", ps2_storage_device_name(sDataDevice), sDataDir);
+            return 1;
+        }
     }
 
     return 0;

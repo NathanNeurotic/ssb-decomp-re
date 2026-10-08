@@ -30,7 +30,6 @@ extern void ps2_render_thread_init(void);
 extern void ps2_arena_init(void);
 extern void ps2_overlay_state_init(void);
 
-#define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port [UNIFIED-RECOVERY]"
 
 int ps2_main(int argc, char *argv[])
 {
@@ -104,6 +103,8 @@ int ps2_main(int argc, char *argv[])
     ps2_vi_init();
     ps2_arena_init();
     ps2_overlay_state_init();
+    ps2_log("boot: initializing assets");
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
 
     /*
      * Open and validate the asset stream before starting controller clients.

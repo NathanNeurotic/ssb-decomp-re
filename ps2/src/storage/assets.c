@@ -117,12 +117,14 @@ int ps2_assets_init(void)
         int attempt;
 
         sFd = -1;
-        for (attempt = 0; attempt < 200; attempt++)
+        for (attempt = 0; attempt < 100; attempt++)
         {
-            ps2_storage_resolve_data_root(PACK_NAME);
-            ps2_storage_path(path, sizeof(path), PACK_NAME);
-            snprintf(sPackPath, sizeof(sPackPath), "%s", path);
-            sFd = ps2_file_open_read(sPackPath);
+            if (ps2_storage_resolve_data_root(PACK_NAME))
+            {
+                ps2_storage_path(path, sizeof(path), PACK_NAME);
+                snprintf(sPackPath, sizeof(sPackPath), "%s", path);
+                sFd = ps2_file_open_read(sPackPath);
+            }
 
             /* PCSX2 Run ELF can lose argv[0]'s directory separators. */
             if (sFd < 0 && ps2_storage_boot_device() == PS2_BOOT_HOST)
@@ -135,6 +137,7 @@ int ps2_assets_init(void)
             if (sFd >= 0)
             {
                 ps2_log("assets: persistent %s opened after %d ms", path, attempt * 100);
+                ps2_gs_boot_screen(PS2_BOOT_TITLE);
                 break;
             }
 
@@ -151,6 +154,14 @@ int ps2_assets_init(void)
             {
                 ps2_boot_stage("assets: probing BDM transports", 0);
                 ps2_iop_load_bdm_fallback_transports();
+                ps2_gs_boot_screen(PS2_BOOT_TITLE);
+            }
+
+            if (attempt % 10 == 0)
+            {
+                ps2_storage_path(path, sizeof(path), PACK_NAME);
+                ps2_log("assets: waiting for %s (try %d)...", path, attempt + 1);
+                ps2_gs_boot_screen(PS2_BOOT_TITLE);
             }
 
             ps2_delay_vblanks(6);
@@ -194,6 +205,7 @@ int ps2_assets_init(void)
 
     ps2_log("assets: %s: %u regions, %u KiB resident, %u KiB total", path, (unsigned)sHeader.region_count,
             (unsigned)(sHeader.resident_bytes >> 10), (unsigned)(sHeader.total_size >> 10));
+    ps2_gs_boot_screen(PS2_BOOT_TITLE);
     return 1;
 }
 
