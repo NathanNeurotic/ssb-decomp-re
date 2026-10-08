@@ -334,7 +334,10 @@ void ps2_gs_frame_setup(int fb_index)
     {
         fb_index = 0;
     }
-    ps2_pkt_ad_begin(10);
+    ps2_pkt_ad_begin(12);
+    /* A launcher may leave blending or alternate-line masking enabled. */
+    ps2_pkt_ad(GSR_PABE, 0);
+    ps2_pkt_ad(GSR_SCANMSK, 0);
     ps2_pkt_ad(GSR_FRAME_1, GSV_FRAME(PS2_FB_PAGE(fb_index), PS2_FBW, PS2_FB_PSM, 0));
     ps2_pkt_ad(GSR_ZBUF_1, GSV_ZBUF(PS2_Z_PAGE, PS2_Z_PSM, 0));
     /* Primitive coordinates are emitted relative to a 2048,2048 origin so the
@@ -347,7 +350,7 @@ void ps2_gs_frame_setup(int fb_index)
     ps2_pkt_ad(GSR_TEXA, GSV_TEXA(0x00, 0, 0x80)); /* 1-bit alpha -> 0 / 1.0 */
     ps2_pkt_ad(GSR_TEST_1, GSV_TEST(0, 0, 0, 0, 0, 0, 1, GSZTST_ALWAYS));
     ps2_pkt_ad(GSR_FBA_1, 0);
-    gPS2RenderStats.state_writes += 10;
+    gPS2RenderStats.state_writes += 12;
 }
 
 void ps2_gs_clear(int fb_index, uint32_t rgba, int clear_z)
@@ -615,9 +618,12 @@ void ps2_gs_init(void)
     sGsGlobal->PrimAlphaEnable = GS_SETTING_ON;
     sGsGlobal->Dithering = GS_SETTING_ON;
 
-    dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8,
-                1 << DMA_CHANNEL_GIF);
-    dmaKit_chan_init(DMA_CHANNEL_GIF);
+    /* SIF RPC and storage are already live. Preserve their global DMAC
+     * state and initialize only the GIF channel owned by this renderer. */
+    if (dmaKit_chan_init(DMA_CHANNEL_GIF) < 0)
+        ps2_panic("GIF DMA initialization failed");
+    *DMA_REG_PCR |= 1u << DMA_CHANNEL_GIF;
+    __asm__ volatile("sync.p" ::: "memory");
 
     /* gsKit programs SMODE/SYNC/DISPLAY for the mode; from here on the
      * renderer owns VRAM layout, FRAME/ZBUF and the display circuit. */

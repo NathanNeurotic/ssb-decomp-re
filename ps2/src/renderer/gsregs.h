@@ -35,6 +35,7 @@ typedef uint64_t gs_u64;
 #define GSR_DTHE       0x45
 #define GSR_COLCLAMP   0x46
 #define GSR_TEST_1     0x47
+#define GSR_SCANMSK    0x22
 #define GSR_PABE       0x49
 #define GSR_FBA_1      0x4A
 #define GSR_FRAME_1    0x4C

@@ -679,6 +679,7 @@ typedef struct TexInfo
     float off_s, off_t; /* tile origin in texels */
     float shift_s, shift_t;
     int wrap_s_repeat, wrap_t_repeat;
+    int clamp_s_materialized, clamp_t_materialized;
 } TexInfo;
 
 static int tile_shift_mul(int shift, float *mul)
@@ -702,12 +703,25 @@ static void bind_texture(int tile_index, TexInfo *ti)
     uint32_t tlut_type = (R.om_h >> 14) & 3;
 
     ti->valid = 0;
+    ti->clamp_s_materialized = 0;
+    ti->clamp_t_materialized = 0;
     if (li < 0)
     {
         return;
     }
     memset(&key, 0, sizeof(key));
 
+    /*
+     * With a non-zero mask, the RDP can wrap/mirror *inside* the legal
+     * SL/TL..SH/TH tile and still clamp outside that tile.  One repeating GS
+     * period cannot represent both operations.  Keep the mask period as the
+     * source extent and, on a clamped axis, ask texcache to materialize the
+     * complete legal tile before REGION_CLAMP is applied.
+     *
+     * Nintendo's documented example (SH=11, mask=2, mirror+clamp) produces
+     * 0,1,2,3,3,2,1,0,0,1,2,3,3,3...; the first 12 texels are the
+     * materialized masked/mirrored tile and the last value is then clamped.
+     */
     w = ((t->lrs - t->uls) >> 2) + 1;
     h = ((t->lrt - t->ult) >> 2) + 1;
     if (w <= 0 || h <= 0 || w > 1024 || h > 1024)
@@ -715,15 +729,25 @@ static void bind_texture(int tile_index, TexInfo *ti)
         return;
     }
 
-    ti->wrap_s_repeat = !(t->cms & G_TX_CLAMP);
-    ti->wrap_t_repeat = !(t->cmt & G_TX_CLAMP);
+    ti->wrap_s_repeat = t->masks && (!(t->cms & G_TX_CLAMP) || w > (1 << t->masks));
+    ti->wrap_t_repeat = t->maskt && (!(t->cmt & G_TX_CLAMP) || h > (1 << t->maskt));
 
-    if (ti->wrap_s_repeat && t->masks)
+    if (ti->wrap_s_repeat)
     {
+        if (t->cms & G_TX_CLAMP)
+        {
+            key.clamp_width = (uint16_t)w;
+            ti->clamp_s_materialized = 1;
+        }
         w = 1 << t->masks;
     }
-    if (ti->wrap_t_repeat && t->maskt)
+    if (ti->wrap_t_repeat)
     {
+        if (t->cmt & G_TX_CLAMP)
+        {
+            key.clamp_height = (uint16_t)h;
+            ti->clamp_t_materialized = 1;
+        }
         h = 1 << t->maskt;
     }
 
@@ -796,7 +820,7 @@ static void bind_texture(int tile_index, TexInfo *ti)
 static uint64_t gs_scissor(void)
 {
     int x0 = R.scissor[0] >> 2, y0 = R.scissor[1] >> 2;
-    int x1 = (R.scissor[2] >> 2) - 1, y1 = (R.scissor[3] >> 2) - 1;
+    int x1 = ((R.scissor[2] + 3) >> 2) - 1, y1 = ((R.scissor[3] + 3) >> 2) - 1;
 
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
@@ -939,8 +963,8 @@ static void build_mode(DrawMode *dm, int for_rect)
         uint32_t filt = (R.om_h >> 12) & 3; /* 0 point, 2 bilerp, 3 average */
         int lin = (filt != 0) && cyc != G_CYC_COPY;
         const TexInfo *ti = &dm->tex;
-        int wms = ti->wrap_s_repeat ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
-        int wmt = ti->wrap_t_repeat ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
+        int wms = (ti->wrap_s_repeat && !ti->clamp_s_materialized) ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
+        int wmt = (ti->wrap_t_repeat && !ti->clamp_t_materialized) ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
         const GbiTile *t = &R.tiles[(for_rect ? R.rect_tile : R.tex_tile) & 7];
         int maxu = ((t->lrs - t->uls) >> 2);
         int maxv = ((t->lrt - t->ult) >> 2);
@@ -1276,6 +1300,10 @@ static void fill_rect(int ulx, int uly, int lrx, int lry)
         y1 += 1.0f;
     }
 
+    /* Keep partially covered leading pixels, as the RDP does. */
+    x0 = floorf(x0);
+    y0 = floorf(y0);
+
     if (cyc == G_CYC_FILL)
     {
         uint8_t c[4];
@@ -1340,6 +1368,20 @@ static void fill_rect(int ulx, int uly, int lrx, int lry)
     }
     sModeDirty = 1;
     gPS2RenderStats.rects++;
+}
+
+/* The RDP covers a partially occupied leading pixel. Extend the GS sprite
+ * to that pixel boundary and preserve its texture-coordinate slope. Signed
+ * STQ handles a negative coordinate after extension without UV clipping. */
+static void snap_leading_edge(float *p0, float p1, float *t0, float t1)
+{
+    float frac = *p0 - floorf(*p0);
+
+    if (frac > 0.0f && p1 > *p0)
+    {
+        *t0 -= frac * (t1 - *t0) / (p1 - *p0);
+        *p0 -= frac;
+    }
 }
 
 static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int flip)
@@ -1412,6 +1454,16 @@ static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int fli
         v0 = t;
         u1 = s + (y1 - y0) * dsdx;
         v1 = t + (x1 - x0) * dtdy;
+    }
+    if (!flip)
+    {
+        snap_leading_edge(&x0, x1, &u0, u1);
+        snap_leading_edge(&y0, y1, &v0, v1);
+    }
+    else
+    {
+        snap_leading_edge(&x0, x1, &v0, v1);
+        snap_leading_edge(&y0, y1, &u0, u1);
     }
     if (dm.prim_depth)
     {
