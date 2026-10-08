@@ -28,3 +28,7 @@ Host coordinate checks, native build and exact-candidate CI pass; those do not r
 Main synchronization preserves existing main history through an explicit ours-strategy merge of its four divergent commits. Their older runtime tree is deliberately superseded by the console-tested baseline. Checkpoint documentation is the only change after the tested candidate before that merge.
 
 Use this baseline for further narrow fixes. Do not restore the superseded speculative renderer changes.
+
+## DAT webpage preservation
+
+Restored docs/ asset builder from 61eb916f8, including the hardware DAT post-operations for stale CI texel/TLUT classification and Pikachu accessory costume animation streams. The expected fixed browser DAT hash is 151b492025ac780c5114b8a842b157c73ed56208e7ddfff1731ad74882eb809e. Browser generation still differs from compiler generation in pre-existing file 199/200 text regions; this restoration does not claim full pack parity. No runtime code or ELF input changed.
