@@ -28,3 +28,7 @@ Local standalone comparison harness: ../out/combiner-test.c. Existing renderer c
 - Console result for the candidate: gameplay lag and graphics, plus MX4SIO inherited-mass boot.
 - Use measured frame/GBI results to choose the next bottleneck.
 - Culling division removal was Kimi's next proposed optimization; it has not been implemented because winding decisions near degenerate geometry require separate numerical coverage.
+
+## Cooper release comparison and controlled renderer restoration
+
+User reports Cooper original release runs smoothly on the same console while bb113e8 remains severely laggy. Verified johnson-cooper/ssb-decomp-re v1.0 is be273112ebbdf2d5dd4f0da41d8fbe58512af3b3. Restore the seven renderer/VI files directly from that exact release, retaining only ps2_gs_prepare_exec for current IGR. This restores early DISPFB queuing, upstream GBI/texture semantics and static GS initialization, and removes the unproven combiner optimization. Storage, input and current audio transport stay intact. This isolates renderer differences; it does not establish the root cause or a console performance pass. If severe lag persists, compare the custom audio RPC transport against release SDR next, preserving hardware boot compatibility.

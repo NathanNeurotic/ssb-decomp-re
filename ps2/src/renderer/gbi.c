@@ -114,7 +114,6 @@ static struct
     int color_target;  /* FB index, or -1 */
     int zimg_is_z;
     int cimg_is_z;
-    int cimg_offscreen; /* unsupported non-display color image: suppress draws */
 
     uint32_t rdphalf1, rdphalf2;
     int rect_tile;
@@ -544,20 +543,15 @@ static Lin combine(Lin a, Lin b, Lin c, Lin d)
     return r;
 }
 
-typedef struct CombinePlan
-{
-    int cycles;
-    uint8_t rgb[2][4], alpha[2][4];
-} CombinePlan;
-
-/* Decode state once per draw mode, rather than once per emitted vertex. */
-static void compile_combiner(CombinePlan *plan)
+static void eval_combiner(const GbiVtx *v, CombineOut *out)
 {
     uint32_t w0 = R.cc_w0, w1 = R.cc_w1;
-    int cyc;
+    int cycles = ((R.om_h & (3u << 20)) == G_CYC_2CYCLE) ? 2 : 1;
+    int cyc, ch;
+    CombineOut prev, cur;
 
-    plan->cycles = ((R.om_h & (3u << 20)) == G_CYC_2CYCLE) ? 2 : 1;
-    for (cyc = 0; cyc < plan->cycles; cyc++)
+    memset(&prev, 0, sizeof(prev));
+    for (cyc = 0; cyc < cycles; cyc++)
     {
         int a, b, c, d, aa, ab, ac, ad;
 
@@ -571,34 +565,13 @@ static void compile_combiner(CombinePlan *plan)
             a = (w0 >> 5) & 0xF; c = (w0 >> 0) & 0x1F; aa = (w1 >> 21) & 0x7; ac = (w1 >> 18) & 0x7;
             b = (w1 >> 24) & 0xF; d = (w1 >> 6) & 0x7; ab = (w1 >> 3) & 0x7; ad = (w1 >> 0) & 0x7;
         }
-        plan->rgb[cyc][0] = map_rgb_a(a); plan->rgb[cyc][1] = map_rgb_b(b);
-        plan->rgb[cyc][2] = map_rgb_c(c); plan->rgb[cyc][3] = map_rgb_d(d);
-        plan->alpha[cyc][0] = map_a_abd(aa); plan->alpha[cyc][1] = map_a_abd(ab);
-        plan->alpha[cyc][2] = map_a_c(ac); plan->alpha[cyc][3] = map_a_abd(ad);
-    }
-}
-
-static Lin eval_channel(const uint8_t *selectors, int ch, const GbiVtx *v, const CombineOut *prev)
-{
-    /* All inputs are finite: (A-A)*C+D and (A-B)*0+D reduce to D.
-     * SHADE/PRIMITIVE pass-through modes need just one input evaluation. */
-    if (selectors[0] == selectors[1] || selectors[2] == IN_ZERO || selectors[2] == IN_LODFRAC)
-        return input(selectors[3], ch, v, prev);
-    return combine(input(selectors[0], ch, v, prev), input(selectors[1], ch, v, prev),
-                   input(selectors[2], ch, v, prev), input(selectors[3], ch, v, prev));
-}
-
-static void eval_combiner(const GbiVtx *v, const CombinePlan *plan, CombineOut *out)
-{
-    int cyc, ch;
-    CombineOut prev, cur;
-
-    memset(&prev, 0, sizeof(prev));
-    for (cyc = 0; cyc < plan->cycles; cyc++)
-    {
         for (ch = 0; ch < 3; ch++)
-            cur.rgb[ch] = eval_channel(plan->rgb[cyc], ch, v, &prev);
-        cur.a = eval_channel(plan->alpha[cyc], 3, v, &prev);
+        {
+            cur.rgb[ch] = combine(input(map_rgb_a(a), ch, v, &prev), input(map_rgb_b(b), ch, v, &prev),
+                                  input(map_rgb_c(c), ch, v, &prev), input(map_rgb_d(d), ch, v, &prev));
+        }
+        cur.a = combine(input(map_a_abd(aa), 3, v, &prev), input(map_a_abd(ab), 3, v, &prev),
+                        input(map_a_c(ac), 3, v, &prev), input(map_a_abd(ad), 3, v, &prev));
         prev = cur;
     }
     *out = prev;
@@ -704,9 +677,7 @@ typedef struct TexInfo
     PS2TexBinding bind;
     float off_s, off_t; /* tile origin in texels */
     float shift_s, shift_t;
-    float inv_w, inv_h;
     int wrap_s_repeat, wrap_t_repeat;
-    int clamp_s_materialized, clamp_t_materialized;
 } TexInfo;
 
 static int tile_shift_mul(int shift, float *mul)
@@ -730,52 +701,27 @@ static void bind_texture(int tile_index, TexInfo *ti)
     uint32_t tlut_type = (R.om_h >> 14) & 3;
 
     ti->valid = 0;
-    ti->clamp_s_materialized = 0;
-    ti->clamp_t_materialized = 0;
     if (li < 0)
     {
         return;
     }
     memset(&key, 0, sizeof(key));
 
-    /*
-     * With a non-zero mask, the RDP can wrap/mirror *inside* the legal
-     * SL/TL..SH/TH tile and still clamp outside that tile.  One repeating GS
-     * period cannot represent both operations.  Keep the mask period as the
-     * source extent and, on a clamped axis, ask texcache to materialize the
-     * complete legal tile before REGION_CLAMP is applied.
-     *
-     * Nintendo's documented example (SH=11, mask=2, mirror+clamp) produces
-     * 0,1,2,3,3,2,1,0,0,1,2,3,3,3...; the first 12 texels are the
-     * materialized masked/mirrored tile and the last value is then clamped.
-     */
+    /* The RDP clamps to the tile extent first, then wraps with the mask.
+     * When the mask period is smaller than the extent the result is the
+     * mask-sized texture repeated (or mirrored) across the region, so that
+     * is what gets uploaded; clamping only matters when the extent fits. */
     w = ((t->lrs - t->uls) >> 2) + 1;
     h = ((t->lrt - t->ult) >> 2) + 1;
+    ti->wrap_s_repeat = t->masks && (!(t->cms & G_TX_CLAMP) || w > (1 << t->masks));
+    ti->wrap_t_repeat = t->maskt && (!(t->cmt & G_TX_CLAMP) || h > (1 << t->maskt));
+    if (ti->wrap_s_repeat)
+        w = 1 << t->masks;
+    if (ti->wrap_t_repeat)
+        h = 1 << t->maskt;
     if (w <= 0 || h <= 0 || w > 1024 || h > 1024)
     {
         return;
-    }
-
-    ti->wrap_s_repeat = t->masks && (!(t->cms & G_TX_CLAMP) || w > (1 << t->masks));
-    ti->wrap_t_repeat = t->maskt && (!(t->cmt & G_TX_CLAMP) || h > (1 << t->maskt));
-
-    if (ti->wrap_s_repeat)
-    {
-        if (t->cms & G_TX_CLAMP)
-        {
-            key.clamp_width = (uint16_t)w;
-            ti->clamp_s_materialized = 1;
-        }
-        w = 1 << t->masks;
-    }
-    if (ti->wrap_t_repeat)
-    {
-        if (t->cmt & G_TX_CLAMP)
-        {
-            key.clamp_height = (uint16_t)h;
-            ti->clamp_t_materialized = 1;
-        }
-        h = 1 << t->maskt;
     }
 
     /* 32-bit texels are split across TMEM's two halves (RG low, BA high), so
@@ -837,8 +783,6 @@ static void bind_texture(int tile_index, TexInfo *ti)
     tile_shift_mul(t->shiftt, &ti->shift_t);
     ti->off_s = (float)t->uls * 0.25f;
     ti->off_t = (float)t->ult * 0.25f;
-    ti->inv_w = 1.0f / (float)ti->bind.gs_w;
-    ti->inv_h = 1.0f / (float)ti->bind.gs_h;
     ti->valid = 1;
 }
 
@@ -869,7 +813,6 @@ typedef struct DrawMode
     int decal;      /* two passes: untextured base, then texel-alpha blended texels */
     GsState decal_gs;
     TexInfo tex;
-    CombinePlan combiner;
 } DrawMode;
 
 static void build_mode(DrawMode *dm, int for_rect)
@@ -884,7 +827,6 @@ static void build_mode(DrawMode *dm, int for_rect)
     uint64_t alpha = GSV_ALPHA(GSBL_CS, GSBL_CD, GSBL_AS, GSBL_CD, 0);
 
     memset(dm, 0, sizeof(*dm));
-    compile_combiner(&dm->combiner);
     /* Texture uploads below append to the packet: never inside a batch. */
     batch_close();
 
@@ -994,8 +936,8 @@ static void build_mode(DrawMode *dm, int for_rect)
         uint32_t filt = (R.om_h >> 12) & 3; /* 0 point, 2 bilerp, 3 average */
         int lin = (filt != 0) && cyc != G_CYC_COPY;
         const TexInfo *ti = &dm->tex;
-        int wms = (ti->wrap_s_repeat && !ti->clamp_s_materialized) ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
-        int wmt = (ti->wrap_t_repeat && !ti->clamp_t_materialized) ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
+        int wms = ti->wrap_s_repeat ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
+        int wmt = ti->wrap_t_repeat ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
         const GbiTile *t = &R.tiles[(for_rect ? R.rect_tile : R.tex_tile) & 7];
         int maxu = ((t->lrs - t->uls) >> 2);
         int maxv = ((t->lrt - t->ult) >> 2);
@@ -1074,7 +1016,7 @@ static void make_outvtx(const GbiVtx *v, const DrawMode *dm, OutVtx *o)
 {
     CombineOut co;
 
-    eval_combiner(v, &dm->combiner, &co);
+    eval_combiner(v, &co);
     o->x = v->x;
     o->y = v->y;
     o->z = v->z;
@@ -1088,8 +1030,8 @@ static void make_outvtx(const GbiVtx *v, const DrawMode *dm, OutVtx *o)
         o->g = (co.rgb[1].k + co.rgb[1].c) * 128.0f;
         o->b = (co.rgb[2].k + co.rgb[2].c) * 128.0f;
         o->a = (co.a.k + co.a.c) * 128.0f;
-        o->s = (v->s * ti->shift_s - ti->off_s) * ti->inv_w;
-        o->t = (v->t * ti->shift_t - ti->off_t) * ti->inv_h;
+        o->s = (v->s * ti->shift_s - ti->off_s) / (float)ti->bind.gs_w;
+        o->t = (v->t * ti->shift_t - ti->off_t) / (float)ti->bind.gs_h;
     }
     else
     {
@@ -1230,15 +1172,6 @@ static void tri_pass(const GbiVtx *a, const GbiVtx *b, const GbiVtx *c, const Dr
 
 static void tri(int i0, int i1, int i2)
 {
-    /*
-     * The N64 sometimes renders intermediate effects into color images that
-     * are not one of the three VI framebuffers. We do not emulate those
-     * off-screen render targets yet. Drawing those commands into the last
-     * on-screen framebuffer is worse than omitting the unsupported effect:
-     * it produces stray full-width strips/panels and apparent "jitter".
-     */
-    if (R.cimg_offscreen)
-        return;
     if (i0 >= MAX_VTX || i1 >= MAX_VTX || i2 >= MAX_VTX)
         return;
     if (sModeDirty)
@@ -1261,6 +1194,205 @@ static void tri(int i0, int i1, int i2)
     }
     tri_pass(&R.vtx[i0], &R.vtx[i1], &R.vtx[i2], &sMode);
 }
+
+#if PS2_DEBUG
+/* ------------------------------------------------------------------ */
+/* Row-coverage capture (hardware diagnostic, Select + R1)              */
+/* ------------------------------------------------------------------ */
+
+/* When armed, every primitive drawn into a colour framebuffer is recorded
+ * in GS coordinates; at the end of the frame the rows no primitive covers
+ * (by the GS rule: a row r is drawn when y0 <= r < y1, clipped to the
+ * scissor) are written to the log together with the primitives bordering
+ * them, and the log is saved to SSB64.LOG. */
+enum { DIAG_FILL, DIAG_FILL_CYC, DIAG_TEXRECT, DIAG_TRI };
+static const char *const sDiagKindName[] = { "fill", "fill1c", "texrect", "tri" };
+
+typedef struct DiagPrim
+{
+    int32_t x0, y0, x1, y1; /* 1/16 px, primitive bounds */
+    int16_t sy0, sy1;       /* scissor rows, inclusive */
+    int16_t sx0, sx1;       /* scissor columns, inclusive */
+    uint8_t kind, fb;
+    uint32_t cmd;           /* display-list command index */
+} DiagPrim;
+
+#define DIAG_MAX 6144
+static DiagPrim sDiag[DIAG_MAX];
+static int sDiagCount;
+static int sDiagOverflow;
+int gPS2DiagCaptureFrames; /* frames still to capture */
+
+static void diag_add(int kind, float x0, float y0, float x1, float y1, int zonly)
+{
+    DiagPrim *d;
+    uint64_t sc;
+
+    if (gPS2DiagCaptureFrames <= 0 || zonly || R.color_target < 0)
+        return;
+    if (sDiagCount >= DIAG_MAX)
+    {
+        sDiagOverflow = 1;
+        return;
+    }
+    sc = gs_scissor();
+    d = &sDiag[sDiagCount++];
+    d->x0 = (int32_t)(x0 * 16.0f);
+    d->y0 = (int32_t)(y0 * 16.0f);
+    d->x1 = (int32_t)(x1 * 16.0f);
+    d->y1 = (int32_t)(y1 * 16.0f);
+    d->sy0 = (int16_t)((sc >> 32) & 0x7FF);
+    d->sy1 = (int16_t)((sc >> 48) & 0x7FF);
+    d->sx0 = (int16_t)(sc & 0x7FF);
+    d->sx1 = (int16_t)((sc >> 16) & 0x7FF);
+    d->kind = (uint8_t)kind;
+    d->fb = (uint8_t)R.color_target;
+    d->cmd = gPS2RenderStats.dl_commands;
+}
+
+/* first/last row a primitive covers by the GS rule, clipped to scissor */
+static void diag_rows(const DiagPrim *d, int *first, int *last)
+{
+    int f = (d->y0 + 15) >> 4; /* ceil */
+    int l = ((d->y1 + 15) >> 4) - 1;
+
+    if (f < d->sy0) f = d->sy0;
+    if (l > d->sy1) l = d->sy1;
+    *first = f;
+    *last = l;
+}
+
+static void diag_log_prim(const char *tag, const DiagPrim *d)
+{
+    int f, l;
+
+    diag_rows(d, &f, &l);
+    /* coordinates in 1/16 pixel (no %f: keep to integer printf) */
+    ps2_log("diag:  %s %s cmd %u fb%d y16 %d..%d (rows %d..%d) x16 %d..%d scis %d..%d", tag,
+            sDiagKindName[d->kind], (unsigned)d->cmd, d->fb, (int)d->y0, (int)d->y1, f, l, (int)d->x0, (int)d->x1,
+            d->sy0, d->sy1);
+}
+
+static void diag_cols(const DiagPrim *d, int *first, int *last)
+{
+    int f = (d->x0 + 15) >> 4;
+    int l = ((d->x1 + 15) >> 4) - 1;
+
+    if (f < d->sx0) f = d->sx0;
+    if (l > d->sx1) l = d->sx1;
+    if (f < 0) f = 0;
+    if (l > PS2_SCREEN_W - 1) l = PS2_SCREEN_W - 1;
+    *first = f;
+    *last = l;
+}
+
+static void diag_finish_frame(void)
+{
+    /* per-pixel coverage map of the target framebuffer, by the GS rule */
+    static uint32_t cov[PS2_SCREEN_H][PS2_SCREEN_W / 32];
+    static uint16_t cnt[PS2_SCREEN_H];
+    int i, r, c, fb = sLastColorTarget, reported = 0, lo = PS2_SCREEN_H, hi = -1, best = 0;
+
+    if (gPS2DiagCaptureFrames <= 0)
+        return;
+    memset(cov, 0, sizeof(cov));
+    for (i = 0; i < sDiagCount; i++)
+    {
+        const DiagPrim *d = &sDiag[i];
+        int f, l, cf, cl;
+
+        if (d->fb != fb)
+            continue;
+        diag_rows(d, &f, &l);
+        diag_cols(d, &cf, &cl);
+        if (f < 0) f = 0;
+        if (l > PS2_SCREEN_H - 1) l = PS2_SCREEN_H - 1;
+        if (f > l || cf > cl)
+            continue;
+        if (f < lo) lo = f;
+        if (l > hi) hi = l;
+        for (r = f; r <= l; r++)
+            for (c = cf; c <= cl; c++)
+                cov[r][c >> 5] |= 1u << (c & 31);
+    }
+    for (r = 0; r < PS2_SCREEN_H; r++)
+    {
+        int n = 0;
+
+        for (c = 0; c < PS2_SCREEN_W / 32; c++)
+            n += __builtin_popcount(cov[r][c]);
+        cnt[r] = (uint16_t)n;
+        if (r >= lo && r <= hi && n > best)
+            best = n;
+    }
+    ps2_log("diag: frame fb%d, %d prims%s, drawn rows %d..%d, widest row %d px", fb, sDiagCount,
+            sDiagOverflow ? " (overflow)" : "", lo, hi, best);
+
+    /* rows inside the drawn area with fewer pixels than the widest row */
+    for (r = (lo < 0 ? 0 : lo); r <= hi; r++)
+    {
+        int e, n = 0, gx0 = -1, gx1 = -1;
+
+        if (cnt[r] >= best)
+            continue;
+        for (e = r; e + 1 <= hi && cnt[e + 1] == cnt[r] && memcmp(cov[e + 1], cov[r], sizeof(cov[r])) == 0; e++)
+            ;
+        /* first hole in the row, relative to the widest row's span */
+        for (c = 0; c < PS2_SCREEN_W; c++)
+        {
+            int set = (cov[r][c >> 5] >> (c & 31)) & 1;
+
+            if (!set && gx0 < 0 && c >= 10 && c < PS2_SCREEN_W - 10)
+                gx0 = c;
+            if (gx0 >= 0 && set)
+            {
+                gx1 = c - 1;
+                break;
+            }
+        }
+        ps2_log("diag: HOLE rows %d..%d: %d of %d px covered, first gap x %d..%d", r, e, cnt[r], best, gx0,
+                gx1 < 0 ? PS2_SCREEN_W - 1 : gx1);
+        for (i = 0; i < sDiagCount && n < 10; i++)
+        {
+            const DiagPrim *d = &sDiag[i];
+            int f, l, cf, cl;
+
+            if (d->fb != fb)
+                continue;
+            diag_rows(d, &f, &l);
+            diag_cols(d, &cf, &cl);
+            if (gx0 >= 0 && (cl < gx0 || cf > gx0))
+                continue; /* not in the gap's column */
+            if (l == r - 1 || f == e + 1)
+            {
+                diag_log_prim(l == r - 1 ? "above" : "below", d);
+                n++;
+            }
+        }
+        if (++reported >= 6)
+            break;
+        r = e;
+    }
+    if (reported == 0)
+        ps2_log("diag: every pixel of rows %d..%d is covered", lo, hi);
+    sDiagCount = 0;
+    sDiagOverflow = 0;
+    if (--gPS2DiagCaptureFrames == 0)
+    {
+        extern uint32_t gPS2FbDrawDisplayed, gPS2FbDrawPending;
+
+        ps2_log("diag: capture done; vsync: drew into on-screen fb %u, into queued fb %u",
+                (unsigned)gPS2FbDrawDisplayed, (unsigned)gPS2FbDrawPending);
+        ps2_log_save();
+    }
+}
+
+#else /* !PS2_DEBUG: the capture is compiled out */
+
+#define diag_add(kind, x0, y0, x1, y1, zonly) ((void)0)
+#define diag_finish_frame() ((void)0)
+
+#endif /* PS2_DEBUG */
 
 static void tri_pass(const GbiVtx *a, const GbiVtx *b, const GbiVtx *c, const DrawMode *dm)
 {
@@ -1296,6 +1428,28 @@ static void tri_pass(const GbiVtx *a, const GbiVtx *b, const GbiVtx *c, const Dr
         emit_vertex(q + stride, &poly[i], dm);
         emit_vertex(q + stride * 2, &poly[i + 1], dm);
         q += stride * 3;
+#if PS2_DEBUG
+        if (gPS2DiagCaptureFrames > 0)
+        {
+            const OutVtx *t3[3] = { &poly[0], &poly[i], &poly[i + 1] };
+            float ymin = 1e9f, ymax = -1e9f, xmin = 1e9f, xmax = -1e9f;
+            int k;
+
+            for (k = 0; k < 3; k++)
+            {
+                float wi = 1.0f / t3[k]->w;
+                /* same fixed-point truncation as emit_vertex() */
+                float sx = (float)(int32_t)((2048.0f + t3[k]->x * wi * R.vp_scale[0] + R.vp_trans[0]) * 16.0f) / 16.0f - 2048.0f;
+                float sy = (float)(int32_t)((2048.0f + t3[k]->y * wi * R.vp_scale[1] + R.vp_trans[1]) * 16.0f) / 16.0f - 2048.0f;
+
+                if (sy < ymin) ymin = sy;
+                if (sy > ymax) ymax = sy;
+                if (sx < xmin) xmin = sx;
+                if (sx > xmax) xmax = sx;
+            }
+            diag_add(DIAG_TRI, xmin, ymin, xmax, ymax, R.cimg_is_z);
+        }
+#endif
     }
     gPS2Pkt.ptr = q;
     gPS2RenderStats.triangles += (uint32_t)(n - 2);
@@ -1318,9 +1472,6 @@ static void unpack_fill_color(uint8_t *rgba)
 static void fill_rect(int ulx, int uly, int lrx, int lry)
 {
     uint32_t cyc = R.om_h & (3u << 20);
-
-    if (R.cimg_offscreen)
-        return;
     float x0 = ulx * 0.25f, y0 = uly * 0.25f, x1 = lrx * 0.25f, y1 = lry * 0.25f;
     uint64_t *p;
 
@@ -1330,11 +1481,11 @@ static void fill_rect(int ulx, int uly, int lrx, int lry)
         x1 += 1.0f;
         y1 += 1.0f;
     }
-
-    /* Keep partially covered leading pixels, as the RDP does. */
+    /* partly covered first row/column: see snap_leading_edge() */
     x0 = floorf(x0);
     y0 = floorf(y0);
 
+    diag_add(cyc == G_CYC_FILL ? DIAG_FILL : DIAG_FILL_CYC, x0, y0, x1, y1, R.cimg_is_z);
     if (cyc == G_CYC_FILL)
     {
         uint8_t c[4];
@@ -1401,9 +1552,48 @@ static void fill_rect(int ulx, int uly, int lrx, int lry)
     gPS2RenderStats.rects++;
 }
 
-/* The RDP covers a partially occupied leading pixel. Extend the GS sprite
- * to that pixel boundary and preserve its texture-coordinate slope. Signed
- * STQ handles a negative coordinate after extension without UV clipping. */
+/* The GS UV register holds unsigned 14-bit (10.4) coordinates.  A negative
+ * texel coordinate - which the game produces for sprites at sub-pixel
+ * positions, e.g. s = -0.25 - wraps to ~1023.75 on a real GS, so under
+ * REGION_CLAMP almost the whole sprite samples the texture's last row/column
+ * and only a thin line of it shows (PCSX2's hardware renderer hides this).
+ * The N64 clamps such coordinates to texel 0; do the same by clipping the
+ * rectangle edge [p0, p1] until its texel coordinate t reaches 0. */
+static void clip_negative_texcoord(float *p0, float *p1, float *t0, float *t1)
+{
+    if (*t0 >= 0.0f && *t1 >= 0.0f)
+    {
+        return;
+    }
+    if (*t0 < 0.0f && *t1 < 0.0f)
+    {
+        *t0 = *t1 = 0.0f; /* everything samples the clamped first texel */
+    }
+    else if (*t0 < 0.0f)
+    {
+        *p0 += (*p1 - *p0) * (-*t0 / (*t1 - *t0));
+        *t0 = 0.0f;
+        /* keep the partly covered first row/column, like the RDP does (see
+         * snap_leading_edge); it samples the clamped first texel */
+        *p0 = floorf(*p0);
+    }
+    else
+    {
+        *p1 -= (*p1 - *p0) * (-*t1 / (*t0 - *t1));
+        *t1 = 0.0f;
+    }
+}
+
+/* Coverage of a rectangle's leading (top/left) edge.  The RDP walks
+ * quarter-scanlines, so a rectangle whose top edge is at y = 10.25 still
+ * draws row 10; the GS draws only pixels whose integer coordinate lies
+ * inside the primitive, so it starts at row 11.  Where the game places a
+ * background element at a fractional position that row is then left
+ * undrawn and shows whatever an earlier frame put in that one of the three
+ * rotating framebuffers: a flickering line on hardware (PCSX2's hardware
+ * renderer rounds differently and hides it).  Move the edge down to the
+ * pixel boundary, extending the texel coordinate t along with it.  Trailing
+ * edges already agree: both cover up to ceil(p1) - 1. */
 static void snap_leading_edge(float *p0, float p1, float *t0, float t1)
 {
     float frac = *p0 - floorf(*p0);
@@ -1418,9 +1608,6 @@ static void snap_leading_edge(float *p0, float p1, float *t0, float t1)
 static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int flip)
 {
     uint32_t cyc = R.om_h & (3u << 20);
-
-    if (R.cimg_offscreen)
-        return;
     int lrx = (w0 >> 12) & 0xFFF, lry = w0 & 0xFFF;
     int tile = (w1 >> 24) & 7;
     int ulx = (w1 >> 12) & 0xFFF, uly = w1 & 0xFFF;
@@ -1458,16 +1645,8 @@ static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int fli
         dm.gs.prim &= ~((uint64_t)1 << 6); /* no blending in copy mode */
     }
     dm.gs.use_fog = 0;
-    dm.gs.nreg = 3; /* STQ, RGBAQ, XYZ2 */
-    /*
-     * Texture rectangles can carry small negative S/T offsets when a sprite
-     * moves by a fractional pixel. GS UV is unsigned fixed point, so encoding
-     * those values wrapped them to the far edge of the texture and made
-     * moving sprites (notably the CSS hand cursor) disappear. Use floating
-     * STQ here instead; it preserves signed sub-texel coordinates and lets the
-     * existing CLAMP state do the right thing.
-     */
-    dm.gs.prim &= ~((uint64_t)1 << 8); /* FST=0: STQ */
+    dm.gs.nreg = 3; /* UV, RGBAQ, XYZ2 */
+    dm.gs.prim |= (uint64_t)1 << 8; /* FST: UV in texel units */
 
     /* Texel coordinates relative to the bound tile origin. */
     s = s * dm.tex.shift_s - dm.tex.off_s;
@@ -1496,14 +1675,34 @@ static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int fli
         snap_leading_edge(&x0, x1, &v0, v1);
         snap_leading_edge(&y0, y1, &u0, u1);
     }
+    /* Repeat-wrapped axes are fine: 1024 texels is a multiple of every
+     * (power-of-two) GS texture size, so the 14-bit wrap lands on the same
+     * texel.  Clamped axes need the negative part clipped away. */
+    if (!dm.tex.wrap_s_repeat)
+    {
+        if (!flip)
+            clip_negative_texcoord(&x0, &x1, &u0, &u1);
+        else
+            clip_negative_texcoord(&y0, &y1, &u0, &u1);
+    }
+    if (!dm.tex.wrap_t_repeat)
+    {
+        if (!flip)
+            clip_negative_texcoord(&y0, &y1, &v0, &v1);
+        else
+            clip_negative_texcoord(&x0, &x1, &v0, &v1);
+    }
     if (dm.prim_depth)
     {
         z = (uint32_t)(0xFFFF - ((R.prim_z > 0x7FFF) ? 0xFFFF : (uint32_t)R.prim_z * 2));
     }
+    diag_add(DIAG_TEXRECT, x0, y0, x1, y1, R.cimg_is_z);
 
     {
         GsState st = dm.gs;
 
+        /* A separate state signature (UV sprites) so they never merge into
+         * STQ triangle batches. */
         batch_close();
         if (!sCurValid || memcmp(&sCur, &st, sizeof(st)) != 0)
         {
@@ -1512,12 +1711,12 @@ static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int fli
         ps2_pkt_reserve(8);
         p = gPS2Pkt.ptr;
         p[0] = GIFTAG_LO(2, 0, 1, st.prim, GIF_FLG_PACKED, 3);
-        p[1] = (uint64_t)GSR_ST | ((uint64_t)GSR_RGBAQ << 4) | ((uint64_t)GSR_XYZ2 << 8);
+        p[1] = (uint64_t)GSR_UV | ((uint64_t)GSR_RGBAQ << 4) | ((uint64_t)GSR_XYZ2 << 8);
         p += 2;
-        gs_packed_stq(p, u0 * dm.tex.inv_w, v0 * dm.tex.inv_h, 1.0f);
+        gs_packed_uv(p, (uint32_t)(int32_t)(u0 * 16.0f), (uint32_t)(int32_t)(v0 * 16.0f));
         gs_packed_rgba(p + 2, clamp_u8(o.r), clamp_u8(o.g), clamp_u8(o.b), clamp_u8(o.a));
         gs_packed_xyz2(p + 4, (uint32_t)((2048.0f + x0) * 16.0f), (uint32_t)((2048.0f + y0) * 16.0f), z);
-        gs_packed_stq(p + 6, u1 * dm.tex.inv_w, v1 * dm.tex.inv_h, 1.0f);
+        gs_packed_uv(p + 6, (uint32_t)(int32_t)(u1 * 16.0f), (uint32_t)(int32_t)(v1 * 16.0f));
         gs_packed_rgba(p + 8, clamp_u8(o.r), clamp_u8(o.g), clamp_u8(o.b), clamp_u8(o.a));
         gs_packed_xyz2(p + 10, (uint32_t)((2048.0f + x1) * 16.0f), (uint32_t)((2048.0f + y1) * 16.0f), z);
         gPS2Pkt.ptr = p + 12;
@@ -1530,31 +1729,42 @@ static void tex_rect(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int fli
 /* Display list interpreter                                             */
 /* ------------------------------------------------------------------ */
 
+/* Hardware diagnostic (toggled with Select + L3, see render_thread.c):
+ * 0 = off, otherwise the RGB colour each framebuffer is cleared to before
+ * the game's first draw into it in a frame.  Rows the game leaves undrawn
+ * then show in that colour instead of whatever an earlier frame left in
+ * that one of the three buffers. */
+uint32_t gPS2FrameClearColor;
+static int sFrameCleared;
+
 static void set_color_image(const void *addr)
 {
     int fb = ps2_gs_fb_index_for(addr);
 
     batch_close();
     R.cimg_is_z = ps2_gs_is_zbuffer(addr);
-    R.cimg_offscreen = 0;
     if (fb >= 0)
     {
         R.color_target = fb;
         sLastColorTarget = fb;
+        if (!sFrameCleared)
+        {
+            extern void ps2_gs_before_draw_into(int fb);
+
+            sFrameCleared = 1;
+            ps2_gs_before_draw_into(fb);
+            if (gPS2FrameClearColor != 0)
+            {
+                ps2_gs_clear(fb, gPS2FrameClearColor & 0xFFFFFF, 0);
+            }
+        }
         ps2_gs_frame_setup(fb);
         sCurValid = 0;
     }
     else if (!R.cimg_is_z)
     {
-        /*
-         * Off-screen render targets are not implemented yet. Previously we
-         * silently left FRAME pointing at the last display framebuffer, so
-         * every draw intended for the intermediate image corrupted the
-         * visible frame. Suppress those primitives until the display list
-         * selects a real framebuffer again. State/TMEM commands still run,
-         * so returning to the screen target keeps normal RDP state flow.
-         */
-        R.cimg_offscreen = 1;
+        /* Off-screen targets are not supported yet; keep drawing into the
+         * current framebuffer (see PS2_PORT_STATUS.md). */
     }
     sModeDirty = 1;
 }
@@ -1607,6 +1817,7 @@ void ps2_gbi_run(const void *dl_start)
 
     reset_state();
     sLastColorTarget = -1;
+    sFrameCleared = 0;
 
     while (dl != NULL)
     {
@@ -2074,4 +2285,5 @@ void ps2_gbi_run(const void *dl_start)
         }
     }
     batch_close();
+    diag_finish_frame();
 }
