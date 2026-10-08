@@ -191,6 +191,16 @@ static void batch_submit(void)
     if (n == 0)
         return;
 
+    /* The previous async batch still owns sRpcSend until it completes.
+     * Draining inside audio_rpc_batch_async() is too late after this copy. */
+    if (sRpcPending && audio_rpc_drain() < 0)
+    {
+        sReady = 0;
+        sBatchCount = 0;
+        ps2_log("audio: previous batch RPC failed; disabling audio");
+        return;
+    }
+
     ((uint32_t *)sRpcSend)[0] = (uint32_t)n;
     memcpy(sRpcSend + 4, sBatch, (size_t)n * sizeof(sceSdBatch));
     bytes = 4u + (uint32_t)n * (uint32_t)sizeof(sceSdBatch);
@@ -207,6 +217,14 @@ static void batch_submit(void)
 static void spu_upload(const uint8_t *src, uint32_t addr, uint32_t size)
 {
     uint32_t done = 0;
+
+    /* Uploads share the send buffer with the per-frame async batch. */
+    if (sRpcPending && audio_rpc_drain() < 0)
+    {
+        sReady = 0;
+        ps2_log("audio: previous batch RPC failed before upload; disabling audio");
+        return;
+    }
 
     while (done < size)
     {
