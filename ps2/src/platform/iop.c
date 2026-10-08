@@ -436,6 +436,28 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
     }
 }
 
+int ps2_iop_load_bdm_fallback_transports(void)
+{
+    static int sDone;
+    if (sDone)
+        return 0;
+    sDone = 1;
+
+    ps2_log("IOP: loading BDM fallback transports (USB/MX4SIO/ATA/iLink)");
+    load_bdm_core();
+    LOAD_IRX(usbd_mini);
+    LOAD_IRX(usbmass_bd_mini);
+    LOAD_IRX(mx4sio_bd);
+    if (LOAD_IRX(ps2dev9) >= 0)
+    {
+        LOAD_IRX(ps2atad);
+        sleep(1);
+    }
+    LOAD_IRX(iLinkman);
+    LOAD_IRX(IEEE1394_bd);
+    return 1;
+}
+
 int ps2_iop_module_loaded(const char *name)
 {
     int i;

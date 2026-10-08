@@ -140,6 +140,19 @@ int ps2_assets_init(void)
 
             if (ps2_storage_data_device() == PS2_BOOT_HOST)
                 break;
+
+            /* If ~3 seconds have elapsed without finding the asset pack on BDM,
+             * load the BDM transports if they were not provided by the launcher. */
+            if (attempt == 30 && (ps2_storage_data_device() == PS2_BOOT_BDM ||
+                                  ps2_storage_data_device() == PS2_BOOT_USB ||
+                                  ps2_storage_data_device() == PS2_BOOT_MX4SIO ||
+                                  ps2_storage_data_device() == PS2_BOOT_ATA ||
+                                  ps2_storage_data_device() == PS2_BOOT_ILINK))
+            {
+                ps2_boot_stage("assets: probing BDM transports", 0);
+                ps2_iop_load_bdm_fallback_transports();
+            }
+
             ps2_delay_vblanks(6);
         }
     }
