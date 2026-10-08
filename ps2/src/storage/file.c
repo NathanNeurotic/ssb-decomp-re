@@ -48,17 +48,8 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
     uint32_t max_chunk = 0x4000u;
     int is_mmce = (ps2_storage_data_device() == PS2_BOOT_MMCE);
 
-    /*
-     * Keep the API identical for every device. MMCE only needs a smaller
-     * transfer quantum because MMCEMAN owns SIO2 for the duration of each
-     * request. 2 KiB transactions plus a tiny EE-side yield give PAD/MC
-     * clients a scheduling window between storage bursts instead of letting a
-     * 64 KiB asset request immediately reacquire SIO2 over and over.
-     */
-    if (is_mmce)
-        max_chunk = 0x800u;
-    else if (ps2_storage_data_device() == PS2_BOOT_HOST ||
-             ps2_storage_data_device() == PS2_BOOT_CDROM)
+    if (ps2_storage_data_device() == PS2_BOOT_HOST ||
+        ps2_storage_data_device() == PS2_BOOT_CDROM)
         max_chunk = 0x10000u;
 
     while (done < size)
@@ -81,9 +72,6 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
             return (done > 0) ? (int)done : n;
 
         done += (uint32_t)n;
-
-        if (is_mmce && done < size)
-            DelayThread(500);
     }
     return (int)done;
 }
