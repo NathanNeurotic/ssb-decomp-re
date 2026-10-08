@@ -679,7 +679,6 @@ typedef struct TexInfo
     float off_s, off_t; /* tile origin in texels */
     float shift_s, shift_t;
     int wrap_s_repeat, wrap_t_repeat;
-    int clamp_s_materialized, clamp_t_materialized;
 } TexInfo;
 
 static int tile_shift_mul(int shift, float *mul)
@@ -703,25 +702,12 @@ static void bind_texture(int tile_index, TexInfo *ti)
     uint32_t tlut_type = (R.om_h >> 14) & 3;
 
     ti->valid = 0;
-    ti->clamp_s_materialized = 0;
-    ti->clamp_t_materialized = 0;
     if (li < 0)
     {
         return;
     }
     memset(&key, 0, sizeof(key));
 
-    /*
-     * With a non-zero mask, the RDP can wrap/mirror *inside* the legal
-     * SL/TL..SH/TH tile and still clamp outside that tile.  One repeating GS
-     * period cannot represent both operations.  Keep the mask period as the
-     * source extent and, on a clamped axis, ask texcache to materialize the
-     * complete legal tile before REGION_CLAMP is applied.
-     *
-     * Nintendo's documented example (SH=11, mask=2, mirror+clamp) produces
-     * 0,1,2,3,3,2,1,0,0,1,2,3,3,3...; the first 12 texels are the
-     * materialized masked/mirrored tile and the last value is then clamped.
-     */
     w = ((t->lrs - t->uls) >> 2) + 1;
     h = ((t->lrt - t->ult) >> 2) + 1;
     if (w <= 0 || h <= 0 || w > 1024 || h > 1024)
@@ -729,25 +715,15 @@ static void bind_texture(int tile_index, TexInfo *ti)
         return;
     }
 
-    ti->wrap_s_repeat = t->masks && (!(t->cms & G_TX_CLAMP) || w > (1 << t->masks));
-    ti->wrap_t_repeat = t->maskt && (!(t->cmt & G_TX_CLAMP) || h > (1 << t->maskt));
+    ti->wrap_s_repeat = !(t->cms & G_TX_CLAMP);
+    ti->wrap_t_repeat = !(t->cmt & G_TX_CLAMP);
 
-    if (ti->wrap_s_repeat)
+    if (ti->wrap_s_repeat && t->masks)
     {
-        if (t->cms & G_TX_CLAMP)
-        {
-            key.clamp_width = (uint16_t)w;
-            ti->clamp_s_materialized = 1;
-        }
         w = 1 << t->masks;
     }
-    if (ti->wrap_t_repeat)
+    if (ti->wrap_t_repeat && t->maskt)
     {
-        if (t->cmt & G_TX_CLAMP)
-        {
-            key.clamp_height = (uint16_t)h;
-            ti->clamp_t_materialized = 1;
-        }
         h = 1 << t->maskt;
     }
 
@@ -963,8 +939,8 @@ static void build_mode(DrawMode *dm, int for_rect)
         uint32_t filt = (R.om_h >> 12) & 3; /* 0 point, 2 bilerp, 3 average */
         int lin = (filt != 0) && cyc != G_CYC_COPY;
         const TexInfo *ti = &dm->tex;
-        int wms = (ti->wrap_s_repeat && !ti->clamp_s_materialized) ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
-        int wmt = (ti->wrap_t_repeat && !ti->clamp_t_materialized) ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
+        int wms = ti->wrap_s_repeat ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
+        int wmt = ti->wrap_t_repeat ? GSWRAP_REPEAT : GSWRAP_REGION_CLAMP;
         const GbiTile *t = &R.tiles[(for_rect ? R.rect_tile : R.tex_tile) & 7];
         int maxu = ((t->lrs - t->uls) >> 2);
         int maxv = ((t->lrt - t->ult) >> 2);
