@@ -30,6 +30,7 @@
 #include <loadfile.h>
 #include <sbv_patches.h>
 #include <sifrpc.h>
+#include <smod.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -76,11 +77,43 @@ DECLARE_IRX(secrsif);
 static const char *sLoaded[MAX_TRACKED_MODULES];
 static int sLoadedCount;
 static int sIopWasReset;
+static int sInheritedBdm;
 
 static int load_irx(const char *name, void *buf, unsigned int size, const char *args, int args_len)
 {
     int result = 0;
-    int id = SifExecModuleBuffer(buf, size, (u32)args_len, args, &result);
+    int id;
+
+    if (sInheritedBdm)
+    {
+        /* Keep RPC clients and SIO2 hooks bound to the launcher's services. */
+        static const struct { const char *irx; const char *module; } existing[] = {
+            { "filexio", "IOX/File_Manager_Rpc" },
+            { "sio2man", "sio2man" },
+            { "mtapman", "multitap_manager" },
+            { "padman", "padman" },
+            { "mcman", "mcman_cex" },
+            { "mcman", "mcman" },
+            { "mcserv", "mcserv" },
+            { "libsd", "freesd" },
+            { "libsd", "libsd" },
+        };
+        smod_mod_info_t info;
+        unsigned int i;
+
+        for (i = 0; i < sizeof(existing) / sizeof(existing[0]); i++)
+        {
+            if (strcmp(name, existing[i].irx) == 0 &&
+                smod_get_mod_by_name(existing[i].module, &info))
+            {
+                if (sLoadedCount < MAX_TRACKED_MODULES)
+                    sLoaded[sLoadedCount++] = name;
+                ps2_log("IOP: reusing %s", name);
+                return 0;
+            }
+        }
+    }
+    id = SifExecModuleBuffer(buf, size, (u32)args_len, args, &result);
 
     if (id < 0 || result == 1 /* NO_RESIDENT_END */)
     {
@@ -209,6 +242,12 @@ static int mount_hdd_partition(void)
 void ps2_iop_init(void)
 {
     int preserve_iop = ps2_storage_requires_iop_preserve();
+    PS2BootDevice device = ps2_storage_data_device();
+
+    sInheritedBdm = preserve_iop &&
+        (device == PS2_BOOT_BDM || device == PS2_BOOT_USB ||
+         device == PS2_BOOT_MX4SIO || device == PS2_BOOT_ATA ||
+         device == PS2_BOOT_ILINK || device == PS2_BOOT_UDPBD);
 
     sLoadedCount = 0;
     sIopWasReset = 0;
@@ -237,11 +276,17 @@ void ps2_iop_init(void)
     if (sIopWasReset)
         sbv_patch_fileio();
 
-    LOAD_IRX(iomanx);
+    /* A mass mount belongs to the launcher's I/O manager. Another iomanX
+     * can bind fileXio to an empty device table instead of the live mount. */
+    if (sInheritedBdm)
+        ps2_log("IOP: preserving mounted BDM I/O manager");
+    else
+        LOAD_IRX(iomanx);
     LOAD_IRX(filexio);
     /* Even when the inherited IOP already had fileXio loaded and the duplicate
      * module load is rejected, bind the EE RPC client to the live service. */
-    fileXioInit();
+    if (fileXioInit() < 0)
+        ps2_panic("fileXio binding failed");
 
     LOAD_IRX(sio2man);
     LOAD_IRX(mtapman);
@@ -442,6 +487,14 @@ int ps2_iop_load_bdm_fallback_transports(void)
     if (sDone)
         return 0;
     sDone = 1;
+
+    if (sInheritedBdm)
+    {
+        /* A failed probe does not authorize a second BDM core or replacing
+         * the SIO2 hooks of an already-mounted transport. */
+        ps2_log("IOP: preserving inherited BDM transports");
+        return 0;
+    }
 
     ps2_log("IOP: loading BDM fallback transports (USB/MX4SIO/ATA/iLink)");
     load_bdm_core();
