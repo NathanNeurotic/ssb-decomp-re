@@ -32,3 +32,7 @@ Use this baseline for further narrow fixes. Do not restore the superseded specul
 ## DAT webpage preservation
 
 Restored docs/ asset builder from 61eb916f8, including the hardware DAT post-operations for stale CI texel/TLUT classification and Pikachu accessory costume animation streams. The expected fixed browser DAT hash is 151b492025ac780c5114b8a842b157c73ed56208e7ddfff1731ad74882eb809e. Browser generation still differs from compiler generation in pre-existing file 199/200 text regions; this restoration does not claim full pack parity. No runtime code or ELF input changed.
+
+## USB boot failure follow-up
+
+User subsequently reports USB hangs on a purple/pink screen; prior USB success is not a universal launch pass. Candidate restores native-launch stdout RPC suppression (present in pre-baseline main but lost during runtime rollback) and adds distinct IOP/GS markers. The probable stage is IOP setup; exact blocking operation remains unconfirmed. Preserve renderer/VI/texture behavior.

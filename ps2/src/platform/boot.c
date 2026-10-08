@@ -52,6 +52,12 @@ int ps2_main(int argc, char *argv[])
                 bad_data_arg = 1;
         }
     }
+    /* Native launchers may leave a stale stdout RPC service. Keep all boot
+     * messages in the EE log for the GS screen and saved log, without routing
+     * them through that inherited IOP console. host: retains console output. */
+    if (ps2_storage_launch_device() != PS2_BOOT_HOST)
+        ps2_log_console(0);
+
     /* Stage colours (troubleshooting on hardware, see PS2_PORT.md):
      * dark blue = started, purple = IOP modules, cyan = video init,
      * after that the boot screen with the log is shown. */
@@ -81,7 +87,7 @@ int ps2_main(int argc, char *argv[])
         }
     }
 
-    ps2_boot_stage("IOP reset + modules", 0x800080);
+    ps2_boot_stage("IOP reset + modules", 0xFFFF00);
     ps2_iop_init();
     ps2_boot_stage("vblank + video init", 0x008080);
     ps2_vblank_init();

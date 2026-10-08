@@ -252,6 +252,7 @@ void ps2_iop_init(void)
     sLoadedCount = 0;
     sIopWasReset = 0;
 
+    ps2_boot_stage("IOP: RPC initialization", 0xFFFF00);
     SifInitRpc(0);
 
     /* host: and bare pfsN: data paths depend on services/mounts owned by the
@@ -268,13 +269,17 @@ void ps2_iop_init(void)
         sIopWasReset = 1;
     }
 
+    ps2_boot_stage("IOP: loadfile and heap initialization", 0xFFFFFF);
     SifLoadFileInit();
     SifInitIopHeap();
 
+    ps2_boot_stage("IOP: module loader patches", 0xFF8000);
     sbv_patch_enable_lmb();
     sbv_patch_disable_prefix_check();
     if (sIopWasReset)
         sbv_patch_fileio();
+
+    ps2_boot_stage("IOP: filesystem service initialization", 0x0000FF);
 
     /* A mass mount belongs to the launcher's I/O manager. Another iomanX
      * can bind fileXio to an empty device table instead of the live mount. */
@@ -285,14 +290,17 @@ void ps2_iop_init(void)
     LOAD_IRX(filexio);
     /* Even when the inherited IOP already had fileXio loaded and the duplicate
      * module load is rejected, bind the EE RPC client to the live service. */
+    ps2_boot_stage("IOP: fileXio binding", 0x00FFFF);
     if (fileXioInit() < 0)
         ps2_panic("fileXio binding failed");
 
+    ps2_boot_stage("IOP: SIO2 and controller modules", 0x00FF00);
     LOAD_IRX(sio2man);
     LOAD_IRX(mtapman);
     LOAD_IRX(padman);
     LOAD_IRX(mcman);
     LOAD_IRX(mcserv);
+    ps2_boot_stage("IOP: sound library", 0xFF0000);
     LOAD_IRX(libsd);
     /*
      * Real hardware has already proven the embedded sdr server can wedge this
