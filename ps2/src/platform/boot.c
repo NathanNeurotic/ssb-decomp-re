@@ -89,7 +89,7 @@ int ps2_main(int argc, char *argv[])
 
     ps2_boot_stage("IOP reset + modules", 0xFFFF00);
     ps2_iop_init();
-    ps2_boot_stage("vblank + video init", 0x008080);
+    ps2_boot_stage("vblank + video init", 0x800000);
     ps2_vblank_init();
     ps2_gs_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);

@@ -36,3 +36,5 @@ Restored docs/ asset builder from 61eb916f8, including the hardware DAT post-ope
 ## USB boot failure follow-up
 
 User subsequently reports USB hangs on a purple/pink screen; prior USB success is not a universal launch pass. Candidate restores native-launch stdout RPC suppression (present in pre-baseline main but lost during runtime rollback) and adds distinct IOP/GS markers. The probable stage is IOP setup; exact blocking operation remains unconfirmed. Preserve renderer/VI/texture behavior.
+
+USB follow-up screenshot shows teal. This could be fileXio binding or the old dark-cyan pre-video marker, so colour alone does not uniquely identify the operation. Remove the unnecessary fileXio dependency for inherited BDM mounts; POSIX access keeps the launcher file I/O client instead. Fresh stacks still initialize fileXio and check module load errors. Pre-video marker changed to dark red to disambiguate. Console test remains required.

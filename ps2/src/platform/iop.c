@@ -281,18 +281,22 @@ void ps2_iop_init(void)
 
     ps2_boot_stage("IOP: filesystem service initialization", 0x0000FF);
 
-    /* A mass mount belongs to the launcher's I/O manager. Another iomanX
-     * can bind fileXio to an empty device table instead of the live mount. */
+    /* An inherited mass filesystem already works through the launcher's
+     * file I/O service. POSIX DAT/log access does not need fileXio. Do not
+     * replace its I/O manager or require an additional RPC server: resident
+     * module presence does not guarantee a live fileXio RPC queue. */
     if (sInheritedBdm)
-        ps2_log("IOP: preserving mounted BDM I/O manager");
+    {
+        ps2_log("IOP: keeping inherited BDM filesystem and file I/O service");
+    }
     else
-        LOAD_IRX(iomanx);
-    LOAD_IRX(filexio);
-    /* Even when the inherited IOP already had fileXio loaded and the duplicate
-     * module load is rejected, bind the EE RPC client to the live service. */
-    ps2_boot_stage("IOP: fileXio binding", 0x00FFFF);
-    if (fileXioInit() < 0)
-        ps2_panic("fileXio binding failed");
+    {
+        if (LOAD_IRX(iomanx) < 0 || LOAD_IRX(filexio) < 0)
+            ps2_panic("filesystem module initialization failed");
+        ps2_boot_stage("IOP: fileXio binding", 0x00FFFF);
+        if (fileXioInit() < 0)
+            ps2_panic("fileXio binding failed");
+    }
 
     ps2_boot_stage("IOP: SIO2 and controller modules", 0x00FF00);
     LOAD_IRX(sio2man);
