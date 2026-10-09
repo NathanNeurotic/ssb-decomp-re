@@ -59,6 +59,7 @@ jobs:
           python3 ps2/tests/test_runtime_safety.py
           python3 ps2/tests/test_inherited_transports.py
           python3 ps2/tests/test_renderer_coordinates.py
+          python3 ps2/tests/test_gbi_vertex_bounds.py
 
       - name: Generate ROM-independent linker symbols
         shell: bash
