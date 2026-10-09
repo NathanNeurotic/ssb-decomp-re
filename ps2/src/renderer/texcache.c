@@ -92,6 +92,9 @@ static int vram_alloc(uint32_t blocks, int16_t owner, uint32_t *out)
     uint32_t prev_end = PS2_TEX_POOL_FIRST_BLOCK;
     int i;
 
+    if (sRangeCount >= MAX_ENTRIES || blocks == 0 || blocks > PS2_VRAM_BLOCKS - PS2_TEX_POOL_FIRST_BLOCK)
+        return 0;
+
     for (i = 0; i <= sRangeCount; i++)
     {
         uint32_t next_start = (i < sRangeCount) ? sRanges[i].start : PS2_VRAM_BLOCKS;
@@ -202,6 +205,11 @@ static void *staging_alloc(uint32_t bytes)
     void *p;
 
     bytes = (bytes + 63) & ~63u;
+    if (bytes > STAGING_BYTES)
+    {
+        ps2_log("tex: oversized staging request %u", (unsigned)bytes);
+        return NULL;
+    }
     if (sStagingPos + bytes > STAGING_BYTES)
     {
         /* Everything staged so far is referenced by queued DMA: drain the
@@ -342,6 +350,9 @@ static int make_resident(TexEntry *e, int16_t idx)
     const uint8_t *src = (const uint8_t *)k->addr;
     int pitch = k->line_bytes;
 
+    if (sw <= 0 || sh <= 0 || w <= 0 || h <= 0 || w > 1024 || h > 1024)
+        return 0;
+
     if (tw < 3) tw = 3; /* >= 8x8 keeps uploads qword-sized */
     if (th < 3) th = 3;
     gw = 1 << tw;
@@ -413,6 +424,11 @@ static int make_resident(TexEntry *e, int16_t idx)
 
     /* Convert. */
     dst = staging_alloc(bytes);
+    if (dst == NULL)
+    {
+        vram_free(idx);
+        return 0;
+    }
     memset(dst, 0, bytes);
     for (y = 0; y < h; y++)
     {
@@ -639,7 +655,7 @@ int ps2_texcache_bind(const PS2TexKey *key, PS2TexBinding *out)
     e->last_used = sFrame;
     if (!e->resident && !make_resident(e, idx))
     {
-        (void)entry_release;
+        entry_release(idx); /* Recycle failed entries instead of leaking cache slots. */
         return 0;
     }
     out->tex0 = e->tex0;
