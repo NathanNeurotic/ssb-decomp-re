@@ -61,6 +61,7 @@ jobs:
           python3 ps2/tests/test_renderer_coordinates.py
           python3 ps2/tests/test_gbi_vertex_bounds.py
           python3 ps2/tests/test_udpfs_close.py
+          python3 ps2/tests/test_udpfs_recv_cleanup.py
 
       - name: Generate ROM-independent linker symbols
         shell: bash
