@@ -52,6 +52,14 @@ jobs:
           "$PS2BUILD_HOME/ps2build" --version
           "$PS2BUILD_HOME/toolchain/ee/bin/mips64r5900el-ps2-elf-gcc" --version | head -1
 
+      - name: Exercise ELF runtime host regression harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ps2/tests/test_runtime_safety.py
+          python3 ps2/tests/test_inherited_transports.py
+          python3 ps2/tests/test_renderer_coordinates.py
+
       - name: Generate ROM-independent linker symbols
         shell: bash
         run: |
