@@ -21,5 +21,6 @@ sifcmd_IMPORTS_end
 thbase_IMPORTS_start
 I_CreateThread
 I_StartThread
+I_DeleteThread
 I_GetThreadId
 thbase_IMPORTS_end
