@@ -19,6 +19,7 @@ def extract(signature):
 
 functions = "\n\n".join([
     extract("static int inherited_filexio_rpc_ready(void)"),
+    extract("static int inherited_fileio_fallback(void)"),
     extract("static int init_filexio_runtime(void)")
 ])
 
@@ -36,14 +37,16 @@ static int sLastFileXioModuleId = -999;
 static int sLastFileXioModuleResult = -999;
 static int bind_calls, load_calls, init_calls, delays, negative_remaining;
 static int server_enabled, server_after_load, load_fails, ee_client_fails;
+static int fileio_enabled, fio_init_calls, fileio_init_fails;
 
 static int sceSifBindRpc(SifRpcClientData_t *probe, int sid, int mode)
 {
-    assert(sid == FILEXIO_IRX && mode == 0);
+    assert((sid == FILEXIO_IRX || sid == 0x80000001) && mode == 0);
     bind_calls++;
     if (negative_remaining-- > 0)
         return -1;
-    probe->server = server_enabled ? (void*)0x1000 : NULL;
+    probe->server = (sid == FILEXIO_IRX ? server_enabled : fileio_enabled)
+        ? (void*)0x1000 : NULL;
     return 0;
 }
 static void DelayThread(int micros)
@@ -73,6 +76,11 @@ static int fileXioInit(void)
     init_calls++;
     return ee_client_fails ? -1 : 0;
 }
+static int fioInit(void)
+{
+    fio_init_calls++;
+    return fileio_init_fails ? -1 : 0;
+}
 
 __FUNCTIONS__
 
@@ -82,6 +90,7 @@ static void reset(void)
     sLastFileXioModuleId = sLastFileXioModuleResult = -999;
     bind_calls = load_calls = init_calls = delays = negative_remaining = 0;
     server_enabled = server_after_load = load_fails = ee_client_fails = 0;
+    fileio_enabled = fileio_init_fails = fio_init_calls = 0;
 }
 int main(void)
 {
@@ -111,11 +120,35 @@ int main(void)
     assert(init_filexio_runtime() == 0);
     assert(load_calls == 1 && init_calls == 1);
 
+    /* Real hardware's error: -200 means a missing IOP export dependency.
+       Retain the launcher's mass mount and its standard FILEIO service. */
+    reset();
+    load_fails = 1;
+    fileio_enabled = 1;
+    assert(init_filexio_runtime() == 1);
+    assert(load_calls == 1 && init_calls == 0 && fio_init_calls == 1);
+
+    /* A FILEIO service without a functioning EE client is not success. */
+    reset();
+    load_fails = 1;
+    fileio_enabled = 1;
+    fileio_init_fails = 1;
+    assert(init_filexio_runtime() == -1);
+    assert(init_calls == 0 && fio_init_calls == 1);
+
     /* A genuinely absent server cannot be reported as ready. */
     reset();
     load_fails = 1;
     assert(init_filexio_runtime() == -1);
     assert(load_calls == 1 && init_calls == 0);
+
+    /* No FILEIO fallback after a clean IOP reset; guard ownership. */
+    reset();
+    sInheritedBdm = 0;
+    load_fails = 1;
+    fileio_enabled = 1;
+    assert(init_filexio_runtime() == -1);
+    assert(fio_init_calls == 0);
 
     /* A successful probe does not imply EE client initialization succeeded. */
     reset();
@@ -131,7 +164,7 @@ int main(void)
     assert(init_filexio_runtime() == 0);
     assert(load_calls == 1);
 
-    puts("PASS: inherited fileXio, transient bind errors, duplicate reject, fresh module, missing RPC");
+    puts("PASS: inherited fileXio, dependency -200 -> FILEIO fallback, clean IOP guard, error cases");
 }
 """.replace("__FUNCTIONS__", functions)
 with tempfile.TemporaryDirectory() as d:
