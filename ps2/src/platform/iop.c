@@ -289,7 +289,18 @@ void ps2_iop_init(void)
     else if (LOAD_IRX(iomanx) < 0)
         ps2_panic("iomanX initialization failed");
 
-    if (LOAD_IRX(filexio) < 0)
+    /*
+     * An inherited massN:/BDM mount is registered against the launcher's
+     * existing I/O manager and fileXio RPC server. Re-loading fileXio on top
+     * of that live service may be rejected as a duplicate module (or bind a
+     * second server to the wrong device table). Neither outcome means the
+     * inherited filesystem is unusable. Bind its EE RPC client directly.
+     *
+     * A freshly reset IOP still requires the embedded module to load.
+     */
+    if (sInheritedBdm)
+        ps2_log("IOP: preserving inherited fileXio RPC server");
+    else if (LOAD_IRX(filexio) < 0)
         ps2_panic("fileXio module initialization failed");
     ps2_boot_stage("IOP: fileXio binding", 0x00FFFF);
     if (fileXioInit() < 0)

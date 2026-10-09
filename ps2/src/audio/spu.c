@@ -436,6 +436,51 @@ int ps2_spu_ready(void)
     return sReady;
 }
 
+/* Keep IGR independent of a potentially wedged audio RPC service. Finish an
+ * outstanding batch before reusing the shared SIF DMA buffer, then submit
+ * key-off + master mute and wait briefly for the completion callback. */
+void ps2_spu_shutdown(void)
+{
+    int i;
+
+    if (!sReady)
+        return;
+
+    for (i = 0; sRpcPending && i < 1000; i++)
+    {
+        if (!sceSifCheckStatRpc(&sAudioRpc))
+        {
+            sRpcPending = 0;
+            break;
+        }
+        DelayThread(50);
+    }
+
+    if (sRpcPending)
+    {
+        /* Never overwrite a buffer still owned by an in-flight RPC. */
+        sReady = 0;
+        return;
+    }
+
+    sBatchCount = 0;
+    batch_add(SD_BATCH_SETSWITCH, SPU_CORE | SD_SWITCH_KOFF, 0xFFFFFF);
+    batch_add(SD_BATCH_SETPARAM, SPU_CORE | SD_PARAM_MVOLL, 0);
+    batch_add(SD_BATCH_SETPARAM, SPU_CORE | SD_PARAM_MVOLR, 0);
+    batch_submit();
+
+    for (i = 0; sRpcPending && i < 1000; i++)
+    {
+        if (!sceSifCheckStatRpc(&sAudioRpc))
+        {
+            sRpcPending = 0;
+            break;
+        }
+        DelayThread(50);
+    }
+    sReady = 0;
+}
+
 int ps2_spu_find_sample(uint32_t rom_key, uint32_t len, uint32_t loop_start, uint32_t loop_end)
 {
     int lo = 0, hi = (int)sCount - 1, i;
