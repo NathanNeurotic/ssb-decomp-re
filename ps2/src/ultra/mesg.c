@@ -73,6 +73,8 @@ void ps2_mesg_forget_thread(OSThread *t)
 
 void osCreateMesgQueue(OSMesgQueue *mq, OSMesg *msg, s32 count)
 {
+    if (mq == NULL || msg == NULL || count <= 0)
+        ps2_panic("osCreateMesgQueue: invalid queue or capacity (%ld)", (long)count);
     mq->mtqueue = NULL;
     mq->fullqueue = NULL;
     mq->validCount = 0;
@@ -255,7 +257,7 @@ void osSetEventMesg(OSEvent e, OSMesgQueue *mq, OSMesg msg)
 {
     s32 intr;
 
-    if (e >= PS2_EVENT_COUNT)
+    if ((unsigned)e >= PS2_EVENT_COUNT)
     {
         return;
     }
@@ -267,7 +269,7 @@ void osSetEventMesg(OSEvent e, OSMesgQueue *mq, OSMesg msg)
 
 void ps2_ultra_post_event(OSEvent e)
 {
-    if (e < PS2_EVENT_COUNT && sEvents[e].mq != NULL)
+    if ((unsigned)e < PS2_EVENT_COUNT && sEvents[e].mq != NULL)
     {
         osSendMesg(sEvents[e].mq, sEvents[e].msg, OS_MESG_NOBLOCK);
     }
@@ -275,7 +277,7 @@ void ps2_ultra_post_event(OSEvent e)
 
 void ps2_ultra_post_event_isr(OSEvent e)
 {
-    if (e < PS2_EVENT_COUNT && sEvents[e].mq != NULL)
+    if ((unsigned)e < PS2_EVENT_COUNT && sEvents[e].mq != NULL)
     {
         ps2_osSendMesg_isr(sEvents[e].mq, sEvents[e].msg);
     }

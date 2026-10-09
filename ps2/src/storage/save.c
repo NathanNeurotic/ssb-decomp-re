@@ -245,13 +245,18 @@ void ps2_sram_read(uint32_t offset, void *dst, uint32_t size)
         memset(dst, 0, size);
         return;
     }
-    if (offset + size > SRAM_SIZE)
     {
-        size = SRAM_SIZE - offset;
+        uint32_t valid = SRAM_SIZE - offset;
+        uint32_t requested = size;
+
+        if (valid > requested)
+            valid = requested;
+        WaitSema(sLock);
+        memcpy(dst, sSram + offset, valid);
+        SignalSema(sLock);
+        if (requested > valid)
+            memset((uint8_t *)dst + valid, 0, requested - valid);
     }
-    WaitSema(sLock);
-    memcpy(dst, sSram + offset, size);
-    SignalSema(sLock);
 }
 
 void ps2_sram_write(uint32_t offset, const void *src, uint32_t size)
@@ -260,10 +265,10 @@ void ps2_sram_write(uint32_t offset, const void *src, uint32_t size)
     {
         return;
     }
-    if (offset + size > SRAM_SIZE)
-    {
+    if (size > SRAM_SIZE - offset)
         size = SRAM_SIZE - offset;
-    }
+    if (size == 0)
+        return;
     WaitSema(sLock);
     memcpy(sSram + offset, src, size);
     sDirty = 1;

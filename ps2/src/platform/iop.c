@@ -340,13 +340,16 @@ void ps2_iop_init(void)
         ps2_panic("fileXio binding failed");
 
     ps2_boot_stage("IOP: SIO2 and controller modules", 0x00FF00);
-    LOAD_IRX(sio2man);
-    LOAD_IRX(mtapman);
-    LOAD_IRX(padman);
-    LOAD_IRX(mcman);
-    LOAD_IRX(mcserv);
+    /* Controller services are mandatory: a silent load failure leaves the
+     * game running with no input and makes later recovery impossible. */
+    if (LOAD_IRX(sio2man) < 0 || LOAD_IRX(mtapman) < 0 || LOAD_IRX(padman) < 0)
+        ps2_panic("IOP controller stack initialization failed");
+    /* Saving and SPU2 are degradable: allow gameplay if either is missing. */
+    if (LOAD_IRX(mcman) < 0 || LOAD_IRX(mcserv) < 0)
+        ps2_log("IOP: memory-card services unavailable; saves may be disabled");
     ps2_boot_stage("IOP: sound library", 0xFF0000);
-    LOAD_IRX(libsd);
+    if (LOAD_IRX(libsd) < 0)
+        ps2_log("IOP: libsd unavailable; audio may be disabled");
     /*
      * Real hardware has already proven the embedded sdr server can wedge this
      * port during startup. Storage work must not be masked by an unrelated
