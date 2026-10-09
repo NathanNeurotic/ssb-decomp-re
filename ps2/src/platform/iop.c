@@ -286,10 +286,11 @@ void ps2_iop_init(void)
      * the actual mass driver stays registered with the original manager. */
     if (sInheritedBdm)
         ps2_log("IOP: preserving mounted BDM I/O manager");
-    else
-        LOAD_IRX(iomanx);
+    else if (LOAD_IRX(iomanx) < 0)
+        ps2_panic("iomanX initialization failed");
 
-    LOAD_IRX(filexio);
+    if (LOAD_IRX(filexio) < 0)
+        ps2_panic("fileXio module initialization failed");
     ps2_boot_stage("IOP: fileXio binding", 0x00FFFF);
     if (fileXioInit() < 0)
         ps2_panic("fileXio binding failed");
@@ -394,6 +395,17 @@ int ps2_iop_load_audio_driver(void)
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
 {
     char ip_arg[24];
+
+    /* A typed alias still refers to the inherited mount. Do not install a
+     * second BDM core/transport on top of the launcher's registered device. */
+    if (sInheritedBdm &&
+        (dev == PS2_BOOT_BDM || dev == PS2_BOOT_USB ||
+         dev == PS2_BOOT_ATA || dev == PS2_BOOT_MX4SIO ||
+         dev == PS2_BOOT_ILINK || dev == PS2_BOOT_UDPBD))
+    {
+        ps2_log("IOP: using inherited %s transport", ps2_storage_device_name(dev));
+        return 0;
+    }
 
     switch (dev)
     {
