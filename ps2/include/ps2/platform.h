@@ -131,6 +131,12 @@ int ps2_storage_requires_iop_preserve(void);
  * actual massN: filesystem that contains probe_name. Generic massN: paths
  * deliberately keep the inherited launcher IOP and are already usable. */
 int ps2_storage_resolve_data_root(const char *probe_name);
+/* Diagnostics for the precise massN: path, without guessing a different drive. */
+int ps2_storage_pack_root_probe(void);
+int ps2_storage_pack_probe_errno(void);
+int ps2_storage_pack_probe_count(void);
+int ps2_storage_pack_root_accessible(void); /* -1=not tested, 0=no, 1=yes */
+const char *ps2_storage_pack_probe_last_path(void);
 int ps2_video_progressive(void);         /* 1 = 240p (ELF name contains "240p"), 0 = 480i */
 
 /* Boot-stage marker: shows a solid background colour (GS BGCOLOR with both
