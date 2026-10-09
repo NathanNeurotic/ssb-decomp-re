@@ -137,9 +137,21 @@ int main(void)
     assert(sDataNeedsBdmResolve == 1);
     assert(sLastPackProbeErrno == ENOENT);
     assert(sLastPackProbeCount > 0);
-    assert(!strcmp(sLastPackProbePath, "mass0:/SSB64.DAT"));
+    assert(!strcmp(sLastPackProbePath, "mass:/SSB64.DAT"));
+
+    /* mass: is the unit-zero spelling accepted by some legacy FILEIO drivers.
+     * It must be tried without ever probing numbered mass1 or mass2. */
+    strcpy(sDataDir, "mass0:/GAME/");
+    sDataNeedsBdmResolve = 1;
+    sAvailable = "mass:/GAME/SSB64.DAT";
+    sWrongVolumeOpens = 0;
+    assert(ps2_storage_resolve_data_root("SSB64.DAT") == 1);
+    assert(!strcmp(sDataDir, "mass:/GAME/"));
+    assert(sWrongVolumeOpens == 0);
 
     /* Explicit volume permits alternate folders ON THAT SAME VOLUME. */
+    strcpy(sDataDir, "mass0:/GAME/");
+    sDataNeedsBdmResolve = 1;
     sAvailable = "mass0:/SSB64/SSB64.DAT";
     assert(ps2_storage_resolve_data_root("SSB64.DAT") == 1);
     assert(!strcmp(sDataDir, "mass0:/SSB64/"));
