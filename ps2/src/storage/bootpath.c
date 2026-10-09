@@ -387,6 +387,7 @@ int ps2_storage_resolve_data_root(const char *probe_name)
     char *c;
     int i, j;
     int fd;
+    int literal_mass_slot = 0;
 
     if (!sDataNeedsBdmResolve)
         return 1;
@@ -403,6 +404,19 @@ int ps2_storage_resolve_data_root(const char *probe_name)
         memcpy(configured_prefix, sDataDir, prefix_len);
         configured_prefix[prefix_len] = '\0';
         prefixes[num_prefixes++] = configured_prefix;
+        /* Explicit massN: is a device identity, not a search hint. Do not
+         * silently select another volume just because it has SSB64.DAT. */
+        if (strncasecmp(configured_prefix, "mass", 4) == 0)
+        {
+            const char *slot = configured_prefix + 4;
+
+            if (*slot >= '0' && *slot <= '9')
+            {
+                while (*slot >= '0' && *slot <= '9')
+                    slot++;
+                literal_mass_slot = (*slot == ':' && slot[1] == '\0');
+            }
+        }
     }
 
     /* Common BDM mass slot prefixes and bare mass: */
@@ -410,7 +424,7 @@ int ps2_storage_resolve_data_root(const char *probe_name)
         static const char *std_prefixes[] = {
             "mass0:", "mass1:", "mass2:", "mass3:", "mass:"
         };
-        for (i = 0; i < (int)(sizeof(std_prefixes) / sizeof(std_prefixes[0])); i++)
+        for (i = 0; !literal_mass_slot && i < (int)(sizeof(std_prefixes) / sizeof(std_prefixes[0])); i++)
         {
             int exists = 0;
             for (j = 0; j < num_prefixes; j++)
