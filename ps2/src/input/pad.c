@@ -168,8 +168,12 @@ void ps2_input_init(void)
 {
     int i;
 
+    /* PS2SDK's padInit returns 0 when already bound, 1 on success, and
+     * negative values on failed RPC binding. Never silently start pad polling
+     * after an explicit initialization failure. */
     mtapInit();
-    padInit(0);
+    if (padInit(0) < 0)
+        ps2_panic("input: PAD RPC initialization failed");
     sMtap[0] = detect_multitap(0);
     sMtap[1] = detect_multitap(1);
     assign_slots();

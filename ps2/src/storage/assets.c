@@ -105,6 +105,8 @@ int ps2_assets_init(void)
     sema.init_count = 1;
     sema.max_count = 1;
     sReadSema = CreateSema(&sema);
+    if (sReadSema < 0)
+        ps2_panic("assets: cannot create stream semaphore");
 
     /*
      * Wait for the real pack by opening the handle we will keep for the
