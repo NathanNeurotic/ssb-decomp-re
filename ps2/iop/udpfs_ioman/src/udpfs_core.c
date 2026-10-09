@@ -367,6 +367,7 @@ int udpfs_core_close(int32_t handle)
 {
     udpfs_msg_close_req_t *req = (udpfs_msg_close_req_t *)g_tx_buf;
     udpfs_msg_close_reply_t *reply = (udpfs_msg_close_reply_t *)g_rx_buf;
+    int rc;
 
     M_DEBUG("udpfs_core_close(handle=%d)\n", handle);
 
@@ -382,10 +383,11 @@ int udpfs_core_close(int32_t handle)
     req->reserved[2] = 0;
     req->handle = handle;
 
-    _request(req, sizeof(udpfs_msg_close_req_t),
-             reply, sizeof(udpfs_msg_close_reply_t));
-
-    return 0;
+    rc = _request(req, sizeof(udpfs_msg_close_req_t),
+                  reply, sizeof(udpfs_msg_close_reply_t));
+    if (rc < (int)sizeof(*reply) || reply->msg_type != UDPFS_MSG_CLOSE_REPLY)
+        return -EIO;
+    return reply->result; /* Preserve remote close errors. */
 }
 
 /*
