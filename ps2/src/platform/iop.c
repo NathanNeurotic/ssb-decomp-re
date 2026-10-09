@@ -22,6 +22,7 @@
 #include <ctype.h>
 #include <delaythread.h>
 #include <fcntl.h>
+#include <fileio.h>
 #include <fileXio_rpc.h>
 #include <iopcontrol.h>
 #include <iopheap.h>
@@ -163,10 +164,46 @@ static int inherited_filexio_rpc_ready(void)
     return 0;
 }
 
-/* Return 0 only after the EE client is genuinely bound. A module-load
- * failure is NOT by itself fatal on an inherited IOP: duplicate IRXs may
- * be rejected while their original RPC server remains fully operational.
- * Conversely, module-load success alone does not prove the server works. */
+/* Inherited launchers may expose the standard FILEIO service without a
+ * modern iomanX export table. The embedded filexio.irx imports dozens of
+ * iomanX exports, so its load can fail with -E_IOP_DEPENDANCY (-200), even
+ * though the launcher's mass mount works through FILEIO and legacy ioman.
+ *
+ * PS2SDK libcglue defaults to fio-backed POSIX open/read/lseek/close, and
+ * fileXioInit() changes that global backend. If a usable inherited FILEIO
+ * server exists, keep the default backend and don't reset the IOP.
+ */
+static int inherited_fileio_fallback(void)
+{
+    static SifRpcClientData_t probe __attribute__((aligned(64)));
+    int attempt;
+
+    if (!sInheritedBdm)
+        return 0;
+
+    for (attempt = 0; attempt < 50; ++attempt)
+    {
+        int ret;
+
+        memset(&probe, 0, sizeof(probe));
+        ret = sceSifBindRpc(&probe, 0x80000001, 0); /* PS2SDK FILEIO RPC ID */
+        if (ret >= 0 && probe.server != NULL)
+        {
+            if (fioInit() >= 0)
+            {
+                ps2_log("IOP: inherited FILEIO fallback active; preserving mass mount");
+                return 1;
+            }
+            return 0;
+        }
+        DelayThread(10000);
+    }
+
+    return 0;
+}
+
+/* Return 0 for fileXio, 1 for inherited FILEIO, and <0 only when neither
+ * path is operational. Success of a module load alone is insufficient. */
 static int init_filexio_runtime(void)
 {
     int ready = sInheritedBdm && inherited_filexio_rpc_ready();
@@ -182,7 +219,16 @@ static int init_filexio_runtime(void)
 
     if (!ready)
     {
-        ps2_log("IOP: fileXio server absent (inherited=%d load=%d id=%d result=%d)",
+        /* A fileXio import dependency failure need not destroy a live mass
+         * filesystem. The existing FILEIO service can still stream DATs. */
+        if (inherited_fileio_fallback())
+        {
+            ps2_log("IOP: no fileXio, using inherited FILEIO (id=%d result=%d)",
+                    sLastFileXioModuleId, sLastFileXioModuleResult);
+            return 1;
+        }
+
+        ps2_log("IOP: neither fileXio nor FILEIO available (inherited=%d load=%d id=%d result=%d)",
                 sInheritedBdm, load_result, sLastFileXioModuleId, sLastFileXioModuleResult);
         return -1;
     }
@@ -361,10 +407,12 @@ void ps2_iop_init(void)
         int filexio_state = init_filexio_runtime();
 
         if (filexio_state == -1)
-            ps2_panic("fileXio RPC absent: inherited=%d module id=%d result=%d",
+            ps2_panic("no fileXio/FILEIO RPC: inherited=%d module id=%d result=%d",
                       sInheritedBdm, sLastFileXioModuleId, sLastFileXioModuleResult);
         if (filexio_state < 0)
             ps2_panic("fileXio EE client initialization failed (%d)", filexio_state);
+        if (filexio_state == 1)
+            ps2_log("IOP: using launcher FILEIO backend for game data");
     }
     ps2_boot_stage("IOP: fileXio binding", 0x00FFFF);
 
