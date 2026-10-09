@@ -25,6 +25,7 @@ def extract(path, signature):
 
 
 FUNCTIONS = "\n\n".join([
+    extract("ps2/src/game/ps2_synth.c", "static s16 eqpower_at("),
     extract("ps2/src/storage/bootpath.c", "int ps2_storage_resolve_data_root("),
     extract("ps2/src/storage/save.c", "void ps2_sram_read("),
     extract("ps2/src/storage/save.c", "void ps2_sram_write("),
@@ -40,6 +41,10 @@ HARNESS = r"""
 #include <strings.h>
 #include <stdlib.h>
 
+typedef int32_t s32;
+typedef int16_t s16;
+#define N_EQPOWER_LENGTH 128
+static s16 n_eqpower[N_EQPOWER_LENGTH];
 #define PATH_BUF_MAX 256
 #define SRAM_SIZE (32 * 1024)
 #define STAGING_BYTES (1024 * 1024)
@@ -107,6 +112,15 @@ __FUNCTIONS__
 
 int main(void)
 {
+    /* Valid table coefficients are identical; malformed values clamp. */
+    for (int i = 0; i < N_EQPOWER_LENGTH; i++)
+        n_eqpower[i] = (s16)(i * 11);
+    for (int i = 0; i < N_EQPOWER_LENGTH; i++)
+        assert(eqpower_at(i) == n_eqpower[i]);
+    assert(eqpower_at(-5) == n_eqpower[0]);
+    assert(eqpower_at(128) == n_eqpower[127]);
+    assert(eqpower_at(900) == n_eqpower[127]);
+
     /* A literal mass0: must never remap to another drive's matching DAT. */
     strcpy(sDataDir, "mass0:/GAME/");
     sDataNeedsBdmResolve = 1;
