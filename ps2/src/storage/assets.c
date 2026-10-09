@@ -10,6 +10,7 @@
 #include <ps2/platform.h>
 #include <ps2/assetpack.h>
 
+#include <errno.h>
 #include <kernel.h>
 #include <stdio.h>
 #include <string.h>
@@ -26,6 +27,9 @@ static PS2PackRegion *sRegions;
 static uint8_t **sResidentPtr; /* per region: EE copy or NULL */
 static uint8_t *sResidentBlob;
 static int sReadSema = -1;
+/* A rejected open is not evidence that DAT generation was faulty. */
+static int sInitFailReason;
+static int sInitOpenErrno;
 
 static uint32_t sBytesRead;
 static uint32_t sReads;
@@ -102,6 +106,9 @@ int ps2_assets_init(void)
     uint32_t i, table_bytes;
     ee_sema_t sema = { 0 };
 
+    sInitFailReason = 0;
+    sInitOpenErrno = 0;
+
     sema.init_count = 1;
     sema.max_count = 1;
     sReadSema = CreateSema(&sema);
@@ -125,7 +132,10 @@ int ps2_assets_init(void)
             {
                 ps2_storage_path(path, sizeof(path), PACK_NAME);
                 snprintf(sPackPath, sizeof(sPackPath), "%s", path);
+                errno = 0;
                 sFd = ps2_file_open_read(sPackPath);
+                if (sFd < 0)
+                    sInitOpenErrno = errno;
             }
 
             /* PCSX2 Run ELF can lose argv[0]'s directory separators. */
@@ -133,7 +143,10 @@ int ps2_assets_init(void)
             {
                 snprintf(path, sizeof(path), "host:%s", PACK_NAME);
                 snprintf(sPackPath, sizeof(sPackPath), "%s", path);
+                errno = 0;
                 sFd = ps2_file_open_read(sPackPath);
+                if (sFd < 0)
+                    sInitOpenErrno = errno;
             }
 
             if (sFd >= 0)
@@ -171,13 +184,23 @@ int ps2_assets_init(void)
     }
     if (sFd < 0)
     {
-        ps2_log("assets: cannot open %s", path);
+        /* The failing path is known but the reason is not: it may be a
+         * missing file, missing/hidden mount or an incompatible legacy
+         * FILEIO namespace. Do not advise re-generating valid DAT content. */
+        sInitFailReason = 1;
+        if (ps2_storage_pack_probe_count() > 0)
+            ps2_storage_pack_root_probe();
+        ps2_log("assets: cannot access %s errno=%d probes=%d root=%d",
+                path, ps2_storage_pack_probe_errno(),
+                ps2_storage_pack_probe_count(), ps2_storage_pack_root_accessible());
         return 0;
     }
     if (!read_exact(&sHeader, 0, sizeof(sHeader)) || memcmp(sHeader.magic, PS2PACK_MAGIC, 8) != 0 ||
         sHeader.version != PS2PACK_VERSION)
     {
-        ps2_log("assets: %s is not a v%d SSB64 pack", path, PS2PACK_VERSION);
+        sInitFailReason = 2;
+        ps2_log("assets: %s header invalid/unreadable (seek=%d read=%d)", path,
+                sLastSeekRc, sLastReadGot);
         return 0;
     }
 
@@ -186,6 +209,7 @@ int ps2_assets_init(void)
     sResidentPtr = ps2_mem_alloc(PS2_MEM_GAME_HEAP, sHeader.region_count * sizeof(uint8_t *), 64);
     if (!read_exact(sRegions, sHeader.region_table_offset, table_bytes))
     {
+        sInitFailReason = 3;
         ps2_log("assets: region table read failed");
         return 0;
     }
@@ -195,6 +219,7 @@ int ps2_assets_init(void)
     if (sHeader.resident_bytes != 0 &&
         !read_exact(sResidentBlob, sHeader.resident_offset, sHeader.resident_bytes))
     {
+        sInitFailReason = 4;
         ps2_log("assets: resident block read failed");
         return 0;
     }
@@ -209,6 +234,39 @@ int ps2_assets_init(void)
             (unsigned)(sHeader.resident_bytes >> 10), (unsigned)(sHeader.total_size >> 10));
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
     return 1;
+}
+
+const char *ps2_assets_last_init_error(void)
+{
+    static char message[220];
+
+    switch (sInitFailReason)
+    {
+    case 1:
+        snprintf(message, sizeof(message),
+                 "Cannot open SSB64.DAT on %s (errno=%d, tried=%d, root=%d). Check mount/path, not DAT generation.",
+                 ps2_storage_boot_dir(),
+                 ps2_storage_pack_probe_count() ? ps2_storage_pack_probe_errno() : sInitOpenErrno,
+                 ps2_storage_pack_probe_count(),
+                 ps2_storage_pack_root_accessible());
+        break;
+    case 2:
+        snprintf(message, sizeof(message),
+                 "SSB64.DAT opened but header read/validation failed (seek=%d read=%d)",
+                 sLastSeekRc, sLastReadGot);
+        break;
+    case 3:
+        snprintf(message, sizeof(message), "SSB64.DAT region table I/O failed");
+        break;
+    case 4:
+        snprintf(message, sizeof(message), "SSB64.DAT resident data I/O failed");
+        break;
+    default:
+        snprintf(message, sizeof(message), "SSB64.DAT runtime initialization failed");
+        break;
+    }
+
+    return message;
 }
 
 static int find_region(uint32_t addr)
