@@ -24,6 +24,7 @@ extern void ps2_ultra_threads_init(void);
 extern void ps2_vi_init(void);
 extern void ps2_input_init(void);
 extern int ps2_assets_init(void);
+extern const char *ps2_assets_last_init_error(void);
 extern void ps2_save_init(void);
 extern void ps2_audio_init(void);
 extern void ps2_render_thread_init(void);
@@ -120,8 +121,7 @@ int ps2_main(int argc, char *argv[])
      */
     if (!ps2_assets_init())
     {
-        ps2_panic("asset pack not found next to the ELF (%sSSB64.DAT). Run ps2/tools/prepare_assets.sh first.",
-                  ps2_storage_boot_dir());
+        ps2_panic("%s", ps2_assets_last_init_error());
     }
 
     if (ps2_storage_data_device() != PS2_BOOT_CDROM)
