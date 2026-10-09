@@ -159,6 +159,8 @@ static void flush_now(void)
     h->crc = crc32_calc(sWriteBuf + sizeof(*h), SRAM_SIZE);
 
     mc_call(mcMkDir(0, 0, SAVE_DIR)); /* fails harmlessly if it exists */
+    if (sMcUnresponsive)
+        return; /* Never enqueue open after a timed-out mkdir RPC. */
     fd = mc_call(mcOpen(0, 0, slot_name(sNextSlot), 0x0200 | 0x0002 /* O_CREAT|O_WRONLY */));
     if (fd < 0)
     {
