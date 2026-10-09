@@ -332,6 +332,10 @@ void ps2_iop_init(void)
             ps2_panic("fileXio module initialization failed (no inherited RPC server)");
     }
     ps2_boot_stage("IOP: fileXio binding", 0x00FFFF);
+    /* PS2SDK's fileXioInit loops indefinitely waiting for this RPC ID.
+     * Probe first so a broken/missing service fails visibly instead. */
+    if (!inherited_filexio_rpc_ready())
+        ps2_panic("fileXio RPC service unavailable after module initialization");
     if (fileXioInit() < 0)
         ps2_panic("fileXio binding failed");
 
