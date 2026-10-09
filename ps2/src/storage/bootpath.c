@@ -429,6 +429,14 @@ int ps2_storage_resolve_data_root(const char *probe_name)
         }
     }
 
+    /* mass: is the standard unnumbered spelling for mass unit zero.
+     * Some inherited FILEIO implementations recognize mass: but not mass0:.
+     * This is an alias for THE SAME UNIT ZERO, not a scan of another volume.
+     * Never do this for literal mass1:, mass2:, etc. */
+    if (literal_mass_slot && strcasecmp(configured_prefix, "mass0:") == 0 &&
+        num_prefixes < (int)(sizeof(prefixes) / sizeof(prefixes[0])))
+        prefixes[num_prefixes++] = "mass:";
+
     /* Common BDM mass slot prefixes and bare mass: */
     {
         static const char *std_prefixes[] = {
