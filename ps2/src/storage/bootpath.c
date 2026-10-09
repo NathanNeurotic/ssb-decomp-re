@@ -20,6 +20,7 @@
  */
 #include <ps2/platform.h>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -37,6 +38,11 @@ static char sHddMountSource[HDD_SOURCE_MAX] = "";
 static int sProgressive;
 static int sDataNeedsExistingIop;
 static int sDataNeedsBdmResolve;
+/* Capture the actual newlib I/O result, not merely a guessed missing DAT. */
+static int sLastPackProbeErrno;
+static int sLastPackProbeCount;
+static int sPackProbeRootAccessible;
+static char sLastPackProbePath[PATH_BUF_MAX + 64];
 
 static int starts_with_ci(const char *s, const char *prefix)
 {
@@ -308,6 +314,10 @@ void ps2_storage_set_boot_path(const char *argv0)
     sHddMountSource[0] = '\0';
     sDataNeedsExistingIop = 0;
     sDataNeedsBdmResolve = 0;
+    sLastPackProbeErrno = 0;
+    sLastPackProbeCount = 0;
+    sPackProbeRootAccessible = -1;
+    sLastPackProbePath[0] = '\0';
 
     if (argv0 == NULL || argv0[0] == '\0')
     {
@@ -479,7 +489,11 @@ int ps2_storage_resolve_data_root(const char *probe_name)
         for (j = 0; j < num_subdirs; j++)
         {
             snprintf(probe, sizeof(probe), "%s%s%s", prefixes[i], subdirs[j], probe_name);
+            errno = 0;
             fd = open(probe, O_RDONLY);
+            sLastPackProbeCount++;
+            sLastPackProbeErrno = fd < 0 ? errno : 0;
+            snprintf(sLastPackProbePath, sizeof(sLastPackProbePath), "%s", probe);
             if (fd >= 0)
             {
                 close(fd);
@@ -493,6 +507,58 @@ int ps2_storage_resolve_data_root(const char *probe_name)
     }
 
     return 0;
+}
+
+/* An IOP driver is allowed to expose FILEIO without exposing the launcher
+ * BDM mount to that older ioman namespace. Report this distinctly from a
+ * file that is genuinely absent. A directory probe uses the exact selected
+ * massN: volume; it does not scan or mount any other device.
+ *
+ * This is a diagnostic only: some drivers refuse root dopen even when files
+ * are readable. Treat that response as uncertainty, not proof of no disk.
+ */
+int ps2_storage_pack_root_probe(void)
+{
+    const char *colon = strchr(sDataDir, ':');
+    char root[40];
+    size_t prefix;
+    int fd;
+
+    if (!colon)
+        return -1;
+    prefix = (size_t)(colon - sDataDir + 1);
+    if (prefix + 2 > sizeof(root))
+        return -1;
+    memcpy(root, sDataDir, prefix);
+    root[prefix] = '/';
+    root[prefix + 1] = '\0';
+
+    errno = 0;
+    fd = open(root, O_RDONLY | O_DIRECTORY);
+    sPackProbeRootAccessible = fd >= 0 ? 1 : 0;
+    if (fd >= 0)
+        close(fd);
+    return sPackProbeRootAccessible;
+}
+
+int ps2_storage_pack_probe_errno(void)
+{
+    return sLastPackProbeErrno;
+}
+
+int ps2_storage_pack_probe_count(void)
+{
+    return sLastPackProbeCount;
+}
+
+int ps2_storage_pack_root_accessible(void)
+{
+    return sPackProbeRootAccessible;
+}
+
+const char *ps2_storage_pack_probe_last_path(void)
+{
+    return sLastPackProbePath;
 }
 
 
