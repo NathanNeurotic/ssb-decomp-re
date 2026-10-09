@@ -78,6 +78,10 @@ static const char *sLoaded[MAX_TRACKED_MODULES];
 static int sLoadedCount;
 static int sIopWasReset;
 static int sInheritedBdm;
+/* Diagnostics for the particular IRX whose load may legitimately fail when
+ * an existing launcher owns the RPC service. */
+static int sLastFileXioModuleId = -999;
+static int sLastFileXioModuleResult = -999;
 
 static int load_irx(const char *name, void *buf, unsigned int size, const char *args, int args_len)
 {
@@ -114,6 +118,11 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
         }
     }
     id = SifExecModuleBuffer(buf, size, (u32)args_len, args, &result);
+    if (strcmp(name, "filexio") == 0)
+    {
+        sLastFileXioModuleId = id;
+        sLastFileXioModuleResult = result;
+    }
 
     if (id < 0 || result == 1 /* NO_RESIDENT_END */)
     {
@@ -129,25 +138,60 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
 #define LOAD_IRX(name) load_irx(#name, name##_irx, size_##name##_irx, NULL, 0)
 #define LOAD_IRX_ARGS(name, args, len) load_irx(#name, name##_irx, size_##name##_irx, args, len)
 
-/* The launcher's IOP may already expose fileXio even when its module table
- * reports an unexpected name/version. A bounded RPC probe detects the live
- * server without registering another fileXio instance on the same mounts.
- * Never enter fileXioInit's unbounded bind loop before establishing a server. */
+/* The launcher may supply fileXio even if the module name differs. Binding
+ * with mode=0 is synchronous; it may transiently return -E_SIF_PKT_ALLOC
+ * or -E_SIF_PKT_SEND while IOP/SIF is still settling. The earlier audit
+ * treated the first negative result as "no server", tried to load a duplicate
+ * module and immediately aborted when that duplicate was rejected. */
 static int inherited_filexio_rpc_ready(void)
 {
-    SifRpcClientData_t probe __attribute__((aligned(64)));
+    static SifRpcClientData_t probe __attribute__((aligned(64)));
     int i;
 
-    memset(&probe, 0, sizeof(probe));
     for (i = 0; i < 100; i++)
     {
-        int rc = sceSifBindRpc(&probe, FILEXIO_IRX, 0);
-        if (rc < 0)
-            return 0;
-        if (probe.server != NULL)
+        int rc;
+
+        memset(&probe, 0, sizeof(probe));
+        rc = sceSifBindRpc(&probe, FILEXIO_IRX, 0);
+        if (rc >= 0 && probe.server != NULL)
             return 1;
+        /* A negative result here is a failed bind attempt, NOT evidence
+         * that the RPC service does not exist. Retry before declaring loss. */
         DelayThread(10000);
     }
+    return 0;
+}
+
+/* Return 0 only after the EE client is genuinely bound. A module-load
+ * failure is NOT by itself fatal on an inherited IOP: duplicate IRXs may
+ * be rejected while their original RPC server remains fully operational.
+ * Conversely, module-load success alone does not prove the server works. */
+static int init_filexio_runtime(void)
+{
+    int ready = sInheritedBdm && inherited_filexio_rpc_ready();
+    int load_result = 0;
+
+    if (!ready)
+    {
+        load_result = LOAD_IRX(filexio);
+        if (load_result < 0)
+            ps2_log("IOP: fileXio module load rejected; checking RPC before failing");
+        ready = inherited_filexio_rpc_ready();
+    }
+
+    if (!ready)
+    {
+        ps2_log("IOP: fileXio server absent (inherited=%d load=%d id=%d result=%d)",
+                sInheritedBdm, load_result, sLastFileXioModuleId, sLastFileXioModuleResult);
+        return -1;
+    }
+
+    /* fileXioInit binds PS2SDK's real static client and registers newlib's
+     * file/device hooks. Our temporary probe never substitutes for it. */
+    if (fileXioInit() < 0)
+        return -2;
+
     return 0;
 }
 
@@ -311,33 +355,18 @@ void ps2_iop_init(void)
     else if (LOAD_IRX(iomanx) < 0)
         ps2_panic("iomanX initialization failed");
 
-    /*
-     * An inherited massN:/BDM mount is registered against the launcher's
-     * existing I/O manager and fileXio RPC server. Re-loading fileXio on top
-     * of that live service may be rejected as a duplicate module (or bind a
-     * second server to the wrong device table). Neither outcome means the
-     * inherited filesystem is unusable. Bind its EE RPC client directly.
-     *
-     * A freshly reset IOP still requires the embedded module to load.
-     */
-    if (sInheritedBdm && inherited_filexio_rpc_ready())
+    /* The server is the dependency, not successful duplicate module loading.
+     * Probe, optionally load, then probe again before PS2SDK fileXioInit. */
     {
-        ps2_log("IOP: bound to inherited fileXio RPC server");
-    }
-    else
-    {
-        /* The launcher can provide the mounted I/O manager without having
-         * started fileXio itself. Load our RPC server only in that case. */
-        if (LOAD_IRX(filexio) < 0)
-            ps2_panic("fileXio module initialization failed (no inherited RPC server)");
+        int filexio_state = init_filexio_runtime();
+
+        if (filexio_state == -1)
+            ps2_panic("fileXio RPC absent: inherited=%d module id=%d result=%d",
+                      sInheritedBdm, sLastFileXioModuleId, sLastFileXioModuleResult);
+        if (filexio_state < 0)
+            ps2_panic("fileXio EE client initialization failed (%d)", filexio_state);
     }
     ps2_boot_stage("IOP: fileXio binding", 0x00FFFF);
-    /* PS2SDK's fileXioInit loops indefinitely waiting for this RPC ID.
-     * Probe first so a broken/missing service fails visibly instead. */
-    if (!inherited_filexio_rpc_ready())
-        ps2_panic("fileXio RPC service unavailable after module initialization");
-    if (fileXioInit() < 0)
-        ps2_panic("fileXio binding failed");
 
     ps2_boot_stage("IOP: SIO2 and controller modules", 0x00FF00);
     /* Controller services are mandatory: a silent load failure leaves the
