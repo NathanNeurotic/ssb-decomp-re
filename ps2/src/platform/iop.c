@@ -129,6 +129,28 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
 #define LOAD_IRX(name) load_irx(#name, name##_irx, size_##name##_irx, NULL, 0)
 #define LOAD_IRX_ARGS(name, args, len) load_irx(#name, name##_irx, size_##name##_irx, args, len)
 
+/* The launcher's IOP may already expose fileXio even when its module table
+ * reports an unexpected name/version. A bounded RPC probe detects the live
+ * server without registering another fileXio instance on the same mounts.
+ * Never enter fileXioInit's unbounded bind loop before establishing a server. */
+static int inherited_filexio_rpc_ready(void)
+{
+    SifRpcClientData_t probe __attribute__((aligned(64)));
+    int i;
+
+    memset(&probe, 0, sizeof(probe));
+    for (i = 0; i < 100; i++)
+    {
+        int rc = sceSifBindRpc(&probe, FILEXIO_IRX, 0);
+        if (rc < 0)
+            return 0;
+        if (probe.server != NULL)
+            return 1;
+        DelayThread(10000);
+    }
+    return 0;
+}
+
 static int load_bdm_core(void)
 {
     if (LOAD_IRX(bdm) < 0)
@@ -298,10 +320,17 @@ void ps2_iop_init(void)
      *
      * A freshly reset IOP still requires the embedded module to load.
      */
-    if (sInheritedBdm)
-        ps2_log("IOP: preserving inherited fileXio RPC server");
-    else if (LOAD_IRX(filexio) < 0)
-        ps2_panic("fileXio module initialization failed");
+    if (sInheritedBdm && inherited_filexio_rpc_ready())
+    {
+        ps2_log("IOP: bound to inherited fileXio RPC server");
+    }
+    else
+    {
+        /* The launcher can provide the mounted I/O manager without having
+         * started fileXio itself. Load our RPC server only in that case. */
+        if (LOAD_IRX(filexio) < 0)
+            ps2_panic("fileXio module initialization failed (no inherited RPC server)");
+    }
     ps2_boot_stage("IOP: fileXio binding", 0x00FFFF);
     if (fileXioInit() < 0)
         ps2_panic("fileXio binding failed");
