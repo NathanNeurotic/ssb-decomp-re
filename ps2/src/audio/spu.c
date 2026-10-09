@@ -534,7 +534,8 @@ float ps2_spu_sample_pitch_scale(int sample)
 
 void ps2_spu_voice_start(int voice, int sample)
 {
-    if (!sReady || voice < 0 || voice >= PS2_SPU_VOICES || sample < 0)
+    if (!sReady || voice < 0 || voice >= PS2_SPU_VOICES ||
+        sample < 0 || (uint32_t)sample >= sCount)
         return;
     sVoices[voice].sample = sample;
     sVoices[voice].start_pending = 1;

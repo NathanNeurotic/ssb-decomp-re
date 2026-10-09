@@ -44,6 +44,7 @@ static volatile uint32_t sDirtyGeneration;
 static uint32_t sSequence;
 static int sNextSlot;
 static int sCardOk;
+static int sMcUnresponsive; /* Do not issue further commands after a timed-out RPC. */
 static int sLock = -1;
 static int sThreadId = -1;
 static uint8_t sThreadStack[16 * 1024] __attribute__((aligned(64)));
@@ -83,13 +84,17 @@ static int mc_call(int r)
             return -1;
         ps2_delay_vblanks(1);
     }
-    ps2_log("save: memory-card RPC timed out; keeping SRAM dirty");
+    sMcUnresponsive = 1;
+    ps2_log("save: memory-card RPC timed out; stopping card I/O until restart");
     return -1;
 }
 
 static int card_present(void)
 {
     int type = 0, free_kb = 0, format = 0;
+
+    if (sMcUnresponsive)
+        return 0;
     int r = mc_call(mcGetInfo(0, 0, &type, &free_kb, &format));
 
     return (r >= -2) && (type == MC_TYPE_PS2) && format;
@@ -104,14 +109,20 @@ static const char *slot_name(int slot)
 static int64_t load_slot(int slot, uint8_t *dst)
 {
     PS2SaveHeader *h = (PS2SaveHeader *)sWriteBuf;
-    int fd = mc_call(mcOpen(0, 0, slot_name(slot), 1 /* O_RDONLY */));
+    int fd;
     int n;
+
+    if (sMcUnresponsive)
+        return -1;
+    fd = mc_call(mcOpen(0, 0, slot_name(slot), 1 /* O_RDONLY */));
 
     if (fd < 0)
     {
         return -1;
     }
     n = mc_call(mcRead(fd, sWriteBuf, sizeof(sWriteBuf)));
+    if (sMcUnresponsive)
+        return -1; /* Cannot safely queue a close behind a wedged RPC. */
     mc_call(mcClose(fd));
 
     if (n != (int)sizeof(sWriteBuf) || memcmp(h->magic, "SSB64SAV", 8) != 0 || h->version != SAVE_VERSION ||
@@ -129,6 +140,8 @@ static void flush_now(void)
     uint32_t snapshot_generation;
     int fd, n, close_result;
 
+    if (sMcUnresponsive)
+        return;
     WaitSema(sLock);
     memcpy(sWriteBuf + sizeof(*h), sSram, SRAM_SIZE);
     snapshot_generation = sDirtyGeneration;
@@ -154,6 +167,8 @@ static void flush_now(void)
         return;
     }
     n = mc_call(mcWrite(fd, sWriteBuf, sizeof(sWriteBuf)));
+    if (sMcUnresponsive)
+        return; /* In-flight write may still own sWriteBuf. Never reuse it. */
     close_result = mc_call(mcClose(fd));
     if (n != (int)sizeof(sWriteBuf) || close_result < 0)
     {
@@ -178,7 +193,8 @@ static void save_thread(void *arg)
     for (;;)
     {
         ps2_delay_vblanks(15);
-        if (sDirty && (ps2_vblank_count() - sDirtyVBlank) >= FLUSH_DELAY_VBLANKS)
+        if (!sMcUnresponsive && sDirty &&
+            (ps2_vblank_count() - sDirtyVBlank) >= FLUSH_DELAY_VBLANKS)
         {
             flush_now();
         }
