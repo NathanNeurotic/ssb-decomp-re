@@ -35,6 +35,7 @@ FUNCTIONS = "\n\n".join([
 
 HARNESS = r"""
 #include <assert.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -57,6 +58,8 @@ static s16 n_eqpower[N_EQPOWER_LENGTH];
 static char sDataDir[PATH_BUF_MAX];
 static int sDataNeedsBdmResolve;
 static int sDataDevice;
+static int sLastPackProbeErrno, sLastPackProbeCount, sPackProbeRootAccessible;
+static char sLastPackProbePath[PATH_BUF_MAX + 64];
 static const char *sAvailable;
 static int sWrongVolumeOpens, sOpens;
 static uint8_t sSram[SRAM_SIZE];
@@ -77,7 +80,10 @@ static int fake_open(const char *path, int mode)
     sOpens++;
     if (!strncmp(path, "mass1:", 6))
         sWrongVolumeOpens++;
-    return sAvailable && !strcmp(path, sAvailable) ? 3 : -1;
+    if (sAvailable && !strcmp(path, sAvailable))
+        return 3;
+    errno = ENOENT;
+    return -1;
 }
 static int fake_close(int fd) { (void)fd; return 0; }
 static const char *ps2_storage_device_name(int dev)
@@ -129,6 +135,9 @@ int main(void)
     assert(ps2_storage_resolve_data_root("SSB64.DAT") == 0);
     assert(sWrongVolumeOpens == 0);
     assert(sDataNeedsBdmResolve == 1);
+    assert(sLastPackProbeErrno == ENOENT);
+    assert(sLastPackProbeCount > 0);
+    assert(!strcmp(sLastPackProbePath, "mass0:/SSB64.DAT"));
 
     /* Explicit volume permits alternate folders ON THAT SAME VOLUME. */
     sAvailable = "mass0:/SSB64/SSB64.DAT";
