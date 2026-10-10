@@ -40,8 +40,12 @@ void ps2_vblank_init(void)
     sema.init_count = 0;
     sema.max_count = 1;
     sVBlankSema = CreateSema(&sema);
+    if (sVBlankSema < 0)
+        ps2_panic("timing: VBlank semaphore creation failed");
 
     sVBlankHandlerId = AddIntcHandler(INTC_VBLANK_S, vblank_handler, 0);
+    if (sVBlankHandlerId < 0)
+        ps2_panic("timing: VBlank interrupt registration failed");
     EnableIntc(INTC_VBLANK_S);
 }
 

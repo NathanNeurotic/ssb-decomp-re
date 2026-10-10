@@ -1,4 +1,4 @@
-# Reliable PS2 baseline ? 2026-10-08
+# PS2 renderer baseline and device recovery checkpoint
 
 Console-tested candidate: `3a6d84211d6ca3bfe6fe4a65aa347d52d3003a38`.
 Artifact: https://github.com/NathanNeurotic/ssb-decomp-re/actions/runs/37826998331/artifacts/11571831659
@@ -8,7 +8,7 @@ SSB64.ELF SHA256: `a1960e1c52a1843992629e929292f8ba86e0fbeb72961657c2e68b22e95f0
 
 - Severe lag is gone following the Cooper v1.0 renderer/VI restoration (`c17dce07f`).
 - Mario hat and Pikachu face textures are fixed in the texture follow-up (`3a6d84211`).
-- USB launches work.
+- An earlier USB launch succeeded, but later USB testing hangs before boot text. USB is unresolved.
 
 ## Remaining hardware review
 
@@ -32,3 +32,25 @@ Use this baseline for further narrow fixes. Do not restore the superseded specul
 ## DAT webpage preservation
 
 Restored docs/ asset builder from 61eb916f8, including the hardware DAT post-operations for stale CI texel/TLUT classification and Pikachu accessory costume animation streams. The expected fixed browser DAT hash is 151b492025ac780c5114b8a842b157c73ed56208e7ddfff1731ad74882eb809e. Browser generation still differs from compiler generation in pre-existing file 199/200 text regions; this restoration does not claim full pack parity. No runtime code or ELF input changed.
+
+## USB boot failure follow-up
+
+User subsequently reports USB hangs on a purple/pink screen; prior USB success is not a universal launch pass. Candidate restores native-launch stdout RPC suppression (present in pre-baseline main but lost during runtime rollback) and adds distinct IOP/GS markers. The probable stage is IOP setup; exact blocking operation remains unconfirmed. Preserve renderer/VI/texture behavior.
+
+USB follow-up screenshot shows teal. This could be fileXio binding or the old dark-cyan pre-video marker, so colour alone does not uniquely identify the operation. An attempted fileXio bypass in cf295207f was superseded by 5e9bc6eec, which restores binding for newlib filesystem access. Pre-video marker changed to dark red to disambiguate. Console test remains required.
+
+## Active device recovery - 2026-10-09
+
+Single active integration branch: fix/graphics-performance-regression. Main/release remain at 0aeed9e48 until a replacement has console evidence.
+Latest inherited work before this continuation: 5e9bc6eec restores fileXio binding, broadens root probing and removes MMCE 2 KiB transfer fragmentation and forced 500 us successful-read sleeps. CI passed; USB/MMCE hardware effects remain unconfirmed.
+Current correction keeps typed BDM aliases from reloading core/transport modules on inherited mounts, and checks filesystem module-load failures before entering fileXio binding.
+
+Device status:
+- USB: previous purple/teal startup stall; precise operation still not confirmed because old markers overlapped.
+- MMCE: launches into gameplay but user reports severe lag. Read-delay removal needs same-console testing. Runtime MMCEDRV promotion code exists but is not called; do not enable its IOP-reset path blindly.
+- MX4SIO: earlier waiting-for-DAT result; current candidate unverified.
+- ATA/iLink/UDPBD/UDPFS/PFS/CDROM/MC/host: no current all-device pass.
+- Renderer/texture fixes: retain Cooper presentation and GS setup plus masked/clamped tiles and signed sprite coordinates.
+- Fireballs, intro light and IGR: remain open.
+
+Do not describe CI or host tests as device compatibility. Keep one candidate artifact per checkpoint and report exact SHA.

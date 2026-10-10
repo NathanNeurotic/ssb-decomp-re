@@ -19,6 +19,8 @@
 #include <libmc.h>
 #include <string.h>
 
+extern void ps2_delay_vblanks(int n);
+
 #define SRAM_SIZE (32 * 1024)
 #define SAVE_DIR "/SSB64PS2"
 #define SAVE_VERSION 1
@@ -38,9 +40,11 @@ static uint8_t sSram[SRAM_SIZE] __attribute__((aligned(64)));
 static uint8_t sWriteBuf[sizeof(PS2SaveHeader) + SRAM_SIZE] __attribute__((aligned(64)));
 static volatile int sDirty;
 static volatile uint32_t sDirtyVBlank;
+static volatile uint32_t sDirtyGeneration;
 static uint32_t sSequence;
 static int sNextSlot;
 static int sCardOk;
+static int sMcUnresponsive; /* Do not issue further commands after a timed-out RPC. */
 static int sLock = -1;
 static int sThreadId = -1;
 static uint8_t sThreadStack[16 * 1024] __attribute__((aligned(64)));
@@ -64,19 +68,33 @@ static uint32_t crc32_calc(const uint8_t *p, uint32_t n)
 
 static int mc_call(int r)
 {
-    int cmd, result;
+    int cmd = 0, result = -1;
+    int i;
 
     if (r != 0)
-    {
         return -1;
+
+    /* A broken card service must never block game startup indefinitely. */
+    for (i = 0; i < 120; i++)
+    {
+        int sync = mcSync(MC_NOWAIT, &cmd, &result);
+        if (sync > 0)
+            return result;
+        if (sync < 0)
+            return -1;
+        ps2_delay_vblanks(1);
     }
-    mcSync(0, &cmd, &result);
-    return result;
+    sMcUnresponsive = 1;
+    ps2_log("save: memory-card RPC timed out; stopping card I/O until restart");
+    return -1;
 }
 
 static int card_present(void)
 {
     int type = 0, free_kb = 0, format = 0;
+
+    if (sMcUnresponsive)
+        return 0;
     int r = mc_call(mcGetInfo(0, 0, &type, &free_kb, &format));
 
     return (r >= -2) && (type == MC_TYPE_PS2) && format;
@@ -91,14 +109,20 @@ static const char *slot_name(int slot)
 static int64_t load_slot(int slot, uint8_t *dst)
 {
     PS2SaveHeader *h = (PS2SaveHeader *)sWriteBuf;
-    int fd = mc_call(mcOpen(0, 0, slot_name(slot), 1 /* O_RDONLY */));
+    int fd;
     int n;
+
+    if (sMcUnresponsive)
+        return -1;
+    fd = mc_call(mcOpen(0, 0, slot_name(slot), 1 /* O_RDONLY */));
 
     if (fd < 0)
     {
         return -1;
     }
     n = mc_call(mcRead(fd, sWriteBuf, sizeof(sWriteBuf)));
+    if (sMcUnresponsive)
+        return -1; /* Cannot safely queue a close behind a wedged RPC. */
     mc_call(mcClose(fd));
 
     if (n != (int)sizeof(sWriteBuf) || memcmp(h->magic, "SSB64SAV", 8) != 0 || h->version != SAVE_VERSION ||
@@ -113,11 +137,14 @@ static int64_t load_slot(int slot, uint8_t *dst)
 static void flush_now(void)
 {
     PS2SaveHeader *h = (PS2SaveHeader *)sWriteBuf;
-    int fd, n;
+    uint32_t snapshot_generation;
+    int fd, n, close_result;
 
+    if (sMcUnresponsive)
+        return;
     WaitSema(sLock);
     memcpy(sWriteBuf + sizeof(*h), sSram, SRAM_SIZE);
-    sDirty = 0;
+    snapshot_generation = sDirtyGeneration;
     SignalSema(sLock);
 
     if (!sCardOk && !(sCardOk = card_present()))
@@ -132,6 +159,8 @@ static void flush_now(void)
     h->crc = crc32_calc(sWriteBuf + sizeof(*h), SRAM_SIZE);
 
     mc_call(mcMkDir(0, 0, SAVE_DIR)); /* fails harmlessly if it exists */
+    if (sMcUnresponsive)
+        return; /* Never enqueue open after a timed-out mkdir RPC. */
     fd = mc_call(mcOpen(0, 0, slot_name(sNextSlot), 0x0200 | 0x0002 /* O_CREAT|O_WRONLY */));
     if (fd < 0)
     {
@@ -140,8 +169,10 @@ static void flush_now(void)
         return;
     }
     n = mc_call(mcWrite(fd, sWriteBuf, sizeof(sWriteBuf)));
-    mc_call(mcClose(fd));
-    if (n != (int)sizeof(sWriteBuf))
+    if (sMcUnresponsive)
+        return; /* In-flight write may still own sWriteBuf. Never reuse it. */
+    close_result = mc_call(mcClose(fd));
+    if (n != (int)sizeof(sWriteBuf) || close_result < 0)
     {
         ps2_log("save: write failed (%d)", n);
         sCardOk = 0;
@@ -149,6 +180,13 @@ static void flush_now(void)
     }
     ps2_log("save: wrote %s seq %u", slot_name(sNextSlot), (unsigned)sSequence);
     sNextSlot ^= 1;
+
+    /* A later write, even in the SAME VBlank, is not in this saved snapshot.
+     * Only acknowledge the exact SRAM generation that reached the card. */
+    WaitSema(sLock);
+    if (sDirty && sDirtyGeneration == snapshot_generation)
+        sDirty = 0;
+    SignalSema(sLock);
 }
 
 static void save_thread(void *arg)
@@ -156,10 +194,9 @@ static void save_thread(void *arg)
     (void)arg;
     for (;;)
     {
-        extern void ps2_delay_vblanks(int n);
-
         ps2_delay_vblanks(15);
-        if (sDirty && (ps2_vblank_count() - sDirtyVBlank) >= FLUSH_DELAY_VBLANKS)
+        if (!sMcUnresponsive && sDirty &&
+            (ps2_vblank_count() - sDirtyVBlank) >= FLUSH_DELAY_VBLANKS)
         {
             flush_now();
         }
@@ -177,6 +214,8 @@ void ps2_save_init(void)
     sema.init_count = 1;
     sema.max_count = 1;
     sLock = CreateSema(&sema);
+    if (sLock < 0)
+        ps2_panic("save: SRAM semaphore initialization failed");
     memset(sSram, 0, sizeof(sSram));
 
     if (mcInit(MC_TYPE_XMC) < 0)
@@ -211,7 +250,10 @@ void ps2_save_init(void)
     th.gp_reg = &_gp;
     th.initial_priority = 110; /* below every game thread */
     sThreadId = CreateThread(&th);
-    StartThread(sThreadId, NULL);
+    if (sThreadId >= 0)
+        StartThread(sThreadId, NULL);
+    else
+        ps2_log("save: background flush thread unavailable; saves stay in RAM");
 }
 
 void ps2_sram_read(uint32_t offset, void *dst, uint32_t size)
@@ -221,13 +263,18 @@ void ps2_sram_read(uint32_t offset, void *dst, uint32_t size)
         memset(dst, 0, size);
         return;
     }
-    if (offset + size > SRAM_SIZE)
     {
-        size = SRAM_SIZE - offset;
+        uint32_t valid = SRAM_SIZE - offset;
+        uint32_t requested = size;
+
+        if (valid > requested)
+            valid = requested;
+        WaitSema(sLock);
+        memcpy(dst, sSram + offset, valid);
+        SignalSema(sLock);
+        if (requested > valid)
+            memset((uint8_t *)dst + valid, 0, requested - valid);
     }
-    WaitSema(sLock);
-    memcpy(dst, sSram + offset, size);
-    SignalSema(sLock);
 }
 
 void ps2_sram_write(uint32_t offset, const void *src, uint32_t size)
@@ -236,13 +283,14 @@ void ps2_sram_write(uint32_t offset, const void *src, uint32_t size)
     {
         return;
     }
-    if (offset + size > SRAM_SIZE)
-    {
+    if (size > SRAM_SIZE - offset)
         size = SRAM_SIZE - offset;
-    }
+    if (size == 0)
+        return;
     WaitSema(sLock);
     memcpy(sSram + offset, src, size);
     sDirty = 1;
+    sDirtyGeneration++;
     sDirtyVBlank = ps2_vblank_count();
     SignalSema(sLock);
 }

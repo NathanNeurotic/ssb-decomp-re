@@ -110,11 +110,21 @@ static int audio_rpc_drain(void)
     if (!sRpcPending)
         return (int)sRpcRecv[0];
 
-    while (sceSifCheckStatRpc(&sAudioRpc))
-        DelayThread(50);
-
-    sRpcPending = 0;
-    return (int)sRpcRecv[0];
+    /* On an unresponsive IOP server, leave the DMA buffer owned by its
+     * request and disable audio instead of freezing the game forever. */
+    {
+        int i;
+        for (i = 0; i < 4000; i++)
+        {
+            if (!sceSifCheckStatRpc(&sAudioRpc))
+            {
+                sRpcPending = 0;
+                return (int)sRpcRecv[0];
+            }
+            DelayThread(50);
+        }
+    }
+    return -1;
 }
 
 static int audio_rpc_call(int cmd, const void *send, uint32_t send_size)
@@ -336,6 +346,8 @@ static int make_resident(int sample)
         sStats.evictions++;
     }
     spu_upload(sSet + e->data_off, addr, e->data_size);
+    if (!sReady)
+        return 0; /* Failed upload is not resident in SPU RAM. */
     sRes[sResCount].sample = sample;
     sRes[sResCount].addr = addr;
     sRes[sResCount].size = e->data_size;
@@ -360,6 +372,11 @@ int ps2_spu_init(void)
     if (memcmp(head.magic, PS2_SPU_SAMPLES_MAGIC, 4) != 0 || head.version != PS2_SPU_SAMPLES_VERSION)
     {
         ps2_log("audio: no SPU sample set in the asset pack (rebuild it); audio stays silent");
+        return -1;
+    }
+    if (head.count == 0 || head.count > 65536u)
+    {
+        ps2_log("audio: invalid sample count %u; continuing silent", (unsigned)head.count);
         return -1;
     }
     /* size = end of the last sample's data */
@@ -421,11 +438,13 @@ int ps2_spu_init(void)
         sVoices[v].sample = -1;
     }
     batch_add(SD_BATCH_SETSWITCH, SPU_CORE | SD_SWITCH_KOFF, 0xFFFFFF);
+    sReady = 1;
     batch_submit();
+    if (!sReady)
+        return -1;
 
     sStats.samples = sCount;
     sStats.spu_bytes_total = SPU_RAM_LIMIT - SPU_RAM_FIRST;
-    sReady = 1;
     ps2_log("audio: SPU2 backend on core %d, %u samples (%u KiB PS-ADPCM in EE RAM), %u KiB SPU cache", SPU_CORE,
             (unsigned)sCount, (unsigned)(size / 1024), (unsigned)(sStats.spu_bytes_total / 1024));
     return 0;
@@ -434,6 +453,51 @@ int ps2_spu_init(void)
 int ps2_spu_ready(void)
 {
     return sReady;
+}
+
+/* Keep IGR independent of a potentially wedged audio RPC service. Finish an
+ * outstanding batch before reusing the shared SIF DMA buffer, then submit
+ * key-off + master mute and wait briefly for the completion callback. */
+void ps2_spu_shutdown(void)
+{
+    int i;
+
+    if (!sReady)
+        return;
+
+    for (i = 0; sRpcPending && i < 1000; i++)
+    {
+        if (!sceSifCheckStatRpc(&sAudioRpc))
+        {
+            sRpcPending = 0;
+            break;
+        }
+        DelayThread(50);
+    }
+
+    if (sRpcPending)
+    {
+        /* Never overwrite a buffer still owned by an in-flight RPC. */
+        sReady = 0;
+        return;
+    }
+
+    sBatchCount = 0;
+    batch_add(SD_BATCH_SETSWITCH, SPU_CORE | SD_SWITCH_KOFF, 0xFFFFFF);
+    batch_add(SD_BATCH_SETPARAM, SPU_CORE | SD_PARAM_MVOLL, 0);
+    batch_add(SD_BATCH_SETPARAM, SPU_CORE | SD_PARAM_MVOLR, 0);
+    batch_submit();
+
+    for (i = 0; sRpcPending && i < 1000; i++)
+    {
+        if (!sceSifCheckStatRpc(&sAudioRpc))
+        {
+            sRpcPending = 0;
+            break;
+        }
+        DelayThread(50);
+    }
+    sReady = 0;
 }
 
 int ps2_spu_find_sample(uint32_t rom_key, uint32_t len, uint32_t loop_start, uint32_t loop_end)
@@ -470,7 +534,8 @@ float ps2_spu_sample_pitch_scale(int sample)
 
 void ps2_spu_voice_start(int voice, int sample)
 {
-    if (!sReady || voice < 0 || voice >= PS2_SPU_VOICES || sample < 0)
+    if (!sReady || voice < 0 || voice >= PS2_SPU_VOICES ||
+        sample < 0 || (uint32_t)sample >= sCount)
         return;
     sVoices[voice].sample = sample;
     sVoices[voice].start_pending = 1;

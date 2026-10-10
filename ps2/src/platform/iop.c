@@ -2,8 +2,9 @@
  * IOP bring-up for real launch/data devices.
  *
  * The launch device and the data device are intentionally separate.  host:
- * keeps the ps2link/PCSX2 IOP alive; every other launch starts from a clean
- * IOP and reconstructs only the stack required by the selected data device.
+ * keeps the ps2link/PCSX2 IOP alive; BDM launches retain surviving launcher
+ * services or rebuild when the loader discarded them. Other transports
+ * reconstruct the stack required by the selected data device.
  *
  * Base:      iomanX + fileXio + sio2man + mtapman + padman + mcman/mcserv
  *            + libsd/sdr
@@ -22,6 +23,7 @@
 #include <ctype.h>
 #include <delaythread.h>
 #include <fcntl.h>
+#include <fileio.h>
 #include <fileXio_rpc.h>
 #include <iopcontrol.h>
 #include <iopheap.h>
@@ -78,11 +80,43 @@ static const char *sLoaded[MAX_TRACKED_MODULES];
 static int sLoadedCount;
 static int sIopWasReset;
 static int sInheritedBdm;
+static int sRebuiltBdm;
+
+/* A launch pathname survives ExecPS2 even when the loader reset the IOP.
+ * ROM FILEIO alone is therefore not evidence of a surviving mass mount.
+ * Keep unfamiliar/partial homebrew stacks intact rather than replacing them. */
+static int inherited_storage_modules_present(void)
+{
+    smod_mod_info_t info;
+    static const char *names[] = {
+        "IOX/File_Manager", "IOX/File_Manager_Rpc", "bdm", "bdmff"
+    };
+    unsigned int i;
+
+    for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+        if (smod_get_mod_by_name(names[i], &info))
+            return 1;
+    /* New iomanX can replace ioman instead of installing legacy hooks.
+     * ROM ioman has the same name but is version 1.x. */
+    return smod_get_mod_by_name("IO/File_Manager", &info) && info.version >= 0x200;
+}
+
+int ps2_iop_bdm_was_rebuilt(void)
+{
+    return sRebuiltBdm;
+}
+/* Diagnostics for the particular IRX whose load may legitimately fail when
+ * an existing launcher owns the RPC service. */
+static int sLastFileXioModuleId = -999;
+static int sLastFileXioModuleResult = -999;
 
 static int load_irx(const char *name, void *buf, unsigned int size, const char *args, int args_len)
 {
     int result = 0;
     int id;
+
+    if (ps2_iop_module_loaded(name))
+        return 0;
 
     if (sInheritedBdm)
     {
@@ -114,6 +148,11 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
         }
     }
     id = SifExecModuleBuffer(buf, size, (u32)args_len, args, &result);
+    if (strcmp(name, "filexio") == 0)
+    {
+        sLastFileXioModuleId = id;
+        sLastFileXioModuleResult = result;
+    }
 
     if (id < 0 || result == 1 /* NO_RESIDENT_END */)
     {
@@ -128,6 +167,108 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
 
 #define LOAD_IRX(name) load_irx(#name, name##_irx, size_##name##_irx, NULL, 0)
 #define LOAD_IRX_ARGS(name, args, len) load_irx(#name, name##_irx, size_##name##_irx, args, len)
+
+/* The launcher may supply fileXio even if the module name differs. Binding
+ * with mode=0 is synchronous; it may transiently return -E_SIF_PKT_ALLOC
+ * or -E_SIF_PKT_SEND while IOP/SIF is still settling. The earlier audit
+ * treated the first negative result as "no server", tried to load a duplicate
+ * module and immediately aborted when that duplicate was rejected. */
+static int inherited_filexio_rpc_ready(void)
+{
+    static SifRpcClientData_t probe __attribute__((aligned(64)));
+    int i;
+
+    for (i = 0; i < 100; i++)
+    {
+        int rc;
+
+        memset(&probe, 0, sizeof(probe));
+        rc = sceSifBindRpc(&probe, FILEXIO_IRX, 0);
+        if (rc >= 0 && probe.server != NULL)
+            return 1;
+        /* A negative result here is a failed bind attempt, NOT evidence
+         * that the RPC service does not exist. Retry before declaring loss. */
+        DelayThread(10000);
+    }
+    return 0;
+}
+
+/* Inherited launchers may expose the standard FILEIO service without a
+ * modern iomanX export table. The embedded filexio.irx imports dozens of
+ * iomanX exports, so its load can fail with -E_IOP_DEPENDANCY (-200), even
+ * though the launcher's mass mount works through FILEIO and legacy ioman.
+ *
+ * PS2SDK libcglue defaults to fio-backed POSIX open/read/lseek/close, and
+ * fileXioInit() changes that global backend. If a usable inherited FILEIO
+ * server exists, keep the default backend and don't reset the IOP.
+ */
+static int inherited_fileio_fallback(void)
+{
+    static SifRpcClientData_t probe __attribute__((aligned(64)));
+    int attempt;
+
+    if (!sInheritedBdm)
+        return 0;
+
+    for (attempt = 0; attempt < 50; ++attempt)
+    {
+        int ret;
+
+        memset(&probe, 0, sizeof(probe));
+        ret = sceSifBindRpc(&probe, 0x80000001, 0); /* PS2SDK FILEIO RPC ID */
+        if (ret >= 0 && probe.server != NULL)
+        {
+            if (fioInit() >= 0)
+            {
+                ps2_log("IOP: inherited FILEIO fallback active; preserving mass mount");
+                return 1;
+            }
+            return 0;
+        }
+        DelayThread(10000);
+    }
+
+    return 0;
+}
+
+/* Return 0 for fileXio, 1 for inherited FILEIO, and <0 only when neither
+ * path is operational. Success of a module load alone is insufficient. */
+static int init_filexio_runtime(void)
+{
+    int ready = sInheritedBdm && inherited_filexio_rpc_ready();
+    int load_result = 0;
+
+    if (!ready)
+    {
+        load_result = LOAD_IRX(filexio);
+        if (load_result < 0)
+            ps2_log("IOP: fileXio module load rejected; checking RPC before failing");
+        ready = inherited_filexio_rpc_ready();
+    }
+
+    if (!ready)
+    {
+        /* A fileXio import dependency failure need not destroy a live mass
+         * filesystem. The existing FILEIO service can still stream DATs. */
+        if (inherited_fileio_fallback())
+        {
+            ps2_log("IOP: no fileXio, using inherited FILEIO (id=%d result=%d)",
+                    sLastFileXioModuleId, sLastFileXioModuleResult);
+            return 1;
+        }
+
+        ps2_log("IOP: neither fileXio nor FILEIO available (inherited=%d load=%d id=%d result=%d)",
+                sInheritedBdm, load_result, sLastFileXioModuleId, sLastFileXioModuleResult);
+        return -1;
+    }
+
+    /* fileXioInit binds PS2SDK's real static client and registers newlib's
+     * file/device hooks. Our temporary probe never substitutes for it. */
+    if (fileXioInit() < 0)
+        return -2;
+
+    return 0;
+}
 
 static int load_bdm_core(void)
 {
@@ -251,8 +392,19 @@ void ps2_iop_init(void)
 
     sLoadedCount = 0;
     sIopWasReset = 0;
+    sRebuiltBdm = 0;
 
+    ps2_boot_stage("IOP: RPC initialization", 0xFFFF00);
     SifInitRpc(0);
+
+    if (sInheritedBdm && !inherited_storage_modules_present() &&
+        !inherited_filexio_rpc_ready())
+    {
+        ps2_log("IOP: launcher storage absent; rebuilding after loader reset");
+        sInheritedBdm = 0;
+        sRebuiltBdm = 1;
+        preserve_iop = 0;
+    }
 
     /* host: and bare pfsN: data paths depend on services/mounts owned by the
      * launcher.  Everything else is rebuilt from a known IOP state. */
@@ -268,32 +420,68 @@ void ps2_iop_init(void)
         sIopWasReset = 1;
     }
 
+    ps2_boot_stage("IOP: loadfile and heap initialization", 0xFFFFFF);
     SifLoadFileInit();
     SifInitIopHeap();
 
+    ps2_boot_stage("IOP: module loader patches", 0xFF8000);
     sbv_patch_enable_lmb();
     sbv_patch_disable_prefix_check();
     if (sIopWasReset)
         sbv_patch_fileio();
 
-    /* A mass mount belongs to the launcher's I/O manager. Another iomanX
-     * can bind fileXio to an empty device table instead of the live mount. */
+    ps2_boot_stage("IOP: filesystem service initialization", 0x0000FF);
+
+    /* A mass mount belongs to the launcher's I/O manager. Installing
+     * another iomanX can bind our fileXio to a new, empty device table while
+     * the actual mass driver stays registered with the original manager. */
     if (sInheritedBdm)
         ps2_log("IOP: preserving mounted BDM I/O manager");
-    else
-        LOAD_IRX(iomanx);
-    LOAD_IRX(filexio);
-    /* Even when the inherited IOP already had fileXio loaded and the duplicate
-     * module load is rejected, bind the EE RPC client to the live service. */
-    if (fileXioInit() < 0)
-        ps2_panic("fileXio binding failed");
+    else if (LOAD_IRX(iomanx) < 0)
+        ps2_panic("iomanX initialization failed");
 
-    LOAD_IRX(sio2man);
-    LOAD_IRX(mtapman);
-    LOAD_IRX(padman);
-    LOAD_IRX(mcman);
-    LOAD_IRX(mcserv);
-    LOAD_IRX(libsd);
+    /* The server is the dependency, not successful duplicate module loading.
+     * Probe, optionally load, then probe again before PS2SDK fileXioInit. */
+    {
+        int filexio_state = init_filexio_runtime();
+
+        if (filexio_state == -1)
+            ps2_panic("no fileXio/FILEIO RPC: inherited=%d module id=%d result=%d",
+                      sInheritedBdm, sLastFileXioModuleId, sLastFileXioModuleResult);
+        if (filexio_state < 0)
+            ps2_panic("fileXio EE client initialization failed (%d)", filexio_state);
+        if (filexio_state == 1)
+            ps2_log("IOP: using launcher FILEIO backend for game data");
+    }
+    ps2_boot_stage("IOP: fileXio binding", 0x00FFFF);
+
+    /* Install SIO2-based storage before PAD/MC bind their services. Generic
+     * mass has lost transport identity: rediscover only a unique adjacent DAT.
+     * Typed paths rebuild only their explicitly selected transport. */
+    if (sRebuiltBdm && device != PS2_BOOT_UDPBD)
+    {
+        if (LOAD_IRX(sio2man) < 0)
+            ps2_panic("IOP SIO2 initialization failed");
+        if (device == PS2_BOOT_BDM)
+        {
+            if (ps2_iop_load_bdm_fallback_transports() < 0)
+                ps2_panic("BDM recovery initialization failed");
+        }
+        else if (ps2_iop_load_boot_device_drivers(device) < 0)
+            ps2_panic("typed storage recovery failed");
+    }
+
+    ps2_boot_stage("IOP: SIO2 and controller modules", 0x00FF00);
+    /* Controller services are mandatory: a silent load failure leaves the
+     * game running with no input and makes later recovery impossible. */
+    if (LOAD_IRX(sio2man) < 0 || LOAD_IRX(mtapman) < 0 || LOAD_IRX(padman) < 0)
+        ps2_panic("IOP controller stack initialization failed");
+    /* Saving and SPU2 are degradable: allow gameplay if either is missing. */
+    if (LOAD_IRX(mcman) < 0 || LOAD_IRX(mcserv) < 0)
+        ps2_log("IOP: memory-card services unavailable; saves may be disabled");
+    ps2_boot_stage("IOP: sound library", 0xFF0000);
+    if (LOAD_IRX(libsd) < 0)
+        ps2_log("IOP: libsd unavailable; audio may be disabled");
     /*
      * Real hardware has already proven the embedded sdr server can wedge this
      * port during startup. Storage work must not be masked by an unrelated
@@ -386,6 +574,20 @@ int ps2_iop_load_audio_driver(void)
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
 {
     char ip_arg[24];
+
+    if (sRebuiltBdm && ps2_iop_module_loaded("bdm"))
+        return 0; /* Already installed before the controller clients. */
+
+    /* A typed alias still refers to the inherited mount. Do not install a
+     * second BDM core/transport on top of the launcher's registered device. */
+    if (sInheritedBdm &&
+        (dev == PS2_BOOT_BDM || dev == PS2_BOOT_USB ||
+         dev == PS2_BOOT_ATA || dev == PS2_BOOT_MX4SIO ||
+         dev == PS2_BOOT_ILINK || dev == PS2_BOOT_UDPBD))
+    {
+        ps2_log("IOP: using inherited %s transport", ps2_storage_device_name(dev));
+        return 0;
+    }
 
     switch (dev)
     {
@@ -484,10 +686,9 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
 int ps2_iop_load_bdm_fallback_transports(void)
 {
     static int sDone;
+    int transports = 0;
     if (sDone)
         return 0;
-    sDone = 1;
-
     if (sInheritedBdm)
     {
         /* A failed probe does not authorize a second BDM core or replacing
@@ -497,17 +698,23 @@ int ps2_iop_load_bdm_fallback_transports(void)
     }
 
     ps2_log("IOP: loading BDM fallback transports (USB/MX4SIO/ATA/iLink)");
-    load_bdm_core();
-    LOAD_IRX(usbd_mini);
-    LOAD_IRX(usbmass_bd_mini);
-    LOAD_IRX(mx4sio_bd);
+    if (load_bdm_core() < 0)
+        return -1;
+    if (LOAD_IRX(usbd_mini) >= 0 && LOAD_IRX(usbmass_bd_mini) >= 0)
+        transports++;
+    if (LOAD_IRX(mx4sio_bd) >= 0)
+        transports++;
     if (LOAD_IRX(ps2dev9) >= 0)
     {
-        LOAD_IRX(ps2atad);
+        if (LOAD_IRX(ps2atad) >= 0)
+            transports++;
         sleep(1);
     }
-    LOAD_IRX(iLinkman);
-    LOAD_IRX(IEEE1394_bd);
+    if (LOAD_IRX(iLinkman) >= 0 && LOAD_IRX(IEEE1394_bd) >= 0)
+        transports++;
+    if (transports == 0)
+        return -1;
+    sDone = 1;
     return 1;
 }
 

@@ -827,7 +827,7 @@ void ps2_gs_init(void)
     /* gsKit programs SMODE/SYNC/DISPLAY for the mode; from here on the
      * renderer owns VRAM layout, FRAME/ZBUF and the display circuit. */
     gsKit_init_screen(sGsGlobal);
-    ps2_boot_stage("GS: screen ready", 0xFF00FF); /* bright magenta */
+    ps2_boot_stage("GS: screen ready", 0x404040); /* grey: before first packet */
 
     ps2_mem_reclassify_static(PS2_MEM_GFX_STAGING, sizeof(sPktBuf));
 

@@ -104,6 +104,11 @@ static int _recv_with_result(udprdma_socket_t *socket, const void *req, uint32_t
 
     ret = udprdma_recv(socket, buffer, size, timeout_ms);
     if (ret < 0) {
+        /* udprdma_recv clears these on FIN/timeout, but NOT when it finds
+         * STATE_DISCONNECTED at entry. Drop caller-stack reply pointers in
+         * that race or a later receive ISR could write to invalid memory. */
+        udprdma_set_rx_buffer(socket, NULL, 0);
+        udprdma_set_rx_app_header(socket, NULL, 0);
         M_DEBUG("udpfs: recv failed: %d\n", ret);
         return -EIO;
     }
@@ -367,6 +372,7 @@ int udpfs_core_close(int32_t handle)
 {
     udpfs_msg_close_req_t *req = (udpfs_msg_close_req_t *)g_tx_buf;
     udpfs_msg_close_reply_t *reply = (udpfs_msg_close_reply_t *)g_rx_buf;
+    int rc;
 
     M_DEBUG("udpfs_core_close(handle=%d)\n", handle);
 
@@ -382,10 +388,11 @@ int udpfs_core_close(int32_t handle)
     req->reserved[2] = 0;
     req->handle = handle;
 
-    _request(req, sizeof(udpfs_msg_close_req_t),
-             reply, sizeof(udpfs_msg_close_reply_t));
-
-    return 0;
+    rc = _request(req, sizeof(udpfs_msg_close_req_t),
+                  reply, sizeof(udpfs_msg_close_reply_t));
+    if (rc < (int)sizeof(*reply) || reply->msg_type != UDPFS_MSG_CLOSE_REPLY)
+        return -EIO;
+    return reply->result; /* Preserve remote close errors. */
 }
 
 /*

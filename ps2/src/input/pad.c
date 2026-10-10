@@ -168,8 +168,12 @@ void ps2_input_init(void)
 {
     int i;
 
+    /* PS2SDK's padInit returns 0 when already bound, 1 on success, and
+     * negative values on failed RPC binding. Never silently start pad polling
+     * after an explicit initialization failure. */
     mtapInit();
-    padInit(0);
+    if (padInit(0) < 0)
+        ps2_panic("input: PAD RPC initialization failed");
     sMtap[0] = detect_multitap(0);
     sMtap[1] = detect_multitap(1);
     assign_slots();
@@ -291,6 +295,9 @@ void ps2_input_poll(void)
         if (!s->open)
         {
             st->connected = 0;
+            st->buttons = 0;
+            st->stick_x = st->stick_y = 0;
+            sRawHeld[i] = 0;
             sIgrHolding[i] = 0;
             continue;
         }
@@ -302,6 +309,9 @@ void ps2_input_poll(void)
         if (state != PAD_STATE_STABLE && state != PAD_STATE_FINDCTP1)
         {
             st->connected = 0;
+            st->buttons = 0;
+            st->stick_x = st->stick_y = 0;
+            sRawHeld[i] = 0;
             s->analog_set = 0;
             sIgrHolding[i] = 0;
             continue;
@@ -313,6 +323,9 @@ void ps2_input_poll(void)
         if (padRead(s->port, s->slot, &pad) == 0)
         {
             st->connected = 0;
+            st->buttons = 0;
+            st->stick_x = st->stick_y = 0;
+            sRawHeld[i] = 0;
             sIgrHolding[i] = 0;
             continue;
         }

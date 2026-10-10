@@ -20,6 +20,7 @@
  */
 #include <ps2/platform.h>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -37,6 +38,11 @@ static char sHddMountSource[HDD_SOURCE_MAX] = "";
 static int sProgressive;
 static int sDataNeedsExistingIop;
 static int sDataNeedsBdmResolve;
+/* Capture the actual newlib I/O result, not merely a guessed missing DAT. */
+static int sLastPackProbeErrno;
+static int sLastPackProbeCount;
+static int sPackProbeRootAccessible;
+static char sLastPackProbePath[PATH_BUF_MAX + 64];
 
 static int starts_with_ci(const char *s, const char *prefix)
 {
@@ -308,6 +314,10 @@ void ps2_storage_set_boot_path(const char *argv0)
     sHddMountSource[0] = '\0';
     sDataNeedsExistingIop = 0;
     sDataNeedsBdmResolve = 0;
+    sLastPackProbeErrno = 0;
+    sLastPackProbeCount = 0;
+    sPackProbeRootAccessible = -1;
+    sLastPackProbePath[0] = '\0';
 
     if (argv0 == NULL || argv0[0] == '\0')
     {
@@ -373,102 +383,248 @@ int ps2_storage_requires_iop_preserve(void)
     return sDataNeedsExistingIop;
 }
 
+/* After a loader reset, old massN numbering has no transport identity.
+ * Restrict rediscovery to the original adjacent directory and reject more
+ * than one matching volume instead of choosing whichever mounted first. */
+static int resolve_rebuilt_bdm_root(const char *probe_name)
+{
+    static const char *prefixes[] = { "mass0:", "mass1:", "mass2:", "mass3:" };
+    const char *colon = strchr(sDataDir, ':');
+    char selected[PATH_BUF_MAX];
+    char path[PATH_BUF_MAX + 64];
+    const char *relative;
+    unsigned int i;
+    int matches = 0;
+
+    if (colon == NULL)
+        return 0;
+    relative = colon + 1;
+    for (i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
+    {
+        const char *prefix = prefixes[i];
+        int fd;
+        snprintf(path, sizeof(path), "%s%s%s", prefix, relative, probe_name);
+        errno = 0;
+        fd = open(path, O_RDONLY);
+        sLastPackProbeCount++;
+        if (fd < 0 && i == 0)
+        {
+            prefix = "mass:";
+            snprintf(path, sizeof(path), "%s%s%s", prefix, relative, probe_name);
+            errno = 0;
+            fd = open(path, O_RDONLY);
+            sLastPackProbeCount++;
+        }
+        sLastPackProbeErrno = fd < 0 ? errno : 0;
+        snprintf(sLastPackProbePath, sizeof(sLastPackProbePath), "%s", path);
+        if (fd >= 0)
+        {
+            close(fd);
+            ++matches;
+            snprintf(selected, sizeof(selected), "%s%s", prefix, relative);
+        }
+    }
+    if (matches != 1)
+    {
+        if (matches > 1)
+        {
+            sLastPackProbeErrno = EEXIST;
+            ps2_log("storage: multiple adjacent DATs after reset; refusing ambiguous volume");
+        }
+        return 0;
+    }
+    snprintf(sDataDir, sizeof(sDataDir), "%s", selected);
+    sDataNeedsBdmResolve = 0;
+    ps2_log("storage: rebuilt BDM resolved unique adjacent DAT at %s", sDataDir);
+    return 1;
+}
+
 int ps2_storage_resolve_data_root(const char *probe_name)
 {
-    char relative[PATH_BUF_MAX - 32];
+    char relative[PATH_BUF_MAX];
     const char *colon;
-    int literal_slot = -1;
+    char configured_prefix[32];
+    size_t prefix_len;
+    const char *prefixes[8];
+    int num_prefixes = 0;
+    const char *subdirs[4];
+    int num_subdirs = 0;
     char probe[PATH_BUF_MAX + 64];
-    int slot;
+    char *c;
+    int i, j;
     int fd;
+    int literal_mass_slot = 0;
 
     if (!sDataNeedsBdmResolve)
         return 1;
     if (probe_name == NULL || probe_name[0] == '\0')
         return 0;
+    if (ps2_iop_bdm_was_rebuilt())
+        return resolve_rebuilt_bdm_root(probe_name);
 
     colon = strchr(sDataDir, ':');
     if (colon == NULL)
         return 0;
 
-    /* Check if a literal slot digit was specified before ':' (e.g. mass0:, mass1:, usb0:) */
-    if (colon > sDataDir)
+    prefix_len = (size_t)(colon - sDataDir + 1);
+    if (prefix_len < sizeof(configured_prefix))
     {
-        char prev = *(colon - 1);
-        if (prev >= '0' && prev <= '9')
-            literal_slot = prev - '0';
+        memcpy(configured_prefix, sDataDir, prefix_len);
+        configured_prefix[prefix_len] = '\0';
+        prefixes[num_prefixes++] = configured_prefix;
+        /* Explicit massN: is a device identity, not a search hint. Do not
+         * silently select another volume just because it has SSB64.DAT. */
+        if (strncasecmp(configured_prefix, "mass", 4) == 0)
+        {
+            const char *slot = configured_prefix + 4;
+
+            if (*slot >= '0' && *slot <= '9')
+            {
+                while (*slot >= '0' && *slot <= '9')
+                    slot++;
+                literal_mass_slot = (*slot == ':' && slot[1] == '\0');
+            }
+        }
+    }
+
+    /* mass: is the standard unnumbered spelling for mass unit zero.
+     * Some inherited FILEIO implementations recognize mass: but not mass0:.
+     * This is an alias for THE SAME UNIT ZERO, not a scan of another volume.
+     * Never do this for literal mass1:, mass2:, etc. */
+    if (literal_mass_slot && strcasecmp(configured_prefix, "mass0:") == 0 &&
+        num_prefixes < (int)(sizeof(prefixes) / sizeof(prefixes[0])))
+        prefixes[num_prefixes++] = "mass:";
+
+    /* Common BDM mass slot prefixes and bare mass: */
+    {
+        static const char *std_prefixes[] = {
+            "mass0:", "mass1:", "mass2:", "mass3:", "mass:"
+        };
+        for (i = 0; !literal_mass_slot && i < (int)(sizeof(std_prefixes) / sizeof(std_prefixes[0])); i++)
+        {
+            int exists = 0;
+            for (j = 0; j < num_prefixes; j++)
+            {
+                if (strcasecmp(prefixes[j], std_prefixes[i]) == 0)
+                {
+                    exists = 1;
+                    break;
+                }
+            }
+            if (!exists && num_prefixes < (int)(sizeof(prefixes) / sizeof(prefixes[0])))
+                prefixes[num_prefixes++] = std_prefixes[i];
+        }
     }
 
     snprintf(relative, sizeof(relative), "%s", colon + 1);
+    for (c = relative; *c != '\0'; c++)
+    {
+        if (*c == '\\')
+            *c = '/';
+    }
+
+    if (relative[0] != '/' && relative[0] != '\0')
+    {
+        char temp[PATH_BUF_MAX + 16];
+        snprintf(temp, sizeof(temp), "/%s", relative);
+        strncpy(relative, temp, sizeof(relative) - 1);
+        relative[sizeof(relative) - 1] = '\0';
+    }
     if (relative[0] == '\0')
         snprintf(relative, sizeof(relative), "/");
 
-    /* Candidate 1: Try sDataDir directly as configured */
-    snprintf(probe, sizeof(probe), "%s%s", sDataDir, probe_name);
-    fd = open(probe, O_RDONLY);
-    if (fd >= 0)
     {
-        close(fd);
-        sDataNeedsBdmResolve = 0;
-        ps2_log("storage: %s resolved to %s", ps2_storage_device_name(sDataDevice), sDataDir);
-        return 1;
-    }
-
-    /* Candidate 2: Try root of the same specified volume if a literal slot was given */
-    if (literal_slot >= 0)
-    {
-        snprintf(probe, sizeof(probe), "mass%d:/%s", literal_slot, probe_name);
-        fd = open(probe, O_RDONLY);
-        if (fd >= 0)
+        size_t rel_len = strlen(relative);
+        if (rel_len > 0 && relative[rel_len - 1] != '/' && rel_len + 1 < sizeof(relative))
         {
-            close(fd);
-            snprintf(sDataDir, sizeof(sDataDir), "mass%d:/", literal_slot);
-            sDataNeedsBdmResolve = 0;
-            ps2_log("storage: %s resolved to root %s", ps2_storage_device_name(sDataDevice), sDataDir);
-            return 1;
+            relative[rel_len] = '/';
+            relative[rel_len + 1] = '\0';
         }
     }
 
-    /* Candidate 3: Scan mass slots 0..3 for relative path and volume root */
-    for (slot = 0; slot < 4; slot++)
+    subdirs[num_subdirs++] = relative;
+    if (strcasecmp(relative, "/SSB64/") != 0)
+        subdirs[num_subdirs++] = "/SSB64/";
+    if (strcasecmp(relative, "/APPS/SSB64/") != 0)
+        subdirs[num_subdirs++] = "/APPS/SSB64/";
+    if (strcasecmp(relative, "/") != 0)
+        subdirs[num_subdirs++] = "/";
+
+    for (i = 0; i < num_prefixes; i++)
     {
-        if (slot == literal_slot)
-            continue; /* Already probed above */
-
-        /* 3a: relative path */
-        if (relative[0] == '/' || relative[0] == '\\')
-            snprintf(probe, sizeof(probe), "mass%d:%s%s", slot, relative, probe_name);
-        else
-            snprintf(probe, sizeof(probe), "mass%d:/%s%s", slot, relative, probe_name);
-
-        fd = open(probe, O_RDONLY);
-        if (fd >= 0)
+        for (j = 0; j < num_subdirs; j++)
         {
-            close(fd);
-            if (relative[0] == '/' || relative[0] == '\\')
-                snprintf(sDataDir, sizeof(sDataDir), "mass%d:%s", slot, relative);
-            else
-                snprintf(sDataDir, sizeof(sDataDir), "mass%d:/%s", slot, relative);
-            ensure_directory_suffix(sDataDir, sizeof(sDataDir), sDataDevice);
-            sDataNeedsBdmResolve = 0;
-            ps2_log("storage: %s resolved to mass%d (%s)", ps2_storage_device_name(sDataDevice), slot, sDataDir);
-            return 1;
-        }
-
-        /* 3b: volume root */
-        snprintf(probe, sizeof(probe), "mass%d:/%s", slot, probe_name);
-        fd = open(probe, O_RDONLY);
-        if (fd >= 0)
-        {
-            close(fd);
-            snprintf(sDataDir, sizeof(sDataDir), "mass%d:/", slot);
-            sDataNeedsBdmResolve = 0;
-            ps2_log("storage: %s resolved to root %s", ps2_storage_device_name(sDataDevice), sDataDir);
-            return 1;
+            snprintf(probe, sizeof(probe), "%s%s%s", prefixes[i], subdirs[j], probe_name);
+            errno = 0;
+            fd = open(probe, O_RDONLY);
+            sLastPackProbeCount++;
+            sLastPackProbeErrno = fd < 0 ? errno : 0;
+            snprintf(sLastPackProbePath, sizeof(sLastPackProbePath), "%s", probe);
+            if (fd >= 0)
+            {
+                close(fd);
+                snprintf(sDataDir, sizeof(sDataDir), "%s%s", prefixes[i], subdirs[j]);
+                ensure_directory_suffix(sDataDir, sizeof(sDataDir), sDataDevice);
+                sDataNeedsBdmResolve = 0;
+                ps2_log("storage: %s resolved to %s", ps2_storage_device_name(sDataDevice), sDataDir);
+                return 1;
+            }
         }
     }
 
     return 0;
+}
+
+/* An IOP driver is allowed to expose FILEIO without exposing the launcher
+ * BDM mount to that older ioman namespace. Report this distinctly from a
+ * file that is genuinely absent. A directory probe uses the exact selected
+ * massN: volume; it does not scan or mount any other device.
+ *
+ * This is a diagnostic only: some drivers refuse root dopen even when files
+ * are readable. Treat that response as uncertainty, not proof of no disk.
+ */
+int ps2_storage_pack_root_probe(void)
+{
+    const char *colon = strchr(sDataDir, ':');
+    char root[40];
+    size_t prefix;
+    int fd;
+
+    if (!colon)
+        return -1;
+    prefix = (size_t)(colon - sDataDir + 1);
+    if (prefix + 2 > sizeof(root))
+        return -1;
+    memcpy(root, sDataDir, prefix);
+    root[prefix] = '/';
+    root[prefix + 1] = '\0';
+
+    errno = 0;
+    fd = open(root, O_RDONLY | O_DIRECTORY);
+    sPackProbeRootAccessible = fd >= 0 ? 1 : 0;
+    if (fd >= 0)
+        close(fd);
+    return sPackProbeRootAccessible;
+}
+
+int ps2_storage_pack_probe_errno(void)
+{
+    return sLastPackProbeErrno;
+}
+
+int ps2_storage_pack_probe_count(void)
+{
+    return sLastPackProbeCount;
+}
+
+int ps2_storage_pack_root_accessible(void)
+{
+    return sPackProbeRootAccessible;
+}
+
+const char *ps2_storage_pack_probe_last_path(void)
+{
+    return sLastPackProbePath;
 }
 
 

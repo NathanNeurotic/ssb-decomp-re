@@ -27,6 +27,17 @@ extern sb32 dSYAudioSoundQuality;
 #define N64_OUTPUT_RATE 32000.0F
 #define N_EQPOWER_LENGTH 128 /* as in n_env.c */
 
+/* Values in range are unchanged. Invalid audio commands cannot read outside
+ * the original equal-power table; index 128 is reachable in FXAMT_ALT. */
+static s16 eqpower_at(s32 index)
+{
+    if (index < 0)
+        index = 0;
+    else if (index >= N_EQPOWER_LENGTH)
+        index = N_EQPOWER_LENGTH - 1;
+    return n_eqpower[index];
+}
+
 typedef struct SynVoice
 {
     s32 sample;       /* SPU sample id, -1 = none */
@@ -122,13 +133,13 @@ static void apply_param(s32 idx, N_PVoice *pv, SynVoice *v, ALParam *p)
         v->pan = sp->pan;
         if ((sp->unk1C != 0) || (sp->unk1D != 0x5F))
         {
-            v->wet = n_eqpower[N_EQPOWER_LENGTH - sp->unk1C - 1];
-            v->dry = n_eqpower[N_EQPOWER_LENGTH - sp->unk1D - 1];
+            v->wet = eqpower_at(N_EQPOWER_LENGTH - sp->unk1C - 1);
+            v->dry = eqpower_at(N_EQPOWER_LENGTH - sp->unk1D - 1);
         }
         else
         {
-            v->dry = n_eqpower[sp->fxMix];
-            v->wet = n_eqpower[N_EQPOWER_LENGTH - sp->fxMix - 1];
+            v->dry = eqpower_at(sp->fxMix);
+            v->wet = eqpower_at(N_EQPOWER_LENGTH - sp->fxMix - 1);
         }
         v->vol_target = volume;
         if (sp->samples > 0)
@@ -172,13 +183,13 @@ static void apply_param(s32 idx, N_PVoice *pv, SynVoice *v, ALParam *p)
         break;
 
     case AL_FILTER_SET_FXAMT:
-        v->dry = n_eqpower[p->data.i];
-        v->wet = n_eqpower[N_EQPOWER_LENGTH - p->data.i - 1];
+        v->dry = eqpower_at(p->data.i);
+        v->wet = eqpower_at(N_EQPOWER_LENGTH - p->data.i - 1);
         break;
 
     case AL_FILTER_SET_FXAMT_ALT:
-        v->dry = n_eqpower[N_EQPOWER_LENGTH - p->moredata.i];
-        v->wet = n_eqpower[N_EQPOWER_LENGTH - p->data.i - 1];
+        v->dry = eqpower_at(N_EQPOWER_LENGTH - p->moredata.i);
+        v->wet = eqpower_at(N_EQPOWER_LENGTH - p->data.i - 1);
         break;
 
     case AL_FILTER_SET_PITCH:
