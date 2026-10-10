@@ -48,7 +48,12 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
     uint32_t max_chunk = 0x4000u;
     int is_mmce = (ps2_storage_data_device() == PS2_BOOT_MMCE);
 
-    if (ps2_storage_data_device() == PS2_BOOT_HOST ||
+    /* Gameplay currently retains MMCEMAN; the dormant MMCEDRV handoff is
+     * not called. Bound ownership of shared SIO2 and give PAD/MC clients a
+     * scheduling window between successful bursts, as in the working path. */
+    if (is_mmce)
+        max_chunk = 0x800u;
+    else if (ps2_storage_data_device() == PS2_BOOT_HOST ||
         ps2_storage_data_device() == PS2_BOOT_CDROM)
         max_chunk = 0x10000u;
 
@@ -72,6 +77,8 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
             return (done > 0) ? (int)done : n;
 
         done += (uint32_t)n;
+        if (is_mmce && done < size)
+            DelayThread(500);
     }
     return (int)done;
 }

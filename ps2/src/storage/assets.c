@@ -34,6 +34,7 @@ static int sInitOpenErrno;
 static uint32_t sBytesRead;
 static uint32_t sReads;
 static uint32_t sMisses;
+static uint32_t sIoTimeUs;
 
 static int reopen_pack_stream(void)
 {
@@ -63,6 +64,7 @@ static int read_exact(void *dst, uint32_t offset, uint32_t size)
 {
     extern void ps2_delay_vblanks(int n);
     int attempt;
+    uint32_t started = ps2_time_us();
 
     sLastSeekRc = 0;
     sLastReadGot = 0;
@@ -84,7 +86,10 @@ static int read_exact(void *dst, uint32_t offset, uint32_t size)
         {
             sLastReadGot = ps2_file_read(sFd, dst, size);
             if (sLastReadGot == (int)size)
+            {
+                sIoTimeUs += ps2_time_us() - started;
                 return 1;
+            }
 
             ps2_log("assets: short/read fail off=0x%08x want=%u got=%d attempt=%d",
                     (unsigned)offset, (unsigned)size, sLastReadGot, attempt + 1);
@@ -97,6 +102,7 @@ static int read_exact(void *dst, uint32_t offset, uint32_t size)
         }
     }
 
+    sIoTimeUs += ps2_time_us() - started;
     return 0;
 }
 
@@ -349,6 +355,11 @@ void ps2_rom_read(uint32_t rom_addr, void *dst, uint32_t size)
 uint32_t ps2_assets_bytes_read(void)
 {
     return sBytesRead;
+}
+
+uint32_t ps2_assets_io_time_us(void)
+{
+    return sIoTimeUs;
 }
 
 uint32_t ps2_assets_read_count(void)

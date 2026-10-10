@@ -55,3 +55,4 @@ with tempfile.TemporaryDirectory() as t:
 # This script is already a required CI build gate. Keep loader-handoff
 # coverage in that gate, including on installations without workflow scope.
 runpy.run_path(str(root / "ps2/tests/test_iop_handoff.py"), run_name="__main__")
+runpy.run_path(str(root / "ps2/tests/test_mmce_read_policy.py"), run_name="__main__")
