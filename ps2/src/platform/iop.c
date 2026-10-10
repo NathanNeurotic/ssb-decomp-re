@@ -2,8 +2,9 @@
  * IOP bring-up for real launch/data devices.
  *
  * The launch device and the data device are intentionally separate.  host:
- * keeps the ps2link/PCSX2 IOP alive; every other launch starts from a clean
- * IOP and reconstructs only the stack required by the selected data device.
+ * keeps the ps2link/PCSX2 IOP alive; BDM launches retain surviving launcher
+ * services or rebuild when the loader discarded them. Other transports
+ * reconstruct the stack required by the selected data device.
  *
  * Base:      iomanX + fileXio + sio2man + mtapman + padman + mcman/mcserv
  *            + libsd/sdr
@@ -79,6 +80,31 @@ static const char *sLoaded[MAX_TRACKED_MODULES];
 static int sLoadedCount;
 static int sIopWasReset;
 static int sInheritedBdm;
+static int sRebuiltBdm;
+
+/* A launch pathname survives ExecPS2 even when the loader reset the IOP.
+ * ROM FILEIO alone is therefore not evidence of a surviving mass mount.
+ * Keep unfamiliar/partial homebrew stacks intact rather than replacing them. */
+static int inherited_storage_modules_present(void)
+{
+    smod_mod_info_t info;
+    static const char *names[] = {
+        "IOX/File_Manager", "IOX/File_Manager_Rpc", "bdm", "bdmff"
+    };
+    unsigned int i;
+
+    for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+        if (smod_get_mod_by_name(names[i], &info))
+            return 1;
+    /* New iomanX can replace ioman instead of installing legacy hooks.
+     * ROM ioman has the same name but is version 1.x. */
+    return smod_get_mod_by_name("IO/File_Manager", &info) && info.version >= 0x200;
+}
+
+int ps2_iop_bdm_was_rebuilt(void)
+{
+    return sRebuiltBdm;
+}
 /* Diagnostics for the particular IRX whose load may legitimately fail when
  * an existing launcher owns the RPC service. */
 static int sLastFileXioModuleId = -999;
@@ -88,6 +114,9 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
 {
     int result = 0;
     int id;
+
+    if (ps2_iop_module_loaded(name))
+        return 0;
 
     if (sInheritedBdm)
     {
@@ -363,9 +392,19 @@ void ps2_iop_init(void)
 
     sLoadedCount = 0;
     sIopWasReset = 0;
+    sRebuiltBdm = 0;
 
     ps2_boot_stage("IOP: RPC initialization", 0xFFFF00);
     SifInitRpc(0);
+
+    if (sInheritedBdm && !inherited_storage_modules_present() &&
+        !inherited_filexio_rpc_ready())
+    {
+        ps2_log("IOP: launcher storage absent; rebuilding after loader reset");
+        sInheritedBdm = 0;
+        sRebuiltBdm = 1;
+        preserve_iop = 0;
+    }
 
     /* host: and bare pfsN: data paths depend on services/mounts owned by the
      * launcher.  Everything else is rebuilt from a known IOP state. */
@@ -415,6 +454,22 @@ void ps2_iop_init(void)
             ps2_log("IOP: using launcher FILEIO backend for game data");
     }
     ps2_boot_stage("IOP: fileXio binding", 0x00FFFF);
+
+    /* Install SIO2-based storage before PAD/MC bind their services. Generic
+     * mass has lost transport identity: rediscover only a unique adjacent DAT.
+     * Typed paths rebuild only their explicitly selected transport. */
+    if (sRebuiltBdm && device != PS2_BOOT_UDPBD)
+    {
+        if (LOAD_IRX(sio2man) < 0)
+            ps2_panic("IOP SIO2 initialization failed");
+        if (device == PS2_BOOT_BDM)
+        {
+            if (ps2_iop_load_bdm_fallback_transports() < 0)
+                ps2_panic("BDM recovery initialization failed");
+        }
+        else if (ps2_iop_load_boot_device_drivers(device) < 0)
+            ps2_panic("typed storage recovery failed");
+    }
 
     ps2_boot_stage("IOP: SIO2 and controller modules", 0x00FF00);
     /* Controller services are mandatory: a silent load failure leaves the
@@ -519,6 +574,9 @@ int ps2_iop_load_audio_driver(void)
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
 {
     char ip_arg[24];
+
+    if (sRebuiltBdm && ps2_iop_module_loaded("bdm"))
+        return 0; /* Already installed before the controller clients. */
 
     /* A typed alias still refers to the inherited mount. Do not install a
      * second BDM core/transport on top of the launcher's registered device. */
@@ -628,10 +686,9 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
 int ps2_iop_load_bdm_fallback_transports(void)
 {
     static int sDone;
+    int transports = 0;
     if (sDone)
         return 0;
-    sDone = 1;
-
     if (sInheritedBdm)
     {
         /* A failed probe does not authorize a second BDM core or replacing
@@ -641,17 +698,23 @@ int ps2_iop_load_bdm_fallback_transports(void)
     }
 
     ps2_log("IOP: loading BDM fallback transports (USB/MX4SIO/ATA/iLink)");
-    load_bdm_core();
-    LOAD_IRX(usbd_mini);
-    LOAD_IRX(usbmass_bd_mini);
-    LOAD_IRX(mx4sio_bd);
+    if (load_bdm_core() < 0)
+        return -1;
+    if (LOAD_IRX(usbd_mini) >= 0 && LOAD_IRX(usbmass_bd_mini) >= 0)
+        transports++;
+    if (LOAD_IRX(mx4sio_bd) >= 0)
+        transports++;
     if (LOAD_IRX(ps2dev9) >= 0)
     {
-        LOAD_IRX(ps2atad);
+        if (LOAD_IRX(ps2atad) >= 0)
+            transports++;
         sleep(1);
     }
-    LOAD_IRX(iLinkman);
-    LOAD_IRX(IEEE1394_bd);
+    if (LOAD_IRX(iLinkman) >= 0 && LOAD_IRX(IEEE1394_bd) >= 0)
+        transports++;
+    if (transports == 0)
+        return -1;
+    sDone = 1;
     return 1;
 }
 

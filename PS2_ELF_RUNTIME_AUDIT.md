@@ -90,3 +90,31 @@ CI pipeline runs `test_runtime_safety.py`, `test_inherited_transports.py`, `test
 2. Capture one frame time histogram and streaming-read latency distribution over a fixed battle scene on console; if frame-rate regresses, bisect recent runtime-only commits against the checkpoint.
 3. Exercise one device at a time; isolate SIF/PAD/GS hangs from file open/read hangs with the last displayed boot stage and log.
 4. Address actual measured hot spots via limited patches and deterministic guard tests, then repeat source/CI/hardware review.
+
+## Loader reset recovery candidate (2026-10-09)
+
+The latest console capture still failed with ENODEV (19), 800 path attempts,
+and a failed root-directory probe. A mass pathname and a responsive ROM FILEIO
+server do not prove that the launcher storage survived ExecPS2.
+
+Startup now checks for resident homebrew I/O managers, BDM modules, or a live
+fileXio service before choosing the inherited path. A ROM-only IOP takes a
+controlled reset and reinstalls iomanX/fileXio and the physical BDM transports.
+Storage that hooks SIO2 is installed before PAD/MC clients; module tracking
+prevents duplicate loads. Typed UDPBD waits for memory-card services because
+its IP configuration lives there. A surviving/partial homebrew stack is kept.
+
+After reconstruction, mass unit numbers are no longer treated as original
+transport identity. Rediscovery checks the original adjacent directory on
+mass0 through mass3 (mass aliases unit zero), requires exactly one matching
+DAT volume, and refuses multiple matches. Inherited explicit massN behavior
+is unchanged. This is path-based rediscovery, not proof of the original disk
+identity; hotplug during discovery and delayed mounts remain hardware risks.
+Generic recovery installs USB/MX4SIO/ATA/iLink only. UDPBD after reset needs a
+typed UDPBD path and valid IP configuration; generic mass cannot recover
+network configuration discarded by a loader reset.
+
+Validation: source-extracted startup, transport, fileXio and storage tests;
+native ELF build. Console acceptance remains pending for BOTH loader reset
+ON and OFF, using the same DAT, followed by gameplay, controller, save and IGR.
+Keep PR #24 draft. Do not interpret successful linking as a console pass.

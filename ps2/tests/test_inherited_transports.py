@@ -3,17 +3,19 @@ from pathlib import Path
 import subprocess
 import tempfile
 import os
+import runpy
 root = Path(__file__).resolve().parents[2]
 s = (root / "ps2/src/platform/iop.c").read_text()
 a = s.index("int ps2_iop_load_boot_device_drivers(")
-b = s.index("int ps2_iop_load_bdm_fallback_transports", a)
+b = s.index("int ps2_iop_module_loaded", a)
 c = r"""
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
 typedef int PS2BootDevice;
 enum { PS2_BOOT_UNKNOWN, PS2_BOOT_HOST, PS2_BOOT_BDM, PS2_BOOT_USB, PS2_BOOT_MC, PS2_BOOT_ATA, PS2_BOOT_MX4SIO, PS2_BOOT_ILINK, PS2_BOOT_UDPBD, PS2_BOOT_UDPFS, PS2_BOOT_HDD, PS2_BOOT_MMCE, PS2_BOOT_CDROM };
-static int sInheritedBdm, loads, cores, fail;
+static int sInheritedBdm, sRebuiltBdm, loads, cores, fail, installed;
+static int ps2_iop_module_loaded(const char *name){(void)name; return installed;}
 static int load(void){ loads++; return fail ? -1 : 0; }
 #define LOAD_IRX(n) load()
 #define LOAD_IRX_ARGS(n,a,l) load()
@@ -35,6 +37,13 @@ int main(void){
  sInheritedBdm=1;loads=cores=0;assert(ps2_iop_load_boot_device_drivers(PS2_BOOT_UDPFS)==0);assert(loads==4&&!cores);
  loads=cores=0;assert(ps2_iop_load_boot_device_drivers(PS2_BOOT_MMCE)==0);assert(loads==1&&!cores);
  assert(ps2_iop_load_boot_device_drivers(PS2_BOOT_UNKNOWN)<0);
+ sRebuiltBdm=installed=1;loads=cores=0;
+ assert(ps2_iop_load_boot_device_drivers(PS2_BOOT_USB)==0);assert(!loads&&!cores);
+ installed=0;sInheritedBdm=1;loads=cores=0;
+ assert(ps2_iop_load_bdm_fallback_transports()==0);assert(!loads&&!cores);
+ sInheritedBdm=0;fail=1;assert(ps2_iop_load_bdm_fallback_transports()<0);
+ fail=0;assert(ps2_iop_load_bdm_fallback_transports()==1);
+ loads=cores=0;assert(ps2_iop_load_bdm_fallback_transports()==0);assert(!loads&&!cores);
  puts("PASS: inherited aliases, fresh USB, load failure, UDPFS/MMCE isolation, unknown device");
 }
 """
@@ -42,3 +51,7 @@ with tempfile.TemporaryDirectory() as t:
  src=Path(t)/"test.c"; exe=Path(t)/"test.exe";src.write_text(c)
  subprocess.run([os.environ.get("CC","gcc"),"-O2",str(src),"-o",str(exe)],check=True)
  subprocess.run([str(exe)],check=True)
+
+# This script is already a required CI build gate. Keep loader-handoff
+# coverage in that gate, including on installations without workflow scope.
+runpy.run_path(str(root / "ps2/tests/test_iop_handoff.py"), run_name="__main__")

@@ -26,6 +26,7 @@ def extract(path, signature):
 
 FUNCTIONS = "\n\n".join([
     extract("ps2/src/game/ps2_synth.c", "static s16 eqpower_at("),
+    extract("ps2/src/storage/bootpath.c", "static int resolve_rebuilt_bdm_root("),
     extract("ps2/src/storage/bootpath.c", "int ps2_storage_resolve_data_root("),
     extract("ps2/src/storage/save.c", "void ps2_sram_read("),
     extract("ps2/src/storage/save.c", "void ps2_sram_write("),
@@ -61,6 +62,9 @@ static int sDataDevice;
 static int sLastPackProbeErrno, sLastPackProbeCount, sPackProbeRootAccessible;
 static char sLastPackProbePath[PATH_BUF_MAX + 64];
 static const char *sAvailable;
+static const char *sSecondAvailable;
+static int sRebuiltBdm;
+static int ps2_iop_bdm_was_rebuilt(void) { return sRebuiltBdm; }
 static int sWrongVolumeOpens, sOpens;
 static uint8_t sSram[SRAM_SIZE];
 static int sLock;
@@ -80,7 +84,8 @@ static int fake_open(const char *path, int mode)
     sOpens++;
     if (!strncmp(path, "mass1:", 6))
         sWrongVolumeOpens++;
-    if (sAvailable && !strcmp(path, sAvailable))
+    if ((sAvailable && !strcmp(path, sAvailable)) ||
+        (sSecondAvailable && !strcmp(path, sSecondAvailable)))
         return 3;
     errno = ENOENT;
     return -1;
@@ -163,6 +168,25 @@ int main(void)
     sAvailable = "mass2:/APPS/SSB64/SSB64.DAT";
     assert(ps2_storage_resolve_data_root("SSB64.DAT") == 1);
     assert(!strcmp(sDataDir, "mass2:/APPS/SSB64/"));
+
+    /* Loader-reset recovery allows numbering changes, but only at the
+     * original adjacent directory and only for one matching volume. */
+    sRebuiltBdm = 1;
+    strcpy(sDataDir, "mass0:/GAME/");
+    sDataNeedsBdmResolve = 1;
+    sAvailable = "mass2:/GAME/SSB64.DAT";
+    assert(ps2_storage_resolve_data_root("SSB64.DAT") == 1);
+    assert(!strcmp(sDataDir, "mass2:/GAME/"));
+    strcpy(sDataDir, "mass0:/GAME/");
+    sDataNeedsBdmResolve = 1;
+    sSecondAvailable = "mass0:/GAME/SSB64.DAT";
+    assert(ps2_storage_resolve_data_root("SSB64.DAT") == 0);
+    assert(sLastPackProbeErrno == EEXIST);
+    assert(!strcmp(sDataDir, "mass0:/GAME/"));
+    sSecondAvailable = NULL;
+    sAvailable = "mass2:/SSB64/SSB64.DAT";
+    assert(ps2_storage_resolve_data_root("SSB64.DAT") == 0);
+    sRebuiltBdm = 0;
 
     /* SRAM end-crossing reads zero the tail; writes do not wrap/overflow. */
     memset(sSram, 0, sizeof(sSram));

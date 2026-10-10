@@ -383,6 +383,62 @@ int ps2_storage_requires_iop_preserve(void)
     return sDataNeedsExistingIop;
 }
 
+/* After a loader reset, old massN numbering has no transport identity.
+ * Restrict rediscovery to the original adjacent directory and reject more
+ * than one matching volume instead of choosing whichever mounted first. */
+static int resolve_rebuilt_bdm_root(const char *probe_name)
+{
+    static const char *prefixes[] = { "mass0:", "mass1:", "mass2:", "mass3:" };
+    const char *colon = strchr(sDataDir, ':');
+    char selected[PATH_BUF_MAX];
+    char path[PATH_BUF_MAX + 64];
+    const char *relative;
+    unsigned int i;
+    int matches = 0;
+
+    if (colon == NULL)
+        return 0;
+    relative = colon + 1;
+    for (i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
+    {
+        const char *prefix = prefixes[i];
+        int fd;
+        snprintf(path, sizeof(path), "%s%s%s", prefix, relative, probe_name);
+        errno = 0;
+        fd = open(path, O_RDONLY);
+        sLastPackProbeCount++;
+        if (fd < 0 && i == 0)
+        {
+            prefix = "mass:";
+            snprintf(path, sizeof(path), "%s%s%s", prefix, relative, probe_name);
+            errno = 0;
+            fd = open(path, O_RDONLY);
+            sLastPackProbeCount++;
+        }
+        sLastPackProbeErrno = fd < 0 ? errno : 0;
+        snprintf(sLastPackProbePath, sizeof(sLastPackProbePath), "%s", path);
+        if (fd >= 0)
+        {
+            close(fd);
+            ++matches;
+            snprintf(selected, sizeof(selected), "%s%s", prefix, relative);
+        }
+    }
+    if (matches != 1)
+    {
+        if (matches > 1)
+        {
+            sLastPackProbeErrno = EEXIST;
+            ps2_log("storage: multiple adjacent DATs after reset; refusing ambiguous volume");
+        }
+        return 0;
+    }
+    snprintf(sDataDir, sizeof(sDataDir), "%s", selected);
+    sDataNeedsBdmResolve = 0;
+    ps2_log("storage: rebuilt BDM resolved unique adjacent DAT at %s", sDataDir);
+    return 1;
+}
+
 int ps2_storage_resolve_data_root(const char *probe_name)
 {
     char relative[PATH_BUF_MAX];
@@ -403,6 +459,8 @@ int ps2_storage_resolve_data_root(const char *probe_name)
         return 1;
     if (probe_name == NULL || probe_name[0] == '\0')
         return 0;
+    if (ps2_iop_bdm_was_rebuilt())
+        return resolve_rebuilt_bdm_root(probe_name);
 
     colon = strchr(sDataDir, ':');
     if (colon == NULL)
