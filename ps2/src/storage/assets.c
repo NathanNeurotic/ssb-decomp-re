@@ -8,6 +8,7 @@
  * loaded that the current scene did not ask for.
  */
 #include <ps2/platform.h>
+#include <ps2/input.h>
 #include <ps2/assetpack.h>
 
 #include <errno.h>
@@ -172,6 +173,81 @@ static int pack_region_layout_valid(const PS2PackHeader *h,
     return 1;
 }
 
+
+/* Only used after a launcher IOP reset has lost the original partition ID.
+ * Do not silently choose whichever massN: happens to mount first. The
+ * existing GS/PAD modules are ready; initialize input only for this unusual
+ * recovery screen, not during ordinary asset loading. */
+static int choose_ambiguous_mass_slot(unsigned int mask)
+{
+    int candidates[4];
+    int count = 0;
+    int selected = 0;
+    int last = 0;
+    int frames;
+    unsigned int i;
+
+    for (i = 0; i < 4; ++i)
+        if (mask & (1u << i))
+            candidates[count++] = (int)i;
+    if (count < 2)
+        return 0;
+
+    ps2_log("assets: rebuilt IOP has %d DAT partitions; awaiting controller choice", count);
+    ps2_input_init();
+
+    for (frames = 0; frames < 1800; ++frames) /* max 30 seconds */
+    {
+        const PS2InputState *pad;
+        int held, edge;
+
+        ps2_input_poll();
+        pad = ps2_input_state(0);
+        held = (pad != NULL && pad->connected) ? pad->buttons : 0;
+        edge = held & ~last;
+        last = held;
+
+        if (edge & N64_BTN_DU)
+            selected = (selected + count - 1) % count;
+        if (edge & N64_BTN_DD)
+            selected = (selected + 1) % count;
+        if (edge & N64_BTN_B)
+        {
+            ps2_log("assets: rebuilt mass selection cancelled");
+            return 0;
+        }
+        if (edge & N64_BTN_A)
+            return ps2_storage_select_rebuilt_mass_slot((unsigned int)candidates[selected]);
+
+        /* Do not force a full GS redraw every VBlank; keep input responsive
+         * while avoiding additional IOP filesystem and GIF work. */
+        if (frames == 0 || edge != 0 || (frames % 120) == 0)
+        {
+            char line[64];
+            int n;
+
+            ps2_gs_clear(0, 0x201018, 0);
+            ps2_gs_text(8, 16, 0x80C0FF, "SSB64 - CHOOSE DAT PARTITION");
+            ps2_gs_text(8, 36, 0xFFFFFF, "Launcher IOP reset changed mass IDs.");
+            ps2_gs_text(8, 48, 0xFFFFFF, "Choose the original game volume:");
+            for (n = 0; n < count; ++n)
+            {
+                snprintf(line, sizeof(line), "%s mass%d:/",
+                         (n == selected) ? ">" : " ", candidates[n]);
+                ps2_gs_text(20, 70 + n * 15,
+                            (n == selected) ? 0x40FF40 : 0xC0C0C0, line);
+            }
+            ps2_gs_text(8, 167, 0xFFFFFF, "UP/DOWN choose  X confirm");
+            ps2_gs_text(8, 179, 0xFFFFFF, "O cancel  (30s timeout)");
+            ps2_pkt_finish();
+            ps2_gs_present_now(0);
+        }
+        ps2_delay_vblanks(1);
+    }
+    ps2_log("assets: rebuilt mass selection timed out");
+    return 0;
+}
+
 int ps2_assets_init(void)
 {
     char path[300];
@@ -196,9 +272,10 @@ int ps2_assets_init(void)
     {
         extern void ps2_delay_vblanks(int n);
         int attempt;
+        int recovered_choice = 0;
 
         sFd = -1;
-        for (attempt = 0; attempt < 100; attempt++)
+        for (attempt = 0; attempt < (recovered_choice ? 10 : 100); attempt++)
         {
             if (ps2_storage_resolve_data_root(PACK_NAME))
             {
@@ -228,12 +305,17 @@ int ps2_assets_init(void)
                 break;
             }
 
-            /* The rebuilt IOP may expose both connected USB drives under
-             * new massN: numbers. If both contain the adjacent DAT, repeated
-             * probing cannot recover the original device identity. Stop
-             * immediately; never pick a different user's USB silently. */
+            /* massN: entries are logical partitions, not physical USB
+             * identities. Only in the rebuilt-IOP ambiguous case, present
+             * the user with the matching partitions; otherwise retain the
+             * automatic fast path and its original device binding. */
             if (ps2_storage_pack_conflict_mask() != 0)
             {
+                if (choose_ambiguous_mass_slot(ps2_storage_pack_conflict_mask()))
+                {
+                    recovered_choice = 1;
+                    continue; /* open exactly the chosen logical volume */
+                }
                 sInitFailReason = 6;
                 break;
             }
@@ -363,7 +445,7 @@ const char *ps2_assets_last_init_error(void)
         break;
     case 6:
         snprintf(message, sizeof(message),
-                 "SSB64.DAT on multiple mass drives (mask=0x%x; 1=mass0,2=mass1,4=mass2,8=mass3). Disable launcher IOP reset to keep the correct USB.",
+                 "DAT on multiple mass partitions (mask=0x%x). Controller selection cancelled/timed out; keep IOP or retry selection.",
                  ps2_storage_pack_conflict_mask());
         break;
     default:

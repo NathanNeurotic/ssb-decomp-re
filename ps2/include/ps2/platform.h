@@ -137,6 +137,9 @@ int ps2_storage_pack_probe_errno(void);
 /* Nonzero when multiple distinct massN: units contain the same adjacent DAT
  * after launcher-IOP reset (bit 0 = mass0:, bit 1 = mass1:, etc). */
 unsigned int ps2_storage_pack_conflict_mask(void);
+/* Explicit user-selected partition when a reset lost original massN identity.
+ * Call only after a nonzero conflict mask; never auto-select among matches. */
+int ps2_storage_select_rebuilt_mass_slot(unsigned int slot);
 int ps2_storage_pack_probe_count(void);
 int ps2_storage_pack_root_accessible(void); /* -1=not tested, 0=no, 1=yes */
 const char *ps2_storage_pack_probe_last_path(void);

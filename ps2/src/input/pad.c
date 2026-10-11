@@ -168,6 +168,12 @@ void ps2_input_init(void)
 {
     int i;
 
+    /* Ambiguous reset recovery can initialize controller 1 early to let the
+     * user choose a logical volume. The normal boot stage must reuse that
+     * same PAD RPC/port allocation rather than initializing twice. */
+    if (sInitDone)
+        return;
+
     /* PS2SDK's padInit returns 0 when already bound, 1 on success, and
      * negative values on failed RPC binding. Never silently start pad polling
      * after an explicit initialization failure. */

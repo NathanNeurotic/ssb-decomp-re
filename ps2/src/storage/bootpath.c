@@ -629,6 +629,35 @@ unsigned int ps2_storage_pack_conflict_mask(void)
     return sPackConflictMassMask;
 }
 
+/* Recovery only: the launcher IOP was discarded and more than one logical
+ * massN: unit contains the adjacent DAT. A user-selected unit is explicit
+ * consent to that reconstructed mount, never an automatic replacement for
+ * the original physical disk. No USB/BDM devices are loaded or unmounted. */
+int ps2_storage_select_rebuilt_mass_slot(unsigned int slot)
+{
+    const char *colon;
+    char next[PATH_BUF_MAX];
+    int written;
+
+    if (slot >= 4 || (sPackConflictMassMask & (1u << slot)) == 0 ||
+        !sDataNeedsBdmResolve || !ps2_iop_bdm_was_rebuilt())
+        return 0;
+    colon = strchr(sDataDir, ':');
+    if (colon == NULL)
+        return 0;
+
+    written = snprintf(next, sizeof(next), "mass%u:%s", slot, colon + 1);
+    if (written < 0 || (size_t)written >= sizeof(next))
+        return 0;
+
+    memcpy(sDataDir, next, (size_t)written + 1);
+    sDataNeedsBdmResolve = 0;
+    sPackConflictMassMask = 0;
+    sLastPackProbeErrno = 0;
+    ps2_log("storage: user selected rebuilt mass%u: for DAT", slot);
+    return 1;
+}
+
 int ps2_storage_pack_probe_count(void)
 {
     return sLastPackProbeCount;
