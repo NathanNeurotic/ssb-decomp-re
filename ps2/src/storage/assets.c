@@ -106,6 +106,72 @@ static int read_exact(void *dst, uint32_t offset, uint32_t size)
     return 0;
 }
 
+
+/* Validate all pack-controlled offsets BEFORE allocating buffers or forming
+ * resident pointers. The format writer stores a fixed 64-byte header, a
+ * packed region table, then a contiguous resident-data area. Corrupt media
+ * must never turn a valid DAT open into EE memory corruption. */
+static int pack_header_layout_valid(const PS2PackHeader *h)
+{
+    uint32_t table_bytes;
+    uint32_t table_end;
+
+    if (h->total_size < sizeof(*h) || h->total_size > 0x7fffffffu ||
+        h->region_count == 0 || h->region_table_offset < sizeof(*h) ||
+        h->region_table_offset > h->total_size)
+        return 0;
+
+    if (h->region_count > (h->total_size - h->region_table_offset) /
+                              (uint32_t)sizeof(PS2PackRegion))
+        return 0;
+
+    table_bytes = h->region_count * (uint32_t)sizeof(PS2PackRegion);
+    table_end = h->region_table_offset + table_bytes;
+    if (h->resident_offset < table_end ||
+        h->resident_offset > h->total_size ||
+        h->resident_bytes > h->total_size - h->resident_offset ||
+        h->resident_bytes > UINT32_MAX - 64u)
+        return 0;
+
+    return 1;
+}
+
+/* Ensure every ROM range and file span is well-formed before the loader
+ * stores pointers into the resident blob. These checks do not modify
+ * descriptors or require extra filesystem calls on valid packs. */
+static int pack_region_layout_valid(const PS2PackHeader *h,
+                                    const PS2PackRegion *regions)
+{
+    uint32_t previous_end = 0;
+    uint32_t i;
+
+    for (i = 0; i < h->region_count; i++)
+    {
+        const PS2PackRegion *r = &regions[i];
+
+        if ((r->flags & ~PS2PACK_REGION_RESIDENT) != 0 ||
+            r->size > UINT32_MAX - r->vrom_start ||
+            (i != 0 && r->vrom_start < previous_end) ||
+            r->file_offset > h->total_size ||
+            r->size > h->total_size - r->file_offset)
+            return 0;
+
+        previous_end = r->vrom_start + r->size;
+        if (r->flags & PS2PACK_REGION_RESIDENT)
+        {
+            uint32_t from_resident;
+            if (r->file_offset < h->resident_offset)
+                return 0;
+            from_resident = r->file_offset - h->resident_offset;
+            if (from_resident > h->resident_bytes ||
+                r->size > h->resident_bytes - from_resident)
+                return 0;
+        }
+    }
+
+    return 1;
+}
+
 int ps2_assets_init(void)
 {
     char path[300];
@@ -210,6 +276,13 @@ int ps2_assets_init(void)
         return 0;
     }
 
+    if (!pack_header_layout_valid(&sHeader))
+    {
+        sInitFailReason = 5;
+        ps2_log("assets: SSB64.DAT header has invalid table/resident bounds");
+        return 0;
+    }
+
     table_bytes = sHeader.region_count * sizeof(PS2PackRegion);
     sRegions = ps2_mem_alloc(PS2_MEM_GAME_HEAP, table_bytes, 64);
     sResidentPtr = ps2_mem_alloc(PS2_MEM_GAME_HEAP, sHeader.region_count * sizeof(uint8_t *), 64);
@@ -217,6 +290,13 @@ int ps2_assets_init(void)
     {
         sInitFailReason = 3;
         ps2_log("assets: region table read failed");
+        return 0;
+    }
+
+    if (!pack_region_layout_valid(&sHeader, sRegions))
+    {
+        sInitFailReason = 5;
+        ps2_log("assets: SSB64.DAT region has invalid ROM/file/resident range");
         return 0;
     }
 
@@ -266,6 +346,9 @@ const char *ps2_assets_last_init_error(void)
         break;
     case 4:
         snprintf(message, sizeof(message), "SSB64.DAT resident data I/O failed");
+        break;
+    case 5:
+        snprintf(message, sizeof(message), "SSB64.DAT opened but contains invalid region/layout metadata");
         break;
     default:
         snprintf(message, sizeof(message), "SSB64.DAT runtime initialization failed");
