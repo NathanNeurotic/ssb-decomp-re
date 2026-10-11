@@ -125,13 +125,13 @@ jobs:
           checkout_tree="$(git rev-parse 'HEAD^{tree}')"
           test "$checkout_sha" = "$GITHUB_SHA"
           {
-            printf 'repository=%s\\n' "$GITHUB_REPOSITORY"
-            printf 'run_id=%s\\n' "$GITHUB_RUN_ID"
-            printf 'event=%s\\n' "$GITHUB_EVENT_NAME"
-            printf 'checkout_sha=%s\\n' "$checkout_sha"
-            printf 'checkout_tree=%s\\n' "$checkout_tree"
-            printf 'pr_head_sha=%s\\n' "$PR_HEAD_SHA"
-            printf 'pr_base_sha=%s\\n' "$PR_BASE_SHA"
+            printf 'repository=%s\n' "$GITHUB_REPOSITORY"
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'event=%s\n' "$GITHUB_EVENT_NAME"
+            printf 'checkout_sha=%s\n' "$checkout_sha"
+            printf 'checkout_tree=%s\n' "$checkout_tree"
+            printf 'pr_head_sha=%s\n' "$PR_HEAD_SHA"
+            printf 'pr_base_sha=%s\n' "$PR_BASE_SHA"
           } > artifacts/BUILD_PROVENANCE.txt
           test -s artifacts/BUILD_PROVENANCE.txt
           # The executable selects native NTSC 240p when argv[0] contains
