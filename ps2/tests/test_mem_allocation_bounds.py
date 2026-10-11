@@ -48,7 +48,6 @@ static void *fake_memalign(uint32_t align, uint32_t size) {
     return size <= sizeof(buffer) ? buffer : NULL;
 }
 static void fake_free(void *ptr) { assert(ptr == buffer); frees++; }
-static const char *ps2_mem_category_name(int cat) {(void)cat;return "audio";}
 static void ps2_mem_add(int cat, int32_t delta) {
     (void)cat;
     if(delta >= 0)sStats.total_used += (uint32_t)delta;
