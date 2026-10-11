@@ -59,6 +59,7 @@ jobs:
           python3 ps2/tests/test_runtime_safety.py
           python3 ps2/tests/test_asset_layout.py
           python3 ps2/tests/test_spu_layout.py
+          python3 ps2/tests/test_mem_allocation_bounds.py
           python3 ps2/tests/test_inherited_transports.py
           python3 ps2/tests/test_filexio_recovery.py
           python3 ps2/tests/test_renderer_coordinates.py
