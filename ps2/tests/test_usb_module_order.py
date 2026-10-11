@@ -65,7 +65,7 @@ static int fake_load(const char *name) {
     return failure && !strcmp(failure, name) ? -1 : 0;
 }
 #define LOAD_IRX(name) fake_load(#name)
-#define LOAD_IRX_ARGS(name,arg,len) fake_load(#name)
+#define LOAD_IRX_ARGS(name,arg,len) ((void)(arg), (void)(len), fake_load(#name))
 #define ps2_log(...) ((void)0)
 #define sleep(n) do { sSleep++; } while (0)
 static int ps2_iop_module_loaded(const char *name) {
