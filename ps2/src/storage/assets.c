@@ -16,6 +16,14 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Recovery-only controller/GS menu uses the existing boot renderer.
+ * These calls do not occur on ordinary, unambiguous asset startup. */
+extern void ps2_delay_vblanks(int n);
+extern void ps2_gs_clear(int fb_index, uint32_t rgba, int clear_z);
+extern void ps2_gs_text(int x, int y, uint32_t rgba, const char *s);
+extern void ps2_pkt_finish(void);
+extern void ps2_gs_present_now(int fb_index);
+
 #define PACK_NAME "SSB64.DAT"
 
 static int sFd = -1;
