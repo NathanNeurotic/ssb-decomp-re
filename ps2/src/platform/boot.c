@@ -24,6 +24,7 @@ extern void ps2_ultra_threads_init(void);
 extern void ps2_vi_init(void);
 extern void ps2_input_init(void);
 extern int ps2_assets_init(void);
+extern const char *ps2_assets_last_init_error(void);
 extern void ps2_save_init(void);
 extern void ps2_audio_init(void);
 extern void ps2_render_thread_init(void);
@@ -52,6 +53,12 @@ int ps2_main(int argc, char *argv[])
                 bad_data_arg = 1;
         }
     }
+    /* Native launchers may leave a stale stdout RPC service. Keep all boot
+     * messages in the EE log for the GS screen and saved log, without routing
+     * them through that inherited IOP console. host: retains console output. */
+    if (ps2_storage_launch_device() != PS2_BOOT_HOST)
+        ps2_log_console(0);
+
     /* Stage colours (troubleshooting on hardware, see PS2_PORT.md):
      * dark blue = started, purple = IOP modules, cyan = video init,
      * after that the boot screen with the log is shown. */
@@ -81,9 +88,9 @@ int ps2_main(int argc, char *argv[])
         }
     }
 
-    ps2_boot_stage("IOP reset + modules", 0x800080);
+    ps2_boot_stage("IOP reset + modules", 0xFFFF00);
     ps2_iop_init();
-    ps2_boot_stage("vblank + video init", 0x008080);
+    ps2_boot_stage("vblank + video init", 0x800000);
     ps2_vblank_init();
     ps2_gs_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
@@ -114,8 +121,7 @@ int ps2_main(int argc, char *argv[])
      */
     if (!ps2_assets_init())
     {
-        ps2_panic("asset pack not found next to the ELF (%sSSB64.DAT). Run ps2/tools/prepare_assets.sh first.",
-                  ps2_storage_boot_dir());
+        ps2_panic("%s", ps2_assets_last_init_error());
     }
 
     if (ps2_storage_data_device() != PS2_BOOT_CDROM)

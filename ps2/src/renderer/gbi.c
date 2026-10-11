@@ -333,6 +333,10 @@ static void load_vertices(const Vtx *src, int n, int dst)
 {
     int i;
 
+    /* Reject an invalid F3DEX2 vertex base instead of corrupting R state. */
+    if (src == NULL || dst < 0 || dst >= MAX_VTX || n <= 0)
+        return;
+
     if (R.mvp_dirty)
     {
         mtx_mul(R.mvp, R.mv[R.mv_top], R.proj);

@@ -141,7 +141,9 @@ void ps2_panic(const char *fmt, ...)
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
 
-    printf("[ssb64] PANIC: %s\n", buf);
+    /* Native launchers may leave a stale stdout RPC; honor the console gate. */
+    if (sConsole)
+        printf("[ssb64] PANIC: %s\n", buf);
     push_line("*** PANIC ***");
     push_line(buf);
     ps2_gs_show_panic(buf);

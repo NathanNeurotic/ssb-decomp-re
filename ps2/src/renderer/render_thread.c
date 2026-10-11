@@ -126,6 +126,12 @@ static void render_one(const RenderJob *job)
                 (unsigned)gPS2RenderStats.dl_commands, (unsigned)gPS2RenderStats.triangles,
                 (unsigned)gPS2RenderStats.rects, (unsigned)gPS2RenderStats.tex_uploads,
                 (unsigned)gPS2RenderStats.unknown_cmds, (unsigned)gPS2RenderStats.gfx_us);
+        ps2_log("gfx wait: GIF DMA %u us, GS FINISH %u us, other gfx %u us",
+                (unsigned)gPS2RenderStats.dma_wait_us, (unsigned)gPS2RenderStats.gs_wait_us,
+                (unsigned)(gPS2RenderStats.gfx_us >
+                           gPS2RenderStats.dma_wait_us + gPS2RenderStats.gs_wait_us
+                              ? gPS2RenderStats.gfx_us -
+                                gPS2RenderStats.dma_wait_us - gPS2RenderStats.gs_wait_us : 0));
 #if PS2_DEBUG
         {
             extern uint32_t gPS2FbDrawDisplayed, gPS2FbDrawPending;
@@ -188,6 +194,8 @@ void ps2_render_thread_init(void)
     sema.init_count = 0;
     sema.max_count = RENDER_QUEUE;
     sJobSema = CreateSema(&sema);
+    if (sJobSema < 0)
+        ps2_panic("render: job semaphore creation failed");
 
     ps2_texcache_init();
     ps2_gbi_init();
@@ -198,6 +206,7 @@ void ps2_render_thread_init(void)
     th.gp_reg = &_gp;
     th.initial_priority = 80; /* PS2_EE_PRI_RENDER: just below the game thread */
     sThreadId = CreateThread(&th);
-    StartThread(sThreadId, NULL);
+    if (sThreadId < 0 || StartThread(sThreadId, NULL) < 0)
+        ps2_panic("render: renderer thread failed to start");
     ps2_mem_reclassify_static(PS2_MEM_THREADS, sizeof(sStack));
 }

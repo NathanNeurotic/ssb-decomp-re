@@ -52,6 +52,24 @@ jobs:
           "$PS2BUILD_HOME/ps2build" --version
           "$PS2BUILD_HOME/toolchain/ee/bin/mips64r5900el-ps2-elf-gcc" --version | head -1
 
+      - name: Exercise ELF runtime host regression harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ps2/tests/test_runtime_safety.py
+          python3 ps2/tests/test_asset_layout.py
+          python3 ps2/tests/test_spu_layout.py
+          python3 ps2/tests/test_mem_allocation_bounds.py
+          python3 ps2/tests/test_inherited_transports.py
+          python3 ps2/tests/test_usb_module_order.py
+          python3 ps2/tests/test_filexio_recovery.py
+          python3 ps2/tests/test_renderer_coordinates.py
+          python3 ps2/tests/test_render_timing_probes.py
+          python3 ps2/tests/test_reset_mass_picker.py
+          python3 ps2/tests/test_gbi_vertex_bounds.py
+          python3 ps2/tests/test_udpfs_close.py
+          python3 ps2/tests/test_udpfs_recv_cleanup.py
+
       - name: Generate ROM-independent linker symbols
         shell: bash
         run: |
@@ -97,10 +115,30 @@ jobs:
 
       - name: Prepare artifact
         shell: bash
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
         run: |
           set -euo pipefail
           mkdir -p artifacts
           cp ps2/build/bin/ssb64.elf artifacts/SSB64.ELF
+
+          # A pull_request run checks out GitHub's temporary merge commit,
+          # not necessarily the PR head. Preserve both identities so real
+          # console reports identify the exact tested tree and candidate.
+          checkout_sha="$(git rev-parse HEAD)"
+          checkout_tree="$(git rev-parse 'HEAD^{tree}')"
+          test "$checkout_sha" = "$GITHUB_SHA"
+          {
+            printf 'repository=%s\n' "$GITHUB_REPOSITORY"
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'event=%s\n' "$GITHUB_EVENT_NAME"
+            printf 'checkout_sha=%s\n' "$checkout_sha"
+            printf 'checkout_tree=%s\n' "$checkout_tree"
+            printf 'pr_head_sha=%s\n' "$PR_HEAD_SHA"
+            printf 'pr_base_sha=%s\n' "$PR_BASE_SHA"
+          } > artifacts/BUILD_PROVENANCE.txt
+          test -s artifacts/BUILD_PROVENANCE.txt
           # The executable selects native NTSC 240p when argv[0] contains
           # "240p". Ship the exact same binary under that name so hardware
           # tests can isolate interlaced-field presentation artifacts without
@@ -118,6 +156,15 @@ jobs:
           cat > artifacts/README.txt <<'EOF'
           SSB64 native PS2 port - automated ps2build artifact
 
+          Verify all included ELF files after extracting:
+              sha256sum --check SHA256SUMS.txt
+
+          Check BUILD_PROVENANCE.txt before reporting console test results.
+          In a pull_request workflow, checkout_sha is GitHub's synthetic
+          tested merge commit. pr_head_sha identifies the PR branch source;
+          those IDs are not interchangeable. Include the ELF SHA256SUMS.txt
+          entry with your hardware report.
+
           SSB64.ELF is the standard 480i bootable PS2 executable.
           SSB64-240p.ELF is the same build with native 240p selected by its
           filename. It is intended for displays/capture chains that accept 240p.
@@ -131,11 +178,17 @@ jobs:
           Put SSB64.DAT beside SSB64.ELF (or use --data=<directory>).
           EOF
 
-          sha256sum artifacts/SSB64.ELF > artifacts/SHA256SUMS.txt
-          sha256sum artifacts/SSB64-240p.ELF >> artifacts/SHA256SUMS.txt
-          if [ -f artifacts/SSB64-unstripped.ELF ]; then
-            sha256sum artifacts/SSB64-unstripped.ELF >> artifacts/SHA256SUMS.txt
-          fi
+          # Artifacts are downloaded with their contents at the ZIP root.
+          # Hash paths must be relative to that extraction directory, not
+          # the build workspace's artifacts/ prefix.
+          (
+            cd artifacts
+            sha256sum SSB64.ELF SSB64-240p.ELF > SHA256SUMS.txt
+            if [ -f SSB64-unstripped.ELF ]; then
+              sha256sum SSB64-unstripped.ELF >> SHA256SUMS.txt
+            fi
+            sha256sum --check SHA256SUMS.txt
+          )
           cat artifacts/SHA256SUMS.txt
           ls -lh artifacts/
 

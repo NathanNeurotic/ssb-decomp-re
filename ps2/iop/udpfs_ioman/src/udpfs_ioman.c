@@ -185,6 +185,7 @@ static int udpfs_open(iomanX_iop_file_t *f, const char *name, int flags, int mod
 static int udpfs_close(iomanX_iop_file_t *f)
 {
     int fd_idx = (int)(uintptr_t)f->privdata;
+    int result;
 
     M_DEBUG("%s(fd=%d)\n", __FUNCTION__, fd_idx);
 
@@ -193,11 +194,11 @@ static int udpfs_close(iomanX_iop_file_t *f)
     if (g_fds[fd_idx].server_handle < 0)
         return -EBADF;
 
-    /* Call core close */
-    udpfs_core_close(g_fds[fd_idx].server_handle);
-
+    /* Always release the local slot (the remote session may be lost), but
+     * do not falsely report successful close to the EE/newlib client. */
+    result = udpfs_core_close(g_fds[fd_idx].server_handle);
     _free_fd(fd_idx);
-    return 0;
+    return result;
 }
 
 static int udpfs_read(iomanX_iop_file_t *f, void *buffer, int size)
