@@ -126,6 +126,12 @@ static void render_one(const RenderJob *job)
                 (unsigned)gPS2RenderStats.dl_commands, (unsigned)gPS2RenderStats.triangles,
                 (unsigned)gPS2RenderStats.rects, (unsigned)gPS2RenderStats.tex_uploads,
                 (unsigned)gPS2RenderStats.unknown_cmds, (unsigned)gPS2RenderStats.gfx_us);
+        ps2_log("gfx wait: GIF DMA %u us, GS FINISH %u us, other gfx %u us",
+                (unsigned)gPS2RenderStats.dma_wait_us, (unsigned)gPS2RenderStats.gs_wait_us,
+                (unsigned)(gPS2RenderStats.gfx_us >
+                           gPS2RenderStats.dma_wait_us + gPS2RenderStats.gs_wait_us
+                              ? gPS2RenderStats.gfx_us -
+                                gPS2RenderStats.dma_wait_us - gPS2RenderStats.gs_wait_us : 0));
 #if PS2_DEBUG
         {
             extern uint32_t gPS2FbDrawDisplayed, gPS2FbDrawPending;

@@ -81,6 +81,8 @@ void ps2_overlay_draw(void)
     const PS2RenderStats *r = &gPS2RenderStatsLast;
     uint32_t now = ps2_time_us();
     uint32_t arena_used = 0;
+    uint32_t gfx_wait = r->dma_wait_us + r->gs_wait_us;
+    uint32_t gfx_other = (r->gfx_us > gfx_wait) ? r->gfx_us - gfx_wait : 0;
     int y = 12; /* clear of the top overscan area on TVs */
     uint32_t warn = 0x4040FF, ok = 0xE0FFE0, dim = 0xC0C0C0;
 
@@ -101,9 +103,13 @@ void ps2_overlay_draw(void)
         arena_used = (uint32_t)((uint8_t *)gSYTaskmanGeneralHeap.ptr - gPS2SceneArena);
     }
 
-    ps2_gs_rect(0, 0, 200, 150, 0xA0000000);
-    line(&y, ok, "FPS %u.%u  gfx %u.%ums", (unsigned)(sFpsX10 / 10), (unsigned)(sFpsX10 % 10),
+    ps2_gs_rect(0, 0, 256, 162, 0xA0000000);
+    line(&y, ok, "FPS %u.%u gfx %u.%ums", (unsigned)(sFpsX10 / 10), (unsigned)(sFpsX10 % 10),
          (unsigned)(r->gfx_us / 1000), (unsigned)((r->gfx_us / 100) % 10));
+    /* gfx_other includes EE translation, packet construction and overlay;
+     * DMA/GS waits remain separately visible instead of blaming storage. */
+    line(&y, dim, "EE %ums GIF %ums GS %ums", (unsigned)(gfx_other / 1000),
+         (unsigned)(r->dma_wait_us / 1000), (unsigned)(r->gs_wait_us / 1000));
     line(&y, (m->total_used > m->budget) ? warn : ok, "EE %uK/%uK pk %uK", (unsigned)(m->total_used >> 10),
          (unsigned)(m->budget >> 10), (unsigned)(m->total_peak >> 10));
     line(&y, dim, " code %uK arena %uK/%uK", (unsigned)(m->used[PS2_MEM_CODE_STATIC] >> 10),

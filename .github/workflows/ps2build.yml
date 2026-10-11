@@ -64,6 +64,7 @@ jobs:
           python3 ps2/tests/test_usb_module_order.py
           python3 ps2/tests/test_filexio_recovery.py
           python3 ps2/tests/test_renderer_coordinates.py
+          python3 ps2/tests/test_render_timing_probes.py
           python3 ps2/tests/test_gbi_vertex_bounds.py
           python3 ps2/tests/test_udpfs_close.py
           python3 ps2/tests/test_udpfs_recv_cleanup.py
