@@ -361,11 +361,70 @@ static int make_resident(int sample)
 /* Public interface                                                    */
 /* ------------------------------------------------------------------ */
 
+
+/* Samples live in one non-resident DAT region. Derive size limits from that
+ * region descriptor rather than from untrusted last-sample offsets. This is
+ * metadata-only: valid packs incur no additional storage reads. */
+static int spu_sample_header_layout_valid(const PS2SpuSampleHeader *head, uint32_t region_bytes)
+{
+    if (region_bytes < sizeof(*head) ||
+        head->count == 0 || head->count > 65536u ||
+        head->entries_offset < sizeof(*head) ||
+        (head->entries_offset & 3u) != 0 ||
+        head->entries_offset > region_bytes)
+        return 0;
+    return head->count <= (region_bytes - head->entries_offset) /
+                          (uint32_t)sizeof(PS2SpuSampleEntry);
+}
+
+static int spu_sample_last_span_valid(const PS2SpuSampleHeader *head,
+                                      const PS2SpuSampleEntry *last,
+                                      uint32_t region_bytes,
+                                      uint32_t *sample_bytes)
+{
+    uint32_t table_end = head->entries_offset +
+                         head->count * (uint32_t)sizeof(PS2SpuSampleEntry);
+
+    if (last->data_off < table_end || last->data_off > region_bytes ||
+        last->data_size > region_bytes - last->data_off)
+        return 0;
+
+    *sample_bytes = last->data_off + last->data_size;
+    return 1;
+}
+
+static int spu_sample_entries_valid(const uint8_t *set, uint32_t bytes,
+                                    const PS2SpuSampleHeader *head)
+{
+    const PS2SpuSampleEntry *entries =
+        (const PS2SpuSampleEntry *)(set + head->entries_offset);
+    uint32_t table_end = head->entries_offset +
+                         head->count * (uint32_t)sizeof(PS2SpuSampleEntry);
+    uint32_t i;
+
+    for (i = 0; i < head->count; i++)
+    {
+        const PS2SpuSampleEntry *entry = &entries[i];
+
+        if (entry->data_off < table_end || entry->data_off > bytes ||
+            entry->data_size > bytes - entry->data_off)
+            return 0;
+    }
+    return 1;
+}
+
 int ps2_spu_init(void)
 {
     PS2SpuSampleHeader head;
     uint32_t size, i;
+    uint32_t region_bytes = ps2_assets_region_size(PS2_SPU_SAMPLES_VROM);
     int v;
+
+    if (region_bytes < sizeof(PS2SpuSampleHeader))
+    {
+        ps2_log("audio: SPU sample DAT region missing or too short; audio stays silent");
+        return -1;
+    }
 
     ps2_log("audio: SPU init stage 1/6 - reading sample header");
     ps2_rom_read(PS2_SPU_SAMPLES_VROM, &head, sizeof(head));
@@ -374,18 +433,22 @@ int ps2_spu_init(void)
         ps2_log("audio: no SPU sample set in the asset pack (rebuild it); audio stays silent");
         return -1;
     }
-    if (head.count == 0 || head.count > 65536u)
+    if (!spu_sample_header_layout_valid(&head, region_bytes))
     {
-        ps2_log("audio: invalid sample count %u; continuing silent", (unsigned)head.count);
+        ps2_log("audio: invalid SPU sample table bounds/count; continuing silent");
         return -1;
     }
-    /* size = end of the last sample's data */
+    /* size = end of the last sample's data, checked against its DAT region */
     {
         PS2SpuSampleEntry last;
 
         ps2_rom_read(PS2_SPU_SAMPLES_VROM + head.entries_offset + (head.count - 1) * sizeof(last), &last,
                      sizeof(last));
-        size = last.data_off + last.data_size;
+        if (!spu_sample_last_span_valid(&head, &last, region_bytes, &size))
+        {
+            ps2_log("audio: invalid SPU sample data bounds; continuing silent");
+            return -1;
+        }
     }
     ps2_log("audio: SPU init stage 2/6 - sample set %u KiB, %u entries",
             (unsigned)(size / 1024), (unsigned)head.count);
@@ -398,6 +461,15 @@ int ps2_spu_init(void)
     }
     ps2_log("audio: SPU init stage 3/6 - loading PS-ADPCM set");
     ps2_rom_read(PS2_SPU_SAMPLES_VROM, sSet, size);
+    if (!spu_sample_entries_valid(sSet, size, &head))
+    {
+        ps2_log("audio: invalid SPU entry data ranges; continuing silent");
+        ps2_mem_free(PS2_MEM_AUDIO, sResidentOf, head.count * sizeof(int));
+        ps2_mem_free(PS2_MEM_AUDIO, sSet, size);
+        sResidentOf = NULL;
+        sSet = NULL;
+        return -1;
+    }
     sEntries = (const PS2SpuSampleEntry *)(sSet + head.entries_offset);
     sCount = head.count;
     for (i = 0; i < sCount; i++)

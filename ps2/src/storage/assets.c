@@ -377,6 +377,15 @@ static int find_region(uint32_t addr)
     return -1;
 }
 
+uint32_t ps2_assets_region_size(uint32_t vrom_start)
+{
+    int index = (sRegions != NULL) ? find_region(vrom_start) : -1;
+
+    return index >= 0 && sRegions[index].vrom_start == vrom_start
+               ? sRegions[index].size
+               : 0;
+}
+
 void ps2_rom_read(uint32_t rom_addr, void *dst, uint32_t size)
 {
     uint8_t *out = (uint8_t *)dst;

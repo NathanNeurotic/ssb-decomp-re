@@ -76,5 +76,8 @@ typedef struct PS2PackRegion
 
 /* Reads from the pack's virtual ROM address space (ps2/src/storage/assets.c). */
 void ps2_rom_read(uint32_t rom_addr, void *dst, uint32_t size);
+/* Metadata-only lookup: returns the exact region byte length at vrom_start,
+ * or zero if missing. Does not perform a filesystem read or change streams. */
+uint32_t ps2_assets_region_size(uint32_t vrom_start);
 
 #endif /* PS2_ASSETPACK_H */
