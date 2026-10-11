@@ -41,6 +41,9 @@ static int sDataNeedsBdmResolve;
 /* Capture the actual newlib I/O result, not merely a guessed missing DAT. */
 static int sLastPackProbeErrno;
 static int sLastPackProbeCount;
+/* Bits 0..3 identify distinct massN: slots with a matching DAT after IOP
+ * reconstruction. Unlike errno this survives unrelated open/root probes. */
+static unsigned int sPackConflictMassMask;
 static int sPackProbeRootAccessible;
 static char sLastPackProbePath[PATH_BUF_MAX + 64];
 
@@ -300,6 +303,7 @@ static int set_data_location(const char *path, int path_is_file)
         sHddMountSource[0] = '\0';
     }
 
+    sPackConflictMassMask = 0;
     sDataDevice = dev;
     strncpy(sDataDir, tmp, sizeof(sDataDir) - 1);
     sDataDir[sizeof(sDataDir) - 1] = '\0';
@@ -316,6 +320,7 @@ void ps2_storage_set_boot_path(const char *argv0)
     sDataNeedsBdmResolve = 0;
     sLastPackProbeErrno = 0;
     sLastPackProbeCount = 0;
+    sPackConflictMassMask = 0;
     sPackProbeRootAccessible = -1;
     sLastPackProbePath[0] = '\0';
 
@@ -394,8 +399,13 @@ static int resolve_rebuilt_bdm_root(const char *probe_name)
     char path[PATH_BUF_MAX + 64];
     const char *relative;
     unsigned int i;
-    int matches = 0;
+    unsigned int match_mask = 0;
 
+    /* A genuinely ambiguous restored mount cannot become unique by
+     * repeatedly reopening the same DAT paths. Avoid the 100 x 4 retry
+     * storm and preserve the matched-volume evidence for the fatal screen. */
+    if (sPackConflictMassMask != 0)
+        return 0;
     if (colon == NULL)
         return 0;
     relative = colon + 1;
@@ -420,17 +430,19 @@ static int resolve_rebuilt_bdm_root(const char *probe_name)
         if (fd >= 0)
         {
             close(fd);
-            ++matches;
+            match_mask |= 1u << i;
+            ps2_log("storage: rebuilt BDM DAT candidate %s", path);
             snprintf(selected, sizeof(selected), "%s%s", prefix, relative);
         }
     }
-    if (matches != 1)
+    if (match_mask == 0)
+        return 0;
+    if ((match_mask & (match_mask - 1u)) != 0)
     {
-        if (matches > 1)
-        {
-            sLastPackProbeErrno = EEXIST;
-            ps2_log("storage: multiple adjacent DATs after reset; refusing ambiguous volume");
-        }
+        sPackConflictMassMask = match_mask;
+        sLastPackProbeErrno = EEXIST;
+        ps2_log("storage: ambiguous DAT after IOP reset (mass slots mask=0x%x); keep launcher IOP to preserve device identity",
+                match_mask);
         return 0;
     }
     snprintf(sDataDir, sizeof(sDataDir), "%s", selected);
@@ -610,6 +622,11 @@ int ps2_storage_pack_root_probe(void)
 int ps2_storage_pack_probe_errno(void)
 {
     return sLastPackProbeErrno;
+}
+
+unsigned int ps2_storage_pack_conflict_mask(void)
+{
+    return sPackConflictMassMask;
 }
 
 int ps2_storage_pack_probe_count(void)

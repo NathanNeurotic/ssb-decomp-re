@@ -60,6 +60,7 @@ static char sDataDir[PATH_BUF_MAX];
 static int sDataNeedsBdmResolve;
 static int sDataDevice;
 static int sLastPackProbeErrno, sLastPackProbeCount, sPackProbeRootAccessible;
+static unsigned int sPackConflictMassMask;
 static char sLastPackProbePath[PATH_BUF_MAX + 64];
 static const char *sAvailable;
 static const char *sSecondAvailable;
@@ -180,11 +181,29 @@ int main(void)
     strcpy(sDataDir, "mass0:/GAME/");
     sDataNeedsBdmResolve = 1;
     sSecondAvailable = "mass0:/GAME/SSB64.DAT";
+    int before = sLastPackProbeCount;
     assert(ps2_storage_resolve_data_root("SSB64.DAT") == 0);
     assert(sLastPackProbeErrno == EEXIST);
+    assert(sPackConflictMassMask == ((1u << 0) | (1u << 2)));
+    assert(sLastPackProbeCount == before + 4);
     assert(!strcmp(sDataDir, "mass0:/GAME/"));
+    /* Even with two USB DATs, retry must not run the scan 100 times or
+     * silently choose the first volume. */
+    for (int n=0; n<100; n++)
+        assert(ps2_storage_resolve_data_root("SSB64.DAT") == 0);
+    assert(sLastPackProbeCount == before + 4);
+    assert(sLastPackProbeErrno == EEXIST);
+    /* A new launch resets this diagnostic state; one matching volume works
+     * despite another USB being present without the DAT. */
+    sPackConflictMassMask = 0;
     sSecondAvailable = NULL;
+    sAvailable = "mass2:/GAME/SSB64.DAT";
+    strcpy(sDataDir, "mass0:/GAME/");
+    assert(ps2_storage_resolve_data_root("SSB64.DAT") == 1);
+    assert(!strcmp(sDataDir, "mass2:/GAME/"));
     sAvailable = "mass2:/SSB64/SSB64.DAT";
+    sDataNeedsBdmResolve = 1;
+    strcpy(sDataDir, "mass0:/GAME/");
     assert(ps2_storage_resolve_data_root("SSB64.DAT") == 0);
     sRebuiltBdm = 0;
 

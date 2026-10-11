@@ -134,6 +134,9 @@ int ps2_storage_resolve_data_root(const char *probe_name);
 /* Diagnostics for the precise massN: path, without guessing a different drive. */
 int ps2_storage_pack_root_probe(void);
 int ps2_storage_pack_probe_errno(void);
+/* Nonzero when multiple distinct massN: units contain the same adjacent DAT
+ * after launcher-IOP reset (bit 0 = mass0:, bit 1 = mass1:, etc). */
+unsigned int ps2_storage_pack_conflict_mask(void);
 int ps2_storage_pack_probe_count(void);
 int ps2_storage_pack_root_accessible(void); /* -1=not tested, 0=no, 1=yes */
 const char *ps2_storage_pack_probe_last_path(void);

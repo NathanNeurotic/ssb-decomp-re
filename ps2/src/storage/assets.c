@@ -228,6 +228,16 @@ int ps2_assets_init(void)
                 break;
             }
 
+            /* The rebuilt IOP may expose both connected USB drives under
+             * new massN: numbers. If both contain the adjacent DAT, repeated
+             * probing cannot recover the original device identity. Stop
+             * immediately; never pick a different user's USB silently. */
+            if (ps2_storage_pack_conflict_mask() != 0)
+            {
+                sInitFailReason = 6;
+                break;
+            }
+
             if (ps2_storage_data_device() == PS2_BOOT_HOST)
                 break;
 
@@ -259,8 +269,9 @@ int ps2_assets_init(void)
         /* The failing path is known but the reason is not: it may be a
          * missing file, missing/hidden mount or an incompatible legacy
          * FILEIO namespace. Do not advise re-generating valid DAT content. */
-        sInitFailReason = 1;
-        if (ps2_storage_pack_probe_count() > 0)
+        if (sInitFailReason != 6)
+            sInitFailReason = 1;
+        if (sInitFailReason != 6 && ps2_storage_pack_probe_count() > 0)
             ps2_storage_pack_root_probe();
         ps2_log("assets: cannot access %s errno=%d probes=%d root=%d",
                 path, ps2_storage_pack_probe_errno(),
@@ -349,6 +360,11 @@ const char *ps2_assets_last_init_error(void)
         break;
     case 5:
         snprintf(message, sizeof(message), "SSB64.DAT opened but contains invalid region/layout metadata");
+        break;
+    case 6:
+        snprintf(message, sizeof(message),
+                 "SSB64.DAT on multiple mass drives (mask=0x%x; 1=mass0,2=mass1,4=mass2,8=mass3). Disable launcher IOP reset to keep the correct USB.",
+                 ps2_storage_pack_conflict_mask());
         break;
     default:
         snprintf(message, sizeof(message), "SSB64.DAT runtime initialization failed");
