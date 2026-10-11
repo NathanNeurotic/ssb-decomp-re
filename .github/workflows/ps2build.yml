@@ -151,6 +151,9 @@ jobs:
           cat > artifacts/README.txt <<'EOF'
           SSB64 native PS2 port - automated ps2build artifact
 
+          Verify all included ELF files after extracting:
+              sha256sum --check SHA256SUMS.txt
+
           Check BUILD_PROVENANCE.txt before reporting console test results.
           In a pull_request workflow, checkout_sha is GitHub's synthetic
           tested merge commit. pr_head_sha identifies the PR branch source;
@@ -170,11 +173,17 @@ jobs:
           Put SSB64.DAT beside SSB64.ELF (or use --data=<directory>).
           EOF
 
-          sha256sum artifacts/SSB64.ELF > artifacts/SHA256SUMS.txt
-          sha256sum artifacts/SSB64-240p.ELF >> artifacts/SHA256SUMS.txt
-          if [ -f artifacts/SSB64-unstripped.ELF ]; then
-            sha256sum artifacts/SSB64-unstripped.ELF >> artifacts/SHA256SUMS.txt
-          fi
+          # Artifacts are downloaded with their contents at the ZIP root.
+          # Hash paths must be relative to that extraction directory, not
+          # the build workspace's artifacts/ prefix.
+          (
+            cd artifacts
+            sha256sum SSB64.ELF SSB64-240p.ELF > SHA256SUMS.txt
+            if [ -f SSB64-unstripped.ELF ]; then
+              sha256sum SSB64-unstripped.ELF >> SHA256SUMS.txt
+            fi
+            sha256sum --check SHA256SUMS.txt
+          )
           cat artifacts/SHA256SUMS.txt
           ls -lh artifacts/
 
