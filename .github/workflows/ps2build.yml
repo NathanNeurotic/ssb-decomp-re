@@ -61,6 +61,7 @@ jobs:
           python3 ps2/tests/test_spu_layout.py
           python3 ps2/tests/test_mem_allocation_bounds.py
           python3 ps2/tests/test_inherited_transports.py
+          python3 ps2/tests/test_usb_module_order.py
           python3 ps2/tests/test_filexio_recovery.py
           python3 ps2/tests/test_renderer_coordinates.py
           python3 ps2/tests/test_gbi_vertex_bounds.py

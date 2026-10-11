@@ -600,7 +600,10 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
         return LOAD_IRX(cdvd);
 
     case PS2_BOOT_USB:
-        if (load_bdm_core() < 0 || LOAD_IRX(usbd_mini) < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
+        /* Match working wLaunchELF_R3Z / Launchstation cold USB startup:
+         * USBD -> BDM -> BDMFS_FATFS -> USBMASS_BD. Do not touch the
+         * inherited-launcher IOP branch above or other BDM transports. */
+        if (LOAD_IRX(usbd_mini) < 0 || load_bdm_core() < 0 || LOAD_IRX(usbmass_bd_mini) < 0)
             return -1;
         return 0;
 
@@ -687,6 +690,7 @@ int ps2_iop_load_bdm_fallback_transports(void)
 {
     static int sDone;
     int transports = 0;
+    int usb_host_ready;
     if (sDone)
         return 0;
     if (sInheritedBdm)
@@ -698,9 +702,14 @@ int ps2_iop_load_bdm_fallback_transports(void)
     }
 
     ps2_log("IOP: loading BDM fallback transports (USB/MX4SIO/ATA/iLink)");
+    /* The USB host must exist before registering the filesystem core,
+     * matching Launchstation's corrected normal USB init order. A failed
+     * USBD still permits trying independent MX4SIO/ATA/iLink transports;
+     * it must NOT attempt to start USBMASS without a working host. */
+    usb_host_ready = LOAD_IRX(usbd_mini) >= 0;
     if (load_bdm_core() < 0)
         return -1;
-    if (LOAD_IRX(usbd_mini) >= 0 && LOAD_IRX(usbmass_bd_mini) >= 0)
+    if (usb_host_ready && LOAD_IRX(usbmass_bd_mini) >= 0)
         transports++;
     if (LOAD_IRX(mx4sio_bd) >= 0)
         transports++;
