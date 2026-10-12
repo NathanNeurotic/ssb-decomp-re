@@ -178,7 +178,8 @@ void ps2_storage_set_boot_path(const char *argv0)
 
         for (p = argv0; p[0] != '\0'; p++)
         {
-            if (p[0] == '2' && p[1] == '4' && p[2] == '0' && (p[3] == 'p' || p[3] == 'P'))
+            if (p[0] == '2' && p[1] != '\0' && p[2] != '\0' && p[3] != '\0' &&
+                p[1] == '4' && p[2] == '0' && (p[3] == 'p' || p[3] == 'P'))
             {
                 sProgressive = 1;
             }
