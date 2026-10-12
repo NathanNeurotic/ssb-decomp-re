@@ -93,11 +93,31 @@ int ps2_assets_init(void)
         ps2_log("assets: %s: %s", path, sLoadError);
         return 0;
     }
-    if (!read_exact(&sHeader, 0, sizeof(sHeader)))
+    /* A successful open says nothing about the copy's completeness.
+     * Resolve its physical length before trusting on-disk offsets. */
     {
-        snprintf(sLoadError, sizeof(sLoadError), "DAT header read failed (errno %d)", errno);
-        ps2_log("assets: %s: %s", path, sLoadError);
-        return 0;
+        int file_bytes = ps2_file_size(sFd);
+        if (file_bytes < (int)sizeof(sHeader))
+        {
+            snprintf(sLoadError, sizeof(sLoadError),
+                     "DAT too small or size unavailable (%d bytes)", file_bytes);
+            ps2_log("assets: %s: %s", path, sLoadError);
+            return 0;
+        }
+        if (!read_exact(&sHeader, 0, sizeof(sHeader)))
+        {
+            snprintf(sLoadError, sizeof(sLoadError), "DAT header read failed (errno %d)", errno);
+            ps2_log("assets: %s: %s", path, sLoadError);
+            return 0;
+        }
+        if (sHeader.total_size > (uint32_t)file_bytes)
+        {
+            snprintf(sLoadError, sizeof(sLoadError),
+                     "DAT truncated: %u/%u bytes", (unsigned)file_bytes,
+                     (unsigned)sHeader.total_size);
+            ps2_log("assets: %s: %s", path, sLoadError);
+            return 0;
+        }
     }
     if (memcmp(sHeader.magic, PS2PACK_MAGIC, 8) != 0)
     {
