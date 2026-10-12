@@ -83,8 +83,18 @@ PS2BootDevice ps2_storage_data_device(void)
         return sDevice;
     if (starts_with(path, "host:"))
         return PS2_BOOT_HOST;
-    if (starts_with(path, "mass") || starts_with(path, "usb") || starts_with(path, "bdm"))
+    if (starts_with(path, "mass") || starts_with(path, "usb"))
         return PS2_BOOT_MASS;
+    if (starts_with(path, "ata"))
+        return PS2_BOOT_ATA;
+    if (starts_with(path, "mx4sio") || starts_with(path, "sdc"))
+        return PS2_BOOT_MX4SIO;
+    if (starts_with(path, "ilink") || starts_with(path, "sd:"))
+        return PS2_BOOT_ILINK;
+    if (starts_with(path, "udpbd"))
+        return PS2_BOOT_UDPBD;
+    if (starts_with(path, "udpfs"))
+        return PS2_BOOT_UDPFS;
     if (starts_with(path, "mc"))
         return PS2_BOOT_MC;
     if (starts_with(path, "mmce"))
@@ -135,8 +145,18 @@ void ps2_storage_set_boot_path(const char *argv0)
 
     if (starts_with(argv0, "host"))
         sDevice = PS2_BOOT_HOST;
-    else if (starts_with(argv0, "mass") || starts_with(argv0, "usb") || starts_with(argv0, "bdm"))
+    else if (starts_with(argv0, "mass") || starts_with(argv0, "usb"))
         sDevice = PS2_BOOT_MASS;
+    else if (starts_with(argv0, "ata"))
+        sDevice = PS2_BOOT_ATA;
+    else if (starts_with(argv0, "mx4sio") || starts_with(argv0, "sdc"))
+        sDevice = PS2_BOOT_MX4SIO;
+    else if (starts_with(argv0, "ilink") || starts_with(argv0, "sd:"))
+        sDevice = PS2_BOOT_ILINK;
+    else if (starts_with(argv0, "udpbd"))
+        sDevice = PS2_BOOT_UDPBD;
+    else if (starts_with(argv0, "udpfs"))
+        sDevice = PS2_BOOT_UDPFS;
     else if (starts_with(argv0, "mc"))
         sDevice = PS2_BOOT_MC;
     else if (starts_with(argv0, "hdd") || starts_with(argv0, "pfs"))
@@ -221,6 +241,11 @@ const char *ps2_storage_device_name(PS2BootDevice dev)
     {
     case PS2_BOOT_HOST: return "host";
     case PS2_BOOT_MASS: return "mass";
+    case PS2_BOOT_ATA: return "ata";
+    case PS2_BOOT_MX4SIO: return "mx4sio";
+    case PS2_BOOT_ILINK: return "ilink";
+    case PS2_BOOT_UDPBD: return "udpbd";
+    case PS2_BOOT_UDPFS: return "udpfs";
     case PS2_BOOT_MC: return "memory card";
     case PS2_BOOT_HDD: return "hdd";
     case PS2_BOOT_MMCE: return "mmce";
