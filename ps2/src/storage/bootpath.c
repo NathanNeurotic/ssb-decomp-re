@@ -71,6 +71,28 @@ static PS2BootDevice classify_device(const char *path)
     return PS2_BOOT_UNKNOWN;
 }
 
+/* launcHER's USB device handler maps usb0:/.. to mass0:/.. and usb1:/
+ * to mass1:/. Preserve the exact numeric index; never scan another mass
+ * entry. bdmN: has no equivalent proven mapping and stays unsupported. */
+static int canonical_usb_path(char *out, size_t out_size, const char *path)
+{
+    const char *colon = strchr(path, ':');
+    const char *unit = path + 3;
+    int index = 0;
+    int written;
+    if (colon == NULL || strncmp(path, "usb", 3) != 0 ||
+        colon < unit || colon > unit + 1)
+        return 0;
+    if (colon > unit)
+    {
+        if (unit[0] < '0' || unit[0] > '9')
+            return 0;
+        index = unit[0] - '0';
+    }
+    written = snprintf(out, out_size, "mass%d:%s", index, colon + 1);
+    return written >= 0 && (size_t)written < out_size;
+}
+
 /* A supplied DAT path is an explicit identity, never a device-search hint. */
 int ps2_storage_set_data_path(const char *path)
 {
@@ -102,6 +124,8 @@ int ps2_storage_set_data_path(const char *path)
         sDataHddPartition[part_len] = '\0';
         return 1;
     }
+    if (device_token(path, "usb"))
+        return canonical_usb_path(sDataPath, sizeof(sDataPath), path);
     memcpy(sDataPath, path, n + 1);
     return 1;
 }
@@ -210,12 +234,19 @@ void ps2_storage_set_boot_path(const char *argv0)
             strcpy(sBootDir, "pfs0:/");
         }
     }
+    else if (device_token(argv0, "usb"))
+    {
+        /* Map only a known USB unit to the SAME numbered massN: mount. */
+        if (!canonical_usb_path(sBootDir, sizeof(sBootDir), argv0))
+        {
+            sDevice = PS2_BOOT_UNKNOWN;
+            sBootDir[0] = '\0';
+        }
+    }
     else
     {
-        /* Preserve the launcher-supplied device identifier byte-for-byte.
-         * usbN:/ and bdmN:/ are NOT proven aliases of massN: and converting
-         * them silently can pick the wrong device in a multi-USB setup.
-         * Backend compatibility must be decided separately from path parsing. */
+        /* Keep native massN: and other device IDs untouched. In particular,
+         * bdmN: does not unambiguously specify a physical transport. */
         strncpy(sBootDir, argv0, sizeof(sBootDir) - 1);
         sBootDir[sizeof(sBootDir) - 1] = '\0';
     }
