@@ -17,10 +17,51 @@
 #include <string.h>
 
 #define BOOT_DIR_MAX 256
+#define DATA_PATH_MAX 300
 
 static PS2BootDevice sDevice = PS2_BOOT_UNKNOWN;
 static char sBootDir[BOOT_DIR_MAX] = "host:";
 static int sProgressive;
+static char sDataPath[DATA_PATH_MAX];
+
+/* A supplied DAT path is an explicit identity, never a device-search hint. */
+int ps2_storage_set_data_path(const char *path)
+{
+    size_t n;
+    sDataPath[0] = '\0';
+    if (path == NULL || path[0] == '\0')
+        return 1; /* No override: use ELF-adjacent DAT. */
+    n = strlen(path);
+    if (strchr(path, ':') == NULL || n >= sizeof(sDataPath))
+        return 0; /* Absolute PS2 device paths only; no truncation. */
+    memcpy(sDataPath, path, n + 1);
+    return 1;
+}
+
+int ps2_storage_pack_path(char *out, size_t out_size)
+{
+    const char *source = sDataPath[0] ? sDataPath : sBootDir;
+    size_t n = strlen(source);
+    int full_file = 0, count;
+    if (out == NULL || out_size == 0 || n == 0)
+        return 0;
+    /* --data=.../SSB64.DAT is an explicit file; otherwise a directory. */
+    if (n >= 9 && strncmp(source + n - 9, "SSB64.DAT", 9) == 0 &&
+        (n == 9 || (n >= 10 && (source[n - 10] == '/' || source[n - 10] == '\\'))))
+        full_file = 1;
+    if (full_file)
+        count = snprintf(out, out_size, "%s", source);
+    else
+        count = snprintf(out, out_size, "%s%sSSB64.DAT", source,
+                         source[n - 1] == '/' || source[n - 1] == '\\' || source[n - 1] == ':' ? "" : "/");
+    if (count < 0 || (size_t)count >= out_size)
+    {
+        out[0] = '\0';
+        return 0;
+    }
+    return 1;
+}
+
 
 static int starts_with(const char *s, const char *prefix)
 {
