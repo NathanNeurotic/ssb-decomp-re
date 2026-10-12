@@ -23,6 +23,7 @@ static PS2BootDevice sDevice = PS2_BOOT_UNKNOWN;
 static char sBootDir[BOOT_DIR_MAX] = "host:";
 static int sProgressive;
 static char sDataPath[DATA_PATH_MAX];
+static char sBootHddPartition[96];
 
 /* A supplied DAT path is an explicit identity, never a device-search hint. */
 int ps2_storage_set_data_path(const char *path)
@@ -95,6 +96,11 @@ PS2BootDevice ps2_storage_data_device(void)
     return PS2_BOOT_UNKNOWN;
 }
 
+const char *ps2_storage_boot_hdd_partition(void)
+{
+    return sBootHddPartition;
+}
+
 void ps2_storage_set_boot_path(const char *argv0)
 {
     const char *last_sep;
@@ -102,6 +108,7 @@ void ps2_storage_set_boot_path(const char *argv0)
 
     /* This may be called again after a different launcher handoff. */
     sProgressive = 0;
+    sBootHddPartition[0] = '\0';
 
     if (argv0 == NULL || argv0[0] == '\0')
     {
@@ -149,6 +156,13 @@ void ps2_storage_set_boot_path(const char *argv0)
 
         if (pfs != NULL)
         {
+            /* Mount only the actual APA partition given by the launcher. */
+            len = (size_t)(pfs - argv0);
+            if (len > 5 && len < sizeof(sBootHddPartition))
+            {
+                memcpy(sBootHddPartition, argv0, len);
+                sBootHddPartition[len] = '\0';
+            }
             snprintf(sBootDir, sizeof(sBootDir), "pfs0:%s", pfs + 5);
         }
         else
