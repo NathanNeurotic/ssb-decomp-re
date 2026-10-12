@@ -419,7 +419,17 @@ int ps2_iop_load_audio_drivers(void)
 void ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
 {
     if (sInheritedFileXio)
-        return; /* Do not duplicate, unmount, or renumber launcher devices. */
+    {
+        /* launcHER deliberately unmounts a PFS ELF partition before
+         * handoff, even while retaining its APA/PS2FS drivers. Remount the
+         * exact named partition; never guess a different HDD partition. */
+        if (dev == PS2_BOOT_HDD && ps2_storage_boot_hdd_partition()[0])
+        {
+            int res = fileXioMount("pfs0:", ps2_storage_boot_hdd_partition(), FILEXIO_MOUNTFLAG_READONLY);
+            ps2_log("IOP: APA mount %s -> pfs0: result=%d", ps2_storage_boot_hdd_partition(), res);
+        }
+        return; /* Do not duplicate, unmount, or renumber launcher drivers. */
+    }
     switch (dev)
     {
     case PS2_BOOT_MASS:
