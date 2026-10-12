@@ -419,14 +419,20 @@ void ps2_iop_init(void)
         return;
     }
 
-    if (LOAD_IRX(sio2man, 0x008000) < 0 ||  /* green */
-        LOAD_IRX(mtapman, 0x006020) < 0 ||  /* dark green */
-        LOAD_IRX(padman, 0x404040) < 0 ||   /* grey */
-        LOAD_IRX(mcman, 0x804040) < 0 ||    /* pink */
-        LOAD_IRX(mcserv, 0x402000) < 0)     /* brown */
-    {
+    if (LOAD_IRX(sio2man, 0x008000) < 0) /* green */
         goto module_failure;
-    }
+    /* MMCEMAN installs SIO2 hooks. In a fresh IOP it must initialize
+     * before padman/mcman import SIO2 services. The device phase sees it
+     * in sLoaded and does not load a second copy. In inherited mode we
+     * preserve the launcher's existing SIO2/MMCE stack instead. */
+    if (ps2_storage_data_device() == PS2_BOOT_MMCE &&
+        LOAD_IRX(mmceman, 0x600060) < 0)
+        goto module_failure;
+    if (LOAD_IRX(mtapman, 0x006020) < 0 || /* dark green */
+        LOAD_IRX(padman, 0x404040) < 0 ||  /* grey */
+        LOAD_IRX(mcman, 0x804040) < 0 ||   /* pink */
+        LOAD_IRX(mcserv, 0x402000) < 0)    /* brown */
+        goto module_failure;
 
     /* The sound drivers (libsd + sdrdrv) are loaded later, once the GS is up
      * and the boot log is on screen: see ps2_iop_load_audio_drivers(). */
