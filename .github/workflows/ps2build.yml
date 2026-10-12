@@ -146,7 +146,22 @@ jobs:
 
               ps2/tools/prepare_assets.sh
 
-          Put SSB64.DAT beside SSB64.ELF or pass --data=<absolute directory or full DAT path>.
+          Put SSB64.DAT in the SAME directory as the selected ELF, or pass
+          --data=<absolute device directory or exact SSB64.DAT pathname>.
+          A copied ELF alone is not a playable installation.
+
+          USB/BDM IMPORTANT:
+            usb0:/ and usb1:/ name USB-backed partitions (typed filesystem).
+            mass0:/ and mass1:/ are logical BDM slots in global enumeration.
+            Do not assume mass1: always identifies the second physical USB drive.
+            Never substitute a matching DAT found on another drive.
+            If the launcher preserves IOP services, its existing mounts are
+            retained. After an IOP reset a generic massN: name cannot safely
+            recover its former physical driver; use a typed device path or a
+            launcher mode that retains the existing device environment.
+
+          A build passing CI does not establish retail PS2 USB compatibility.
+          This is a ROM-independent development artifact from PR #25.
           EOF
 
           sha256sum artifacts/SSB64.ELF > artifacts/SHA256SUMS.txt
