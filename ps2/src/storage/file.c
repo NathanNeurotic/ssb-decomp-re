@@ -8,6 +8,7 @@
  */
 #include <ps2/platform.h>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -28,8 +29,12 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
         uint32_t chunk = ((size - done) > 0x40000u) ? 0x40000u : (size - done);
         int n = (int)read(fd, out + done, chunk);
 
+        if (n < 0 && errno == EINTR)
+            continue; /* A signal is not a failed USB transfer. */
         if (n <= 0)
         {
+            /* Keep actual transport failures visible to the DAT loader:
+             * don't fabricate a full read or silently change devices. */
             return (done > 0) ? (int)done : n;
         }
         done += (uint32_t)n;
