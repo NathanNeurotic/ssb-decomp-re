@@ -49,9 +49,14 @@ int ps2_assets_init(void)
     /* Next to the ELF first. PCSX2's "Run ELF" passes argv[0] with its
      * backslashes stripped, so for host: also try the host root, which
      * PCSX2 maps to the ELF's directory. */
-    ps2_storage_path(path, sizeof(path), PACK_NAME);
+    if (!ps2_storage_pack_path(path, sizeof(path)))
+    {
+        ps2_log("assets: DAT path invalid or too long");
+        return 0;
+    }
     sFd = ps2_file_open_read(path);
-    if (sFd < 0 && ps2_storage_boot_device() == PS2_BOOT_HOST)
+    if (sFd < 0 && ps2_storage_boot_device() == PS2_BOOT_HOST &&
+        strcmp(path, "host:SSB64.DAT") != 0)
     {
         ps2_log("assets: %s not found, trying host:%s", path, PACK_NAME);
         snprintf(path, sizeof(path), "host:%s", PACK_NAME);
