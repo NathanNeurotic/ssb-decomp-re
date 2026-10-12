@@ -21,6 +21,11 @@
 #include <ps2/platform.h>
 
 #include <fileXio_rpc.h>
+#include <delaythread.h>
+#include <ctype.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <unistd.h>
 #include <kernel.h>
 #include <iopcontrol.h>
 #include <iopheap.h>
@@ -28,6 +33,7 @@
 #include <sbv_patches.h>
 #include <malloc.h>
 #include <sifrpc.h>
+#include <smod.h>
 #include <string.h>
 
 #define DECLARE_IRX(name)                         \
@@ -46,10 +52,22 @@ DECLARE_IRX(bdmfs_fatfs);
 DECLARE_IRX(usbd_mini);
 DECLARE_IRX(usbmass_bd_mini);
 DECLARE_IRX(mmceman);
+DECLARE_IRX(ps2dev9);
+DECLARE_IRX(ps2atad);
+DECLARE_IRX(mx4sio_bd);
+DECLARE_IRX(iLinkman);
+DECLARE_IRX(IEEE1394_bd);
+DECLARE_IRX(smap_udpbd);
+DECLARE_IRX(udpfs_smap);
+DECLARE_IRX(udpfs_ministack);
+DECLARE_IRX(udpfs_ioman);
+DECLARE_IRX(ps2hdd);
+DECLARE_IRX(ps2fs);
+DECLARE_IRX(secrsif);
 DECLARE_IRX(libsd);
 DECLARE_IRX(sdr);
 
-#define MAX_TRACKED_MODULES 24
+#define MAX_TRACKED_MODULES 40
 
 static const char *sLoaded[MAX_TRACKED_MODULES];
 static int sLoadedCount;
@@ -232,6 +250,38 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
     int id;
     void *src = buf;
     void *bounce = NULL;
+    /* Reusing a shared backend may require a module twice. Also check the
+     * *actual* IOP module list when a launcher owns the environment, rather
+     * than assuming the loader left the PAD/MC/audio stack unloaded. */
+    if (ps2_iop_module_loaded(name))
+        return 0;
+    if (sInheritedFileXio)
+    {
+        static const struct { const char *requested; const char *resident; } known[] = {
+            {"sio2man", "sio2man"},
+            {"mtapman", "multitap_manager"},
+            {"padman", "padman"},
+            {"mcman", "mcman_cex"},
+            {"mcman", "mcman"},
+            {"mcserv", "mcserv"},
+            {"libsd", "freesd"},
+            {"libsd", "libsd"},
+            {"filexio", "IOX/File_Manager_Rpc"},
+        };
+        smod_mod_info_t info;
+        unsigned int i;
+        for (i = 0; i < sizeof(known) / sizeof(known[0]); i++)
+        {
+            if (strcmp(name, known[i].requested) == 0 &&
+                smod_get_mod_by_name(known[i].resident, &info))
+            {
+                if (sLoadedCount < MAX_TRACKED_MODULES)
+                    sLoaded[sLoadedCount++] = name;
+                ps2_log("IOP: reusing resident %s (%s)", name, known[i].resident);
+                return 0;
+            }
+        }
+    }
 
     /* SifExecModuleBuffer() sends the image with a SIF DMA REF tag, and the
      * DMAC only addresses whole quadwords.  A blob that the embedding step
@@ -290,6 +340,8 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
 #define LOAD_IRX_PATCHED(name, rgb, patch) \
     (ps2_boot_stage("IOP: loading " #name, (rgb)), load_irx(#name, name##_irx, size_##name##_irx, NULL, 0, (patch)))
 #define LOAD_IRX(name, rgb) LOAD_IRX_PATCHED(name, rgb, NULL)
+#define LOAD_IRX_ARGS(name, rgb, args, len) \
+    (ps2_boot_stage("IOP: loading " #name, (rgb)), load_irx(#name, name##_irx, size_##name##_irx, (args), (len), NULL))
 
 void ps2_iop_init(void)
 {
@@ -354,26 +406,33 @@ void ps2_iop_init(void)
 
     if (sInheritedFileXio)
     {
-        /* The launcher owns iomanX, fileXio and its device modules. Never
-         * overwrite that mount namespace. Input modules may already be
-         * present; an unsuccessful duplicate load is not proof they are
-         * absent. libpad/libmtap initialization remains the consumer check. */
-        if (LOAD_IRX(mtapman, 0x006020) < 0)
-            ps2_log("IOP: inherited mtapman retained or unavailable");
-        if (LOAD_IRX(padman, 0x404040) < 0)
-            ps2_log("IOP: inherited padman retained or unavailable");
-        ps2_log("IOP: inherited fileXio; boot drivers remain launcher-owned");
+        /* launcHER normally supplies sio2man/mcman/mcserv, but not always
+         * PAD or multitap. Reuse resident modules when present and load only
+         * missing base services. Do not replace the live I/O manager. */
+        if (LOAD_IRX(sio2man, 0x008000) < 0 ||
+            LOAD_IRX(mtapman, 0x006020) < 0 ||
+            LOAD_IRX(padman, 0x404040) < 0 ||
+            LOAD_IRX(mcman, 0x804040) < 0 ||
+            LOAD_IRX(mcserv, 0x402000) < 0)
+            goto module_failure;
+        ps2_log("IOP: inherited fileXio; existing device mounts retained");
         return;
     }
 
-    if (LOAD_IRX(sio2man, 0x008000) < 0 ||  /* green */
-        LOAD_IRX(mtapman, 0x006020) < 0 ||  /* dark green */
-        LOAD_IRX(padman, 0x404040) < 0 ||   /* grey */
-        LOAD_IRX(mcman, 0x804040) < 0 ||    /* pink */
-        LOAD_IRX(mcserv, 0x402000) < 0)     /* brown */
-    {
+    if (LOAD_IRX(sio2man, 0x008000) < 0) /* green */
         goto module_failure;
-    }
+    /* MMCEMAN installs SIO2 hooks. In a fresh IOP it must initialize
+     * before padman/mcman import SIO2 services. The device phase sees it
+     * in sLoaded and does not load a second copy. In inherited mode we
+     * preserve the launcher's existing SIO2/MMCE stack instead. */
+    if (ps2_storage_data_device() == PS2_BOOT_MMCE &&
+        LOAD_IRX(mmceman, 0x600060) < 0)
+        goto module_failure;
+    if (LOAD_IRX(mtapman, 0x006020) < 0 || /* dark green */
+        LOAD_IRX(padman, 0x404040) < 0 ||  /* grey */
+        LOAD_IRX(mcman, 0x804040) < 0 ||   /* pink */
+        LOAD_IRX(mcserv, 0x402000) < 0)    /* brown */
+        goto module_failure;
 
     /* The sound drivers (libsd + sdrdrv) are loaded later, once the GS is up
      * and the boot log is on screen: see ps2_iop_load_audio_drivers(). */
@@ -416,46 +475,194 @@ int ps2_iop_load_audio_drivers(void)
     return 0;
 }
 
-void ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
+/* Only use a fully validated first token from the PS2's IPCONFIG.DAT.
+ * Never start a network transport with a guessed IP configuration. */
+static int valid_ipv4(const char *s)
 {
+    int parts = 0, digits = 0, value = 0;
+    for (; *s; s++)
+    {
+        if (*s >= '0' && *s <= '9')
+        {
+            if (++digits > 3)
+                return 0;
+            value = value * 10 + (*s - '0');
+            if (value > 255)
+                return 0;
+        }
+        else if (*s == '.' && digits > 0 && parts < 3)
+        {
+            parts++;
+            digits = 0;
+            value = 0;
+        }
+        else
+            return 0;
+    }
+    return parts == 3 && digits != 0;
+}
+
+static int network_ip_arg(char *out, unsigned int max_len)
+{
+    const char *paths[2] = {"mc0:/SYS-CONF/IPCONFIG.DAT", "mc1:/SYS-CONF/IPCONFIG.DAT"};
+    char buf[128];
+    int i;
+    for (i = 0; i < 2; i++)
+    {
+        int fd = open(paths[i], O_RDONLY), n, k = 0;
+        if (fd < 0)
+            continue;
+        n = (int)read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+        if (n < 1)
+            continue;
+        buf[n] = '\0';
+        while (buf[k] && isspace((unsigned char)buf[k]))
+            k++;
+        {
+            int begin = k;
+            while (buf[k] && !isspace((unsigned char)buf[k]))
+                k++;
+            buf[k] = '\0';
+            if (valid_ipv4(buf + begin))
+            {
+                int written = snprintf(out, max_len, "ip=%s", buf + begin);
+                if (written >= 0 && (unsigned int)written < max_len)
+                {
+                    ps2_log("IOP: network IP from %s", paths[i]);
+                    return 1;
+                }
+            }
+        }
+    }
+    ps2_log("IOP: UDP device requires valid mc?:/SYS-CONF/IPCONFIG.DAT");
+    return 0;
+}
+
+static int load_bdm_core(void)
+{
+    if (LOAD_IRX(bdm, 0x200060) < 0 ||
+        LOAD_IRX(bdmfs_fatfs, 0x400060) < 0)
+        return -1;
+    return 0;
+}
+
+/* Some APA drives enumerate after the PFS modules register. Retry the
+ * exact, read-only partition mount for a bounded interval; never substitute
+ * another partition or fall through to a different massN: device. */
+static int mount_exact_hdd(const char *source)
+{
+    int tries, result = -1;
+    if (source == NULL || source[0] == '\0')
+        return -1;
+    for (tries = 0; tries < 16; tries++)
+    {
+        result = fileXioMount("pfs0:", source, FILEXIO_MOUNTFLAG_READONLY);
+        if (result >= 0)
+        {
+            ps2_log("IOP: mounted %s on pfs0: (%d attempt(s))", source, tries + 1);
+            return 0;
+        }
+        if (tries + 1 < 16)
+            DelayThread(250000); /* Maximum wait: 3.75 seconds. */
+    }
+    ps2_log("IOP: exact APA mount failed (%s), code=%d", source, result);
+    return -1;
+}
+
+int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
+{
+    char ip_arg[24];
     if (sInheritedFileXio)
     {
-        /* launcHER deliberately unmounts a PFS ELF partition before
-         * handoff, even while retaining its APA/PS2FS drivers. Remount the
-         * exact named partition; never guess a different HDD partition. */
+        /* launcHER unmounts the executable's PFS source during handoff.
+         * We can remount only an exact known APA partition, never infer one. */
         if (dev == PS2_BOOT_HDD && ps2_storage_boot_hdd_partition()[0])
         {
-            int res = fileXioMount("pfs0:", ps2_storage_boot_hdd_partition(), FILEXIO_MOUNTFLAG_READONLY);
-            ps2_log("IOP: APA mount %s -> pfs0: result=%d", ps2_storage_boot_hdd_partition(), res);
+            return mount_exact_hdd(ps2_storage_boot_hdd_partition());
         }
-        return; /* Do not duplicate, unmount, or renumber launcher drivers. */
+        ps2_log("IOP: preserving inherited %s filesystem", ps2_storage_device_name(dev));
+        return 0;
     }
     switch (dev)
     {
     case PS2_BOOT_MASS:
-        /* USB mass storage enumerates asynchronously; boot.c waits for the
-         * asset pack to become visible. */
-        LOAD_IRX(bdm, 0x200060);
-        LOAD_IRX(bdmfs_fatfs, 0x400060);
-        LOAD_IRX(usbd_mini, 0x600060);
-        LOAD_IRX(usbmass_bd_mini, 0x800060);
-        break;
-
+        /* massN: is shared across USB, ATA, MX4SIO and other BDM devices.
+         * After a reset its original physical mapping cannot be recovered
+         * from the pathname. Refuse a potentially wrong drive. Preserve
+         * launcher services above or use a typed usbN:/ataN:/... DAT path. */
+        ps2_log("IOP: shared massN needs inherited BDM or typed --data path");
+        return -1;
+    case PS2_BOOT_USB:
+        if (load_bdm_core() < 0 ||
+            LOAD_IRX(usbd_mini, 0x600060) < 0 ||
+            LOAD_IRX(usbmass_bd_mini, 0x800060) < 0)
+            return -1;
+        return 0;
+    case PS2_BOOT_ATA:
+        if (LOAD_IRX(ps2dev9, 0x200060) < 0 ||
+            load_bdm_core() < 0 ||
+            LOAD_IRX(ps2atad, 0x600060) < 0)
+            return -1;
+        return 0;
+    case PS2_BOOT_MX4SIO:
+        if (load_bdm_core() < 0 || LOAD_IRX(mx4sio_bd, 0x600060) < 0)
+            return -1;
+        return 0;
+    case PS2_BOOT_ILINK:
+        if (load_bdm_core() < 0 ||
+            LOAD_IRX(iLinkman, 0x600060) < 0 ||
+            LOAD_IRX(IEEE1394_bd, 0x800060) < 0)
+            return -1;
+        return 0;
+    case PS2_BOOT_UDPBD:
+        if (!network_ip_arg(ip_arg, sizeof(ip_arg)) ||
+            LOAD_IRX(ps2dev9, 0x200060) < 0 ||
+            load_bdm_core() < 0 ||
+            LOAD_IRX_ARGS(smap_udpbd, 0x800060, ip_arg, (int)strlen(ip_arg) + 1) < 0)
+            return -1;
+        return 0;
+    case PS2_BOOT_UDPFS:
+        if (!network_ip_arg(ip_arg, sizeof(ip_arg)) ||
+            LOAD_IRX(ps2dev9, 0x200060) < 0 ||
+            LOAD_IRX(udpfs_smap, 0x400060) < 0 ||
+            LOAD_IRX_ARGS(udpfs_ministack, 0x600060, ip_arg, (int)strlen(ip_arg) + 1) < 0 ||
+            LOAD_IRX(udpfs_ioman, 0x800060) < 0)
+            return -1;
+        return 0;
     case PS2_BOOT_MMCE:
-        LOAD_IRX(mmceman, 0x600060);
-        break;
-
+        return LOAD_IRX(mmceman, 0x600060);
     case PS2_BOOT_HDD:
-        /* HDD boot needs dev9/atad/hdd/pfs plus a partition mount; not yet
-         * wired up (see PS2_PORT_STATUS.md). */
-        ps2_log("IOP: HDD boot drivers not implemented yet");
-        break;
-
+    {
+        static const char hdd_args[] = "-o\0" "4\0" "-n\0" "20";
+        static const char pfs_args[] = "-o\0" "10\0" "-n\0" "40";
+        const char *part = ps2_storage_boot_hdd_partition();
+        if (!part[0])
+        {
+            ps2_log("IOP: no APA partition identity for PFS remount");
+            return -1;
+        }
+        if (LOAD_IRX(ps2dev9, 0x200060) < 0 ||
+            load_bdm_core() < 0 ||
+            LOAD_IRX(ps2atad, 0x600060) < 0)
+            return -1;
+        DelayThread(1000000); /* Allow ATAD to settle before APA probing. */
+        if (LOAD_IRX_ARGS(ps2hdd, 0x400060, hdd_args, sizeof(hdd_args)) < 0 ||
+            LOAD_IRX_ARGS(ps2fs, 0x600060, pfs_args, sizeof(pfs_args)) < 0 ||
+            LOAD_IRX(secrsif, 0x800060) < 0)
+            return -1;
+        {
+            return mount_exact_hdd(part);
+        }
+    }
+    case PS2_BOOT_HOST:
+    case PS2_BOOT_MC:
+    case PS2_BOOT_CDROM:
+        return 0;
     case PS2_BOOT_UNKNOWN:
-        ps2_log("IOP: unknown launch device: refusing speculative USB setup");
-        break;
     default:
-        break;
+        ps2_log("IOP: unknown data transport; refusing guessed device");
+        return -1;
     }
 }
 

@@ -109,7 +109,13 @@ typedef enum PS2BootDevice
 {
     PS2_BOOT_UNKNOWN,
     PS2_BOOT_HOST,   /* host: (ps2link / PCSX2 host fs) */
-    PS2_BOOT_MASS,   /* mass0:/mass1: (USB or other BDM) */
+    PS2_BOOT_MASS,   /* shared massN: BDM, backing driver may be non-USB */
+    PS2_BOOT_USB,    /* typed usbN: namespace, physical USB transport */
+    PS2_BOOT_ATA,    /* ATA BDM/exFAT */
+    PS2_BOOT_MX4SIO, /* memory-card SD block device */
+    PS2_BOOT_ILINK,  /* IEEE1394 BDM */
+    PS2_BOOT_UDPBD,  /* network block device */
+    PS2_BOOT_UDPFS,  /* network filesystem */
     PS2_BOOT_MC,     /* mc0:/mc1: */
     PS2_BOOT_HDD,    /* hdd0:/pfs: */
     PS2_BOOT_MMCE,   /* mmce0:/mmce1: */
@@ -153,13 +159,18 @@ int ps2_file_read(int fd, void *dst, uint32_t size);
 int ps2_file_seek(int fd, uint32_t offset);
 int ps2_file_size(int fd);
 void ps2_file_close(int fd);
+/* Last DAT bootstrap failure: differentiates open, format and read errors. */
+int ps2_assets_init(void);
+const char *ps2_assets_last_error(void);
+/* Transfer ownership of the already-open DAT probe descriptor to asset IO. */
+int ps2_assets_adopt_open_fd(int fd);
 
 /* ------------------------------------------------------------------ */
 /* IOP modules (ps2/src/platform/iop.c)                                */
 /* ------------------------------------------------------------------ */
 
 void ps2_iop_init(void);                 /* reset IOP + load base modules */
-void ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
+int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 int  ps2_iop_load_audio_drivers(void);    /* libsd + sdr; 0 on success */
 int  ps2_iop_module_loaded(const char *name);
 int  ps2_iop_module_count(void);

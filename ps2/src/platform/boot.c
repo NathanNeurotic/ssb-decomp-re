@@ -8,6 +8,7 @@
  */
 #include <ps2/platform.h>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <kernel.h>
 #include <stdio.h>
@@ -32,35 +33,48 @@ extern void ps2_overlay_state_init(void);
 
 #define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port"
 
-/* USB (and MMCE) storage appears asynchronously after its drivers load;
- * wait until a file next to the ELF can be opened (up to ~6 s). */
-static void wait_for_boot_file(void)
+static char sDatMountStatus[96] = "DAT mount not checked";
+
+/* Media can enumerate asynchronously after driver startup. Allow a bounded
+ * six-second wait for local storage, twelve for Ethernet link + UDP storage.
+ * Always probe the selected DAT path, which may be on another device. */
+static int wait_for_boot_file(void)
 {
     extern void ps2_delay_vblanks(int n);
     char path[288];
-    int i, fd = -1;
+    int i, fd = -1, last_errno = 0;
+    int attempts = (ps2_storage_data_device() == PS2_BOOT_UDPFS ||
+                    ps2_storage_data_device() == PS2_BOOT_UDPBD) ? 120 : 60;
 
     if (!ps2_storage_pack_path(path, sizeof(path)))
     {
         ps2_log("boot: DAT path is invalid or too long");
-        return;
+        return -1;
     }
-    for (i = 0; i < 60; i++)
+    for (i = 0; i < attempts; i++)
     {
         fd = open(path, O_RDONLY);
         if (fd >= 0)
         {
-            close(fd);
-            ps2_log("boot: %s found after %d ms", path, i * 100);
-            return;
+            snprintf(sDatMountStatus, sizeof(sDatMountStatus), "DAT opened on requested mount");
+            ps2_log("boot: %s open after %d ms (fd=%d)", path, i * 100, fd);
+            return fd; /* Keep the valid descriptor through asset loading. */
         }
-        if (ps2_storage_boot_device() == PS2_BOOT_HOST)
+        last_errno = errno;
+        if (ps2_storage_data_device() == PS2_BOOT_HOST)
         {
-            break; /* host: is there or not */
+            break; /* The DAT transport is host:, regardless of ELF origin. */
         }
         ps2_delay_vblanks(6);
     }
-    ps2_log("boot: %s not found", path);
+    /* A missing mount and a missing DAT can report the same errno.
+     * Do NOT probe the directory root for diagnosis: this can block in
+     * fileXio/IOP on real USB hardware. Preserve the failed path and errno
+     * rather than risking another mount RPC on a failing device. */
+    snprintf(sDatMountStatus, sizeof(sDatMountStatus),
+             "DAT open failed (errno %d); mount unverified", last_errno);
+    ps2_log("boot: %s could not be opened: %s", path, sDatMountStatus);
+    return -1;
 }
 
 int ps2_main(int argc, char *argv[])
@@ -122,18 +136,39 @@ int ps2_main(int argc, char *argv[])
     if (bad_data_path)
         ps2_panic("invalid --data path (must be absolute and under 300 bytes)");
 
-    ps2_iop_load_boot_device_drivers(ps2_storage_boot_device());
-    /* A DAT override can refer to a different transport. Bring up that
-     * backend without resetting the IOP or resampling massN: identity. */
-    if (ps2_storage_data_device() != ps2_storage_boot_device())
-    {
-        ps2_log("boot: secondary DAT device=%s",
-                ps2_storage_device_name(ps2_storage_data_device()));
-        ps2_iop_load_boot_device_drivers(ps2_storage_data_device());
-    }
+    /* Only the DAT transport needs drivers after ExecPS2: the ELF already
+     * resides in EE memory. Avoid instantiating two competing BDM stacks when
+     * --data= points to a different device than the executable. */
+    if (ps2_iop_load_boot_device_drivers(ps2_storage_data_device()) < 0)
+        ps2_panic("cannot initialize DAT transport %s",
+                  ps2_storage_device_name(ps2_storage_data_device()));
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
-    wait_for_boot_file();
-    if (ps2_storage_boot_device() != PS2_BOOT_CDROM)
+    {
+        char dat_path[300];
+        if (ps2_storage_pack_path(dat_path, sizeof(dat_path)))
+            ps2_log("boot: exact DAT path=%s", dat_path);
+        else
+            ps2_log("boot: DAT path invalid");
+    }
+    {
+        int dat_fd = wait_for_boot_file();
+        if (dat_fd >= 0)
+        {
+            if (!ps2_assets_adopt_open_fd(dat_fd))
+                close(dat_fd); /* No descriptor leak on a rejected adoption. */
+        }
+        else if (ps2_storage_data_device() != PS2_BOOT_HOST)
+        {
+            char dat_path[300];
+            if (!ps2_storage_pack_path(dat_path, sizeof(dat_path)))
+                snprintf(dat_path, sizeof(dat_path), "(invalid DAT path)");
+            /* A second failing open would add an IOP RPC but no information.
+             * PCSX2's host: fallback remains handled by ps2_assets_init. */
+            ps2_panic("DAT not accessible\n%.90s\n%s",
+                      dat_path, sDatMountStatus);
+        }
+    }
+    if (ps2_storage_data_device() != PS2_BOOT_CDROM)
     {
         /* crash/panic reports write SSB64.LOG from here on */
         ps2_log_enable_save(1);
@@ -150,7 +185,13 @@ int ps2_main(int argc, char *argv[])
 
     if (!ps2_assets_init())
     {
-        ps2_panic("asset pack unavailable at requested path; check SSB64.DAT and device services");
+        char dat_path[300];
+        if (!ps2_storage_pack_path(dat_path, sizeof(dat_path)))
+            snprintf(dat_path, sizeof(dat_path), "(unresolvable DAT path)");
+        /* Never hide a corrupt pack or a short USB read behind a generic
+         * "not found" panic. Display BOTH failure stage and exact device. */
+        ps2_panic("DAT: %s\n%.90s\n%s", ps2_assets_last_error(),
+                  dat_path, sDatMountStatus);
     }
     ps2_save_init();
     /* libsd + sdrdrv are loaded here rather than with the base modules so a
