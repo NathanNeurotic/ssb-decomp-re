@@ -547,6 +547,29 @@ static int load_bdm_core(void)
     return 0;
 }
 
+/* Some APA drives enumerate after the PFS modules register. Retry the
+ * exact, read-only partition mount for a bounded interval; never substitute
+ * another partition or fall through to a different massN: device. */
+static int mount_exact_hdd(const char *source)
+{
+    int tries, result = -1;
+    if (source == NULL || source[0] == '\0')
+        return -1;
+    for (tries = 0; tries < 16; tries++)
+    {
+        result = fileXioMount("pfs0:", source, FILEXIO_MOUNTFLAG_READONLY);
+        if (result >= 0)
+        {
+            ps2_log("IOP: mounted %s on pfs0: (%d attempt(s))", source, tries + 1);
+            return 0;
+        }
+        if (tries + 1 < 16)
+            DelayThread(250000); /* Maximum wait: 3.75 seconds. */
+    }
+    ps2_log("IOP: exact APA mount failed (%s), code=%d", source, result);
+    return -1;
+}
+
 int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
 {
     char ip_arg[24];
@@ -556,9 +579,7 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
          * We can remount only an exact known APA partition, never infer one. */
         if (dev == PS2_BOOT_HDD && ps2_storage_boot_hdd_partition()[0])
         {
-            int res = fileXioMount("pfs0:", ps2_storage_boot_hdd_partition(), FILEXIO_MOUNTFLAG_READONLY);
-            ps2_log("IOP: APA mount %s -> pfs0: result=%d", ps2_storage_boot_hdd_partition(), res);
-            return res < 0 ? -1 : 0;
+            return mount_exact_hdd(ps2_storage_boot_hdd_partition());
         }
         ps2_log("IOP: preserving inherited %s filesystem", ps2_storage_device_name(dev));
         return 0;
@@ -626,9 +647,7 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
             LOAD_IRX(secrsif, 0x800060) < 0)
             return -1;
         {
-            int res = fileXioMount("pfs0:", part, FILEXIO_MOUNTFLAG_READONLY);
-            ps2_log("IOP: APA mount %s result=%d", part, res);
-            return res < 0 ? -1 : 0;
+            return mount_exact_hdd(part);
         }
     }
     case PS2_BOOT_HOST:
