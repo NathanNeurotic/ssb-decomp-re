@@ -32,20 +32,23 @@ extern void ps2_overlay_state_init(void);
 
 #define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port"
 
-/* USB (and MMCE) storage appears asynchronously after its drivers load;
- * wait until a file next to the ELF can be opened (up to ~6 s). */
+/* Media can enumerate asynchronously after driver startup. Allow a bounded
+ * six-second wait for local storage, twelve for Ethernet link + UDP storage.
+ * Always probe the selected DAT path, which may be on another device. */
 static void wait_for_boot_file(void)
 {
     extern void ps2_delay_vblanks(int n);
     char path[288];
     int i, fd = -1;
+    int attempts = (ps2_storage_data_device() == PS2_BOOT_UDPFS ||
+                    ps2_storage_data_device() == PS2_BOOT_UDPBD) ? 120 : 60;
 
     if (!ps2_storage_pack_path(path, sizeof(path)))
     {
         ps2_log("boot: DAT path is invalid or too long");
         return;
     }
-    for (i = 0; i < 60; i++)
+    for (i = 0; i < attempts; i++)
     {
         fd = open(path, O_RDONLY);
         if (fd >= 0)
