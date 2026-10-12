@@ -16,6 +16,7 @@ static unsigned char image[256];
 static size_t image_len, position;
 static int missing;
 static int open_calls;
+static int truncate_reads;
 
 int CreateSema(ee_sema_t *s) { (void)s; return 1; }
 int WaitSema(int id) { (void)id; return 0; }
@@ -58,6 +59,8 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
     size_t available;
     assert(fd == 7);
     available = image_len - position;
+    if (truncate_reads && position >= sizeof(PS2PackHeader))
+        return 0; /* Simulate a transient read failure after successful stat. */
     if (size > available)
         size = (uint32_t)available;
     memcpy(dst, image + position, size);
@@ -120,10 +123,15 @@ int main(void)
     make_valid_pack();
     image_len = sizeof(PS2PackHeader) + 3;
     assert(ps2_assets_init() == 0);
+    assert(strstr(ps2_assets_last_error(), "truncated") != NULL);
+    make_valid_pack();
+    truncate_reads = 1;
+    assert(ps2_assets_init() == 0);
     assert(strstr(ps2_assets_last_error(), "region table") != NULL);
+    truncate_reads = 0;
     make_valid_pack();
     assert(ps2_assets_init() == 1);
     assert(!strcmp(ps2_assets_last_error(), "OK"));
-    puts("PASS: USB DAT open, adopt/reuse, invalid header, version, short read, and valid pack");
+    puts("PASS: USB DAT open, adopt/reuse, bad format, truncated copy, short read and valid pack");
     return 0;
 }
