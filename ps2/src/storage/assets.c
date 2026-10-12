@@ -11,6 +11,7 @@
 #include <ps2/assetpack.h>
 
 #include <kernel.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -22,6 +23,14 @@ static PS2PackRegion *sRegions;
 static uint8_t **sResidentPtr; /* per region: EE copy or NULL */
 static uint8_t *sResidentBlob;
 static int sReadSema = -1;
+/* The boot panic must identify which DAT stage actually failed. */
+static char sLoadError[96] = "not initialized";
+
+const char *ps2_assets_last_error(void)
+{
+    return sLoadError;
+}
+
 
 static uint32_t sBytesRead;
 static uint32_t sReads;
@@ -42,6 +51,7 @@ int ps2_assets_init(void)
     uint32_t i, table_bytes;
     ee_sema_t sema = { 0 };
 
+    snprintf(sLoadError, sizeof(sLoadError), "not opened");
     sema.init_count = 1;
     sema.max_count = 1;
     sReadSema = CreateSema(&sema);
@@ -51,7 +61,8 @@ int ps2_assets_init(void)
      * PCSX2 maps to the ELF's directory. */
     if (!ps2_storage_pack_path(path, sizeof(path)))
     {
-        ps2_log("assets: DAT path invalid or too long");
+        snprintf(sLoadError, sizeof(sLoadError), "DAT path invalid or too long");
+        ps2_log("assets: %s", sLoadError);
         return 0;
     }
     sFd = ps2_file_open_read(path);
@@ -64,13 +75,40 @@ int ps2_assets_init(void)
     }
     if (sFd < 0)
     {
-        ps2_log("assets: cannot open %s", path);
+        snprintf(sLoadError, sizeof(sLoadError), "open failed (errno %d)", errno);
+        ps2_log("assets: %s: %s", path, sLoadError);
         return 0;
     }
-    if (!read_exact(&sHeader, 0, sizeof(sHeader)) || memcmp(sHeader.magic, PS2PACK_MAGIC, 8) != 0 ||
-        sHeader.version != PS2PACK_VERSION)
+    if (!read_exact(&sHeader, 0, sizeof(sHeader)))
     {
-        ps2_log("assets: %s is not a v%d SSB64 pack", path, PS2PACK_VERSION);
+        snprintf(sLoadError, sizeof(sLoadError), "DAT header read failed (errno %d)", errno);
+        ps2_log("assets: %s: %s", path, sLoadError);
+        return 0;
+    }
+    if (memcmp(sHeader.magic, PS2PACK_MAGIC, 8) != 0)
+    {
+        snprintf(sLoadError, sizeof(sLoadError), "incorrect DAT magic (not a PS2 pack)");
+        ps2_log("assets: %s: %s", path, sLoadError);
+        return 0;
+    }
+    if (sHeader.version != PS2PACK_VERSION)
+    {
+        snprintf(sLoadError, sizeof(sLoadError), "DAT version %u (need %u)",
+                 (unsigned)sHeader.version, (unsigned)PS2PACK_VERSION);
+        ps2_log("assets: %s: %s", path, sLoadError);
+        return 0;
+    }
+    /* Check untrusted on-disk table extents before allocating EE memory.
+     * No overflow, no overlap with the 64-byte header, no guessed fallback. */
+    if (!sHeader.region_count || sHeader.region_count > UINT32_MAX / (uint32_t)sizeof(PS2PackRegion) ||
+        sHeader.total_size < sizeof(sHeader) ||
+        sHeader.region_table_offset < sizeof(sHeader) ||
+        (uint64_t)sHeader.region_table_offset +
+            (uint64_t)sHeader.region_count * sizeof(PS2PackRegion) > sHeader.total_size ||
+        (uint64_t)sHeader.resident_offset + sHeader.resident_bytes > sHeader.total_size)
+    {
+        snprintf(sLoadError, sizeof(sLoadError), "DAT header sizes invalid");
+        ps2_log("assets: %s: %s", path, sLoadError);
         return 0;
     }
 
@@ -79,7 +117,8 @@ int ps2_assets_init(void)
     sResidentPtr = ps2_mem_alloc(PS2_MEM_GAME_HEAP, sHeader.region_count * sizeof(uint8_t *), 64);
     if (!read_exact(sRegions, sHeader.region_table_offset, table_bytes))
     {
-        ps2_log("assets: region table read failed");
+        snprintf(sLoadError, sizeof(sLoadError), "DAT region table read failed (errno %d)", errno);
+        ps2_log("assets: %s: %s", path, sLoadError);
         return 0;
     }
 
@@ -88,7 +127,8 @@ int ps2_assets_init(void)
     if (sHeader.resident_bytes != 0 &&
         !read_exact(sResidentBlob, sHeader.resident_offset, sHeader.resident_bytes))
     {
-        ps2_log("assets: resident block read failed");
+        snprintf(sLoadError, sizeof(sLoadError), "DAT resident block read failed (errno %d)", errno);
+        ps2_log("assets: %s: %s", path, sLoadError);
         return 0;
     }
     for (i = 0; i < sHeader.region_count; i++)
@@ -97,6 +137,7 @@ int ps2_assets_init(void)
                               ? sResidentBlob + (sRegions[i].file_offset - sHeader.resident_offset)
                               : NULL;
     }
+    snprintf(sLoadError, sizeof(sLoadError), "OK");
     ps2_log("assets: %s: %u regions, %u KiB resident, %u KiB total", path, (unsigned)sHeader.region_count,
             (unsigned)(sHeader.resident_bytes >> 10), (unsigned)(sHeader.total_size >> 10));
     return 1;
