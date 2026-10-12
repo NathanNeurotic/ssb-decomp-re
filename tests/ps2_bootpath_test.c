@@ -25,6 +25,11 @@ int main(void)
     check("mc1:/APPS/SSB64.ELF", PS2_BOOT_MC, "mc1:/APPS/");
     check("host:ssb64.elf", PS2_BOOT_HOST, "host:");
     check("hdd0:__common:pfs:/APPS/SSB64.ELF", PS2_BOOT_HDD, "pfs0:/APPS/");
+    assert(strcmp(ps2_storage_boot_hdd_partition(), "hdd0:__common") == 0);
+    check("hdd1:+OPL:pfs:/APPS/SSB64.ELF", PS2_BOOT_HDD, "pfs0:/APPS/");
+    assert(strcmp(ps2_storage_boot_hdd_partition(), "hdd1:+OPL") == 0);
+    check("mass0:/SSB64.ELF", PS2_BOOT_MASS, "mass0:/");
+    assert(ps2_storage_boot_hdd_partition()[0] == 0);
     check("mass0:/SSB64_240p.elf", PS2_BOOT_MASS, "mass0:/");
     assert(ps2_video_progressive() == 1);
     check("mass0:/SSB64.ELF", PS2_BOOT_MASS, "mass0:/");
