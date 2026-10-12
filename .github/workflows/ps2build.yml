@@ -2,7 +2,7 @@ name: Build PS2 (ps2build)
 
 on:
   push:
-    branches: ['restart/cooper-v1.0-dat-only']
+    branches: ['restart/cooper-v1.0-dat-only', 'feat/ps2-clean-device-bootstrap']
   workflow_dispatch:
 
 permissions:
