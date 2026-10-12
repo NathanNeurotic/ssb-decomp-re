@@ -42,7 +42,7 @@ static int wait_for_boot_file(void)
 {
     extern void ps2_delay_vblanks(int n);
     char path[288];
-    int i, fd = -1;
+    int i, fd = -1, last_errno = 0;
     int attempts = (ps2_storage_data_device() == PS2_BOOT_UDPFS ||
                     ps2_storage_data_device() == PS2_BOOT_UDPBD) ? 120 : 60;
 
@@ -60,39 +60,19 @@ static int wait_for_boot_file(void)
             ps2_log("boot: %s open after %d ms (fd=%d)", path, i * 100, fd);
             return fd; /* Keep the valid descriptor through asset loading. */
         }
+        last_errno = errno;
         if (ps2_storage_data_device() == PS2_BOOT_HOST)
         {
             break; /* The DAT transport is host:, regardless of ELF origin. */
         }
         ps2_delay_vblanks(6);
     }
-    /* A valid fileXio RPC is not proof that the requested massN: volume
-     * exists. Distinguish a mounted volume with no DAT from an inaccessible
-     * USB mount. Do not probe a different mass index or load duplicate
-     * storage drivers into the launcher's inherited environment. */
-    if (ps2_storage_data_device() == PS2_BOOT_MASS ||
-        ps2_storage_data_device() == PS2_BOOT_USB)
-    {
-        const char *colon = strchr(path, ':');
-        if (colon != NULL && (size_t)(colon - path) + 3 < 16)
-        {
-            char root[16];
-            int root_fd;
-            snprintf(root, sizeof(root), "%.*s/", (int)(colon - path) + 1, path);
-            root_fd = open(root, O_RDONLY | O_DIRECTORY);
-            if (root_fd >= 0)
-            {
-                close(root_fd);
-                snprintf(sDatMountStatus, sizeof(sDatMountStatus),
-                         "Storage mount ready; DAT missing");
-            }
-            else
-            {
-                snprintf(sDatMountStatus, sizeof(sDatMountStatus),
-                         "Storage mount unavailable (errno %d)", errno);
-            }
-        }
-    }
+    /* A missing mount and a missing DAT can report the same errno.
+     * Do NOT probe the directory root for diagnosis: this can block in
+     * fileXio/IOP on real USB hardware. Preserve the failed path and errno
+     * rather than risking another mount RPC on a failing device. */
+    snprintf(sDatMountStatus, sizeof(sDatMountStatus),
+             "DAT open failed (errno %d); mount unverified", last_errno);
     ps2_log("boot: %s could not be opened: %s", path, sDatMountStatus);
     return -1;
 }
