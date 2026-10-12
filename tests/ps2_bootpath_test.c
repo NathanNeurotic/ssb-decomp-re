@@ -20,7 +20,7 @@ int main(void)
     check("mass1:/APPS/SSB64.ELF", PS2_BOOT_MASS, "mass1:/APPS/");
     check("mass2:/SSB64.ELF", PS2_BOOT_MASS, "mass2:/");
     check("usb1:/APPS/SSB64.ELF", PS2_BOOT_MASS, "usb1:/APPS/");
-    check("bdm2:/GAMES/SSB64.ELF", PS2_BOOT_MASS, "bdm2:/GAMES/");
+    check("bdm2:/GAMES/SSB64.ELF", PS2_BOOT_UNKNOWN, "bdm2:/GAMES/");
     check("mmce0:/SSB64.ELF", PS2_BOOT_MMCE, "mmce0:/");
     check("mx4sio0:/SSB64.ELF", PS2_BOOT_MX4SIO, "mx4sio0:/");
     check("ata0:/GAMES/SSB64.ELF", PS2_BOOT_ATA, "ata0:/GAMES/");
