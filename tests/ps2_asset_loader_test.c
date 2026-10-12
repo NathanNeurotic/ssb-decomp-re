@@ -17,6 +17,7 @@ static size_t image_len, position;
 static int missing;
 static int open_calls;
 static int truncate_reads;
+static int size_query_unsupported;
 
 int CreateSema(ee_sema_t *s) { (void)s; return 1; }
 int WaitSema(int id) { (void)id; return 0; }
@@ -67,7 +68,7 @@ int ps2_file_read(int fd, void *dst, uint32_t size)
     position += size;
     return (int)size;
 }
-int ps2_file_size(int fd) { (void)fd; return (int)image_len; }
+int ps2_file_size(int fd) { (void)fd; return size_query_unsupported ? -1 : (int)image_len; }
 void ps2_file_close(int fd) { (void)fd; }
 
 static void make_valid_pack(void)
@@ -132,6 +133,11 @@ int main(void)
     make_valid_pack();
     assert(ps2_assets_init() == 1);
     assert(!strcmp(ps2_assets_last_error(), "OK"));
+    size_query_unsupported = 1; /* Some network/legacy transports lack size RPC. */
+    make_valid_pack();
+    assert(ps2_assets_init() == 1);
+    assert(!strcmp(ps2_assets_last_error(), "OK"));
+    size_query_unsupported = 0;
     puts("PASS: USB DAT open, adopt/reuse, bad format, truncated copy, short read and valid pack");
     return 0;
 }
