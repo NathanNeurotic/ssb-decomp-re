@@ -143,6 +143,7 @@ int ps2_storage_set_data_path(const char *path);
 /* Resolves the exact DAT location; returns 0 on truncated/invalid output. */
 int ps2_storage_pack_path(char *out, size_t out_size);
 int ps2_storage_has_data_override(void);
+PS2BootDevice ps2_storage_data_device(void);
 
 /* Simple blocking file API over fileXio / fio (platform-internal). */
 int ps2_file_open_read(const char *path);
