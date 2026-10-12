@@ -109,7 +109,12 @@ typedef enum PS2BootDevice
 {
     PS2_BOOT_UNKNOWN,
     PS2_BOOT_HOST,   /* host: (ps2link / PCSX2 host fs) */
-    PS2_BOOT_MASS,   /* mass0:/mass1: (USB or other BDM) */
+    PS2_BOOT_MASS,   /* generic indexed massN: BDM; preserve exact mount */
+    PS2_BOOT_ATA,    /* ATA BDM/exFAT */
+    PS2_BOOT_MX4SIO, /* memory-card SD block device */
+    PS2_BOOT_ILINK,  /* IEEE1394 BDM */
+    PS2_BOOT_UDPBD,  /* network block device */
+    PS2_BOOT_UDPFS,  /* network filesystem */
     PS2_BOOT_MC,     /* mc0:/mc1: */
     PS2_BOOT_HDD,    /* hdd0:/pfs: */
     PS2_BOOT_MMCE,   /* mmce0:/mmce1: */
@@ -159,7 +164,7 @@ void ps2_file_close(int fd);
 /* ------------------------------------------------------------------ */
 
 void ps2_iop_init(void);                 /* reset IOP + load base modules */
-void ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
+int ps2_iop_load_boot_device_drivers(PS2BootDevice dev);
 int  ps2_iop_load_audio_drivers(void);    /* libsd + sdr; 0 on success */
 int  ps2_iop_module_loaded(const char *name);
 int  ps2_iop_module_count(void);
