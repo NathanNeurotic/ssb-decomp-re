@@ -73,7 +73,12 @@ int main(void)
     assert(ps2_storage_pack_path(path, sizeof(path)) == 1);
     assert(strcmp(path, "mmce1:/SSB64.DAT") == 0);
     assert(ps2_storage_set_data_path("relative/data") == 0);
-    assert(ps2_storage_set_data_path("usb10:/ASSETS") == 0);
+    /* Classification may preserve multi-digit typed units; actual support is
+     * decided by driver mount availability, not by guessing unit limits. */
+    assert(ps2_storage_set_data_path("usb10:/ASSETS") == 1);
+    assert(ps2_storage_data_device() == PS2_BOOT_USB);
+    assert(ps2_storage_pack_path(path, sizeof(path)) == 1);
+    assert(strcmp(path, "usb10:/ASSETS/SSB64.DAT") == 0);
     assert(ps2_storage_set_data_path("mass-fake:/ASSETS") == 0);
     assert(ps2_storage_set_data_path("udpfsbroken:/ASSETS") == 0);
     assert(ps2_storage_set_data_path("bdm2:/ASSETS") == 0);
