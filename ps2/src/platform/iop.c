@@ -54,6 +54,26 @@ DECLARE_IRX(sdr);
 static const char *sLoaded[MAX_TRACKED_MODULES];
 static int sLoadedCount;
 static int sIopWasReset;
+static int sInheritedFileXio;
+
+/* Probe the existing filesystem service before touching the IOP.  Unlike
+ * fileXioInit(), this probe cannot enter an unbounded bind loop when the
+ * server is absent. FILEXIO_IRX is the PS2SDK RPC service identifier. */
+static int inherited_filexio_available(void)
+{
+    SifRpcClientData_t rpc;
+    int i;
+    for (i = 0; i < 3; i++)
+    {
+        memset(&rpc, 0, sizeof(rpc));
+        if (SifBindRpc(&rpc, FILEXIO_IRX, 0) < 0)
+            return 0;
+        if (rpc.server != NULL)
+            return 1;
+    }
+    return 0;
+}
+
 
 typedef int (*IrxPatchFn)(uint8_t *image, unsigned int size);
 
@@ -276,6 +296,8 @@ void ps2_iop_init(void)
     PS2BootDevice dev = ps2_storage_boot_device();
 
     SifInitRpc(0);
+    sIopWasReset = 0;
+    sInheritedFileXio = 0;
 
     /* PCSX2 normally boots this port from host:, so it never exercises the
      * IOP reboot below.  Real hardware usually boots from mass:/mc:/mmce:.
@@ -289,6 +311,13 @@ void ps2_iop_init(void)
      * so if hardware still stops here the visible colour identifies exactly
      * which operation did not return. */
     if (dev != PS2_BOOT_HOST)
+    {
+        ps2_log_console(0);
+        sInheritedFileXio = inherited_filexio_available();
+        if (sInheritedFileXio)
+            ps2_log("IOP: compatible fileXio RPC present; preserving launcher device stack");
+    }
+    if (dev != PS2_BOOT_HOST && !sInheritedFileXio)
     {
         ps2_log_console(0);
         ps2_boot_stage("IOP: reset request", 0x800080);       /* magenta */
@@ -311,8 +340,9 @@ void ps2_iop_init(void)
     sbv_patch_enable_lmb();
     sbv_patch_disable_prefix_check();
 
-    if (LOAD_IRX(iomanx, 0x406000) < 0 ||   /* olive */
-        LOAD_IRX(filexio, 0x408000) < 0)    /* yellow-green */
+    if (!sInheritedFileXio &&
+        (LOAD_IRX(iomanx, 0x406000) < 0 || /* olive */
+         LOAD_IRX(filexio, 0x408000) < 0)) /* yellow-green */
     {
         goto module_failure;
     }
@@ -320,6 +350,20 @@ void ps2_iop_init(void)
     if (fileXioInit() < 0)
     {
         goto module_failure;
+    }
+
+    if (sInheritedFileXio)
+    {
+        /* The launcher owns iomanX, fileXio and its device modules. Never
+         * overwrite that mount namespace. Input modules may already be
+         * present; an unsuccessful duplicate load is not proof they are
+         * absent. libpad/libmtap initialization remains the consumer check. */
+        if (LOAD_IRX(mtapman, 0x006020) < 0)
+            ps2_log("IOP: inherited mtapman retained or unavailable");
+        if (LOAD_IRX(padman, 0x404040) < 0)
+            ps2_log("IOP: inherited padman retained or unavailable");
+        ps2_log("IOP: inherited fileXio; boot drivers remain launcher-owned");
+        return;
     }
 
     if (LOAD_IRX(sio2man, 0x008000) < 0 ||  /* green */
@@ -345,7 +389,7 @@ void ps2_iop_init(void)
     {
         ps2_log_console(1);
     }
-    ps2_log("IOP: %s, %d modules", sIopWasReset ? "reset" : "kept (host boot)", sLoadedCount);
+    ps2_log("IOP: %s, %d modules", sIopWasReset ? "reset" : "kept", sLoadedCount);
     return;
 
 module_failure:
@@ -374,10 +418,11 @@ int ps2_iop_load_audio_drivers(void)
 
 void ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
 {
+    if (sInheritedFileXio)
+        return; /* Do not duplicate, unmount, or renumber launcher devices. */
     switch (dev)
     {
     case PS2_BOOT_MASS:
-    case PS2_BOOT_UNKNOWN: /* unrecognised launcher path: USB is the best guess */
         /* USB mass storage enumerates asynchronously; boot.c waits for the
          * asset pack to become visible. */
         LOAD_IRX(bdm, 0x200060);
@@ -396,6 +441,9 @@ void ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
         ps2_log("IOP: HDD boot drivers not implemented yet");
         break;
 
+    case PS2_BOOT_UNKNOWN:
+        ps2_log("IOP: unknown launch device: refusing speculative USB setup");
+        break;
     default:
         break;
     }
