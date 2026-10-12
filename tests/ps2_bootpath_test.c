@@ -32,14 +32,17 @@ int main(void)
     ps2_storage_path(path, sizeof(path), "SSB64.DAT");
     assert(strcmp(path, "mass0:/SSB64.DAT") == 0);
     assert(ps2_storage_set_data_path("mass2:/DATA/") == 1);
+    assert(ps2_storage_data_device() == PS2_BOOT_MASS);
     assert(ps2_storage_has_data_override());
     assert(ps2_storage_pack_path(path, sizeof(path)) == 1);
     assert(strcmp(path, "mass2:/DATA/SSB64.DAT") == 0);
     assert(ps2_storage_set_data_path("mmce1:/SSB64.DAT") == 1);
+    assert(ps2_storage_data_device() == PS2_BOOT_MMCE);
     assert(ps2_storage_pack_path(path, sizeof(path)) == 1);
     assert(strcmp(path, "mmce1:/SSB64.DAT") == 0);
     assert(ps2_storage_set_data_path("relative/data") == 0);
     assert(ps2_storage_has_data_override() == 0);
+    assert(ps2_storage_data_device() == PS2_BOOT_MASS);
     assert(ps2_storage_set_data_path(NULL) == 1);
     assert(ps2_storage_pack_path(path, sizeof(path)) == 1);
     assert(strcmp(path, "mass0:/SSB64.DAT") == 0);
