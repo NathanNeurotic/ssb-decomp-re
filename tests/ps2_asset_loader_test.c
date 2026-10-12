@@ -15,6 +15,7 @@
 static unsigned char image[256];
 static size_t image_len, position;
 static int missing;
+static int open_calls;
 
 int CreateSema(ee_sema_t *s) { (void)s; return 1; }
 int WaitSema(int id) { (void)id; return 0; }
@@ -40,6 +41,7 @@ int ps2_storage_pack_path(char *out, size_t size)
 int ps2_file_open_read(const char *path)
 {
     assert(strcmp(path, "mass1:/APPS/SSB64.DAT") == 0);
+    open_calls++;
     position = 0;
     if (missing) { errno = ENOENT; return -1; }
     return 7;
@@ -98,6 +100,12 @@ int main(void)
     assert(strstr(ps2_assets_last_error(), "open failed") != NULL);
     missing = 0;
     make_valid_pack();
+    /* Reusing the verified USB descriptor avoids a second open. */
+    assert(ps2_assets_adopt_open_fd(7) == 1);
+    assert(ps2_assets_adopt_open_fd(8) == 0);
+    assert(ps2_assets_init() == 1);
+    assert(open_calls == 1); /* Only the intentional ENOENT probe ran. */
+    make_valid_pack();
     header->magic[0] = 'X';
     assert(ps2_assets_init() == 0);
     assert(strstr(ps2_assets_last_error(), "magic") != NULL);
@@ -116,6 +124,6 @@ int main(void)
     make_valid_pack();
     assert(ps2_assets_init() == 1);
     assert(!strcmp(ps2_assets_last_error(), "OK"));
-    puts("PASS: USB DAT open, invalid header, version, short read, and valid pack");
+    puts("PASS: USB DAT open, adopt/reuse, invalid header, version, short read, and valid pack");
     return 0;
 }
