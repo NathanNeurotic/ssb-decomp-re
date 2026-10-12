@@ -152,8 +152,21 @@ int ps2_main(int argc, char *argv[])
     }
     {
         int dat_fd = wait_for_boot_file();
-        if (dat_fd >= 0 && !ps2_assets_adopt_open_fd(dat_fd))
-            close(dat_fd); /* No descriptor leak on a rejected adoption. */
+        if (dat_fd >= 0)
+        {
+            if (!ps2_assets_adopt_open_fd(dat_fd))
+                close(dat_fd); /* No descriptor leak on a rejected adoption. */
+        }
+        else if (ps2_storage_data_device() != PS2_BOOT_HOST)
+        {
+            char dat_path[300];
+            if (!ps2_storage_pack_path(dat_path, sizeof(dat_path)))
+                snprintf(dat_path, sizeof(dat_path), "(invalid DAT path)");
+            /* A second failing open would add an IOP RPC but no information.
+             * PCSX2's host: fallback remains handled by ps2_assets_init. */
+            ps2_panic("DAT not accessible\n%.90s\n%s",
+                      dat_path, sDatMountStatus);
+        }
     }
     if (ps2_storage_data_device() != PS2_BOOT_CDROM)
     {
