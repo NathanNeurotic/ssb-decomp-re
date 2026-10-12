@@ -138,6 +138,10 @@ const char *ps2_storage_boot_dir(void);   /* e.g. "mass0:/SSB64/" */
 const char *ps2_storage_device_name(PS2BootDevice dev);
 /* Build "<boot dir><name>" into out. */
 void ps2_storage_path(char *out, size_t out_size, const char *name);
+/* Explicit --data= absolute path: directory or full SSB64.DAT filename. */
+int ps2_storage_set_data_path(const char *path);
+/* Resolves the exact DAT location; returns 0 on truncated/invalid output. */
+int ps2_storage_pack_path(char *out, size_t out_size);
 
 /* Simple blocking file API over fileXio / fio (platform-internal). */
 int ps2_file_open_read(const char *path);
