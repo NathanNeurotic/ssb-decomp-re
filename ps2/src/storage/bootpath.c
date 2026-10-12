@@ -32,6 +32,9 @@ void ps2_storage_set_boot_path(const char *argv0)
     const char *last_sep;
     size_t len;
 
+    /* This may be called again after a different launcher handoff. */
+    sProgressive = 0;
+
     if (argv0 == NULL || argv0[0] == '\0')
     {
         /* PCSX2 fast-boot of an ELF without argv: host: is the best guess. */
@@ -85,15 +88,12 @@ void ps2_storage_set_boot_path(const char *argv0)
             strcpy(sBootDir, "pfs0:/");
         }
     }
-    else if (sDevice == PS2_BOOT_MASS && !starts_with(argv0, "mass"))
-    {
-        /* other launchers' names for USB storage -> our bdmfs "mass:" */
-        const char *colon = strchr(argv0, ':');
-
-        snprintf(sBootDir, sizeof(sBootDir), "mass:%s", colon ? colon + 1 : "/");
-    }
     else
     {
+        /* Preserve the launcher-supplied device identifier byte-for-byte.
+         * usbN:/ and bdmN:/ are NOT proven aliases of massN: and converting
+         * them silently can pick the wrong device in a multi-USB setup.
+         * Backend compatibility must be decided separately from path parsing. */
         strncpy(sBootDir, argv0, sizeof(sBootDir) - 1);
         sBootDir[sizeof(sBootDir) - 1] = '\0';
     }
