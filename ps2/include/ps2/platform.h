@@ -158,6 +158,8 @@ int ps2_file_read(int fd, void *dst, uint32_t size);
 int ps2_file_seek(int fd, uint32_t offset);
 int ps2_file_size(int fd);
 void ps2_file_close(int fd);
+/* Last DAT bootstrap failure: differentiates open, format and read errors. */
+const char *ps2_assets_last_error(void);
 
 /* ------------------------------------------------------------------ */
 /* IOP modules (ps2/src/platform/iop.c)                                */
