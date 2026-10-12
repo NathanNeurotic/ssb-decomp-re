@@ -54,9 +54,9 @@ static void wait_for_boot_file(void)
             ps2_log("boot: %s found after %d ms", path, i * 100);
             return;
         }
-        if (ps2_storage_boot_device() == PS2_BOOT_HOST)
+        if (ps2_storage_data_device() == PS2_BOOT_HOST)
         {
-            break; /* host: is there or not */
+            break; /* The DAT transport is host:, regardless of ELF origin. */
         }
         ps2_delay_vblanks(6);
     }
@@ -130,7 +130,7 @@ int ps2_main(int argc, char *argv[])
                   ps2_storage_device_name(ps2_storage_data_device()));
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
     wait_for_boot_file();
-    if (ps2_storage_boot_device() != PS2_BOOT_CDROM)
+    if (ps2_storage_data_device() != PS2_BOOT_CDROM)
     {
         /* crash/panic reports write SSB64.LOG from here on */
         ps2_log_enable_save(1);
