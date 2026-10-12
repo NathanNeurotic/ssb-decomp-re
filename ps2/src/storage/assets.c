@@ -31,6 +31,17 @@ const char *ps2_assets_last_error(void)
     return sLoadError;
 }
 
+/* The startup enumeration probe already opened the exact requested DAT.
+ * Keep that descriptor alive across controller/service initialization rather
+ * than reopening a rapidly enumerating USB volume after the probe. */
+int ps2_assets_adopt_open_fd(int fd)
+{
+    if (fd < 0 || sFd >= 0)
+        return 0;
+    sFd = fd;
+    return 1;
+}
+
 
 static uint32_t sBytesRead;
 static uint32_t sReads;
@@ -65,7 +76,10 @@ int ps2_assets_init(void)
         ps2_log("assets: %s", sLoadError);
         return 0;
     }
-    sFd = ps2_file_open_read(path);
+    if (sFd < 0)
+        sFd = ps2_file_open_read(path);
+    else
+        ps2_log("assets: using existing verified open handle for %s", path);
     if (sFd < 0 && ps2_storage_boot_device() == PS2_BOOT_HOST &&
         !ps2_storage_has_data_override() && strcmp(path, "host:SSB64.DAT") != 0)
     {
