@@ -8,6 +8,7 @@
  */
 #include <ps2/platform.h>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <kernel.h>
 #include <stdio.h>
@@ -32,6 +33,8 @@ extern void ps2_overlay_state_init(void);
 
 #define PS2_BOOT_TITLE "Super Smash Bros. 64 - PS2 native port"
 
+static char sDatMountStatus[96] = "DAT mount not checked";
+
 /* Media can enumerate asynchronously after driver startup. Allow a bounded
  * six-second wait for local storage, twelve for Ethernet link + UDP storage.
  * Always probe the selected DAT path, which may be on another device. */
@@ -53,6 +56,7 @@ static int wait_for_boot_file(void)
         fd = open(path, O_RDONLY);
         if (fd >= 0)
         {
+            snprintf(sDatMountStatus, sizeof(sDatMountStatus), "DAT opened on requested mount");
             ps2_log("boot: %s open after %d ms (fd=%d)", path, i * 100, fd);
             return fd; /* Keep the valid descriptor through asset loading. */
         }
@@ -62,7 +66,33 @@ static int wait_for_boot_file(void)
         }
         ps2_delay_vblanks(6);
     }
-    ps2_log("boot: %s could not be opened", path);
+    /* A valid fileXio RPC is not proof that the requested massN: volume
+     * exists. Distinguish a mounted volume with no DAT from an inaccessible
+     * USB mount. Do not probe a different mass index or load duplicate
+     * storage drivers into the launcher's inherited environment. */
+    if (ps2_storage_data_device() == PS2_BOOT_MASS)
+    {
+        const char *colon = strchr(path, ':');
+        if (colon != NULL && (size_t)(colon - path) + 3 < 16)
+        {
+            char root[16];
+            int root_fd;
+            snprintf(root, sizeof(root), "%.*s/", (int)(colon - path) + 1, path);
+            root_fd = open(root, O_RDONLY | O_DIRECTORY);
+            if (root_fd >= 0)
+            {
+                close(root_fd);
+                snprintf(sDatMountStatus, sizeof(sDatMountStatus),
+                         "USB mount ready; DAT path missing");
+            }
+            else
+            {
+                snprintf(sDatMountStatus, sizeof(sDatMountStatus),
+                         "USB mount unavailable (errno %d)", errno);
+            }
+        }
+    }
+    ps2_log("boot: %s could not be opened: %s", path, sDatMountStatus);
     return -1;
 }
 
@@ -166,7 +196,8 @@ int ps2_main(int argc, char *argv[])
             snprintf(dat_path, sizeof(dat_path), "(unresolvable DAT path)");
         /* Never hide a corrupt pack or a short USB read behind a generic
          * "not found" panic. Display BOTH failure stage and exact device. */
-        ps2_panic("DAT: %s\n%s", ps2_assets_last_error(), dat_path);
+        ps2_panic("DAT: %s\n%.90s\n%s", ps2_assets_last_error(),
+                  dat_path, sDatMountStatus);
     }
     ps2_save_init();
     /* libsd + sdrdrv are loaded here rather than with the base modules so a
