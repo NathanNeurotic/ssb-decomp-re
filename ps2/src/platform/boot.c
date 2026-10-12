@@ -132,6 +132,13 @@ int ps2_main(int argc, char *argv[])
         ps2_panic("cannot initialize DAT transport %s",
                   ps2_storage_device_name(ps2_storage_data_device()));
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
+    {
+        char dat_path[300];
+        if (ps2_storage_pack_path(dat_path, sizeof(dat_path)))
+            ps2_log("boot: exact DAT path=%s", dat_path);
+        else
+            ps2_log("boot: DAT path invalid");
+    }
     wait_for_boot_file();
     if (ps2_storage_data_device() != PS2_BOOT_CDROM)
     {
@@ -150,7 +157,12 @@ int ps2_main(int argc, char *argv[])
 
     if (!ps2_assets_init())
     {
-        ps2_panic("asset pack unavailable at requested path; check SSB64.DAT and device services");
+        char dat_path[300];
+        if (!ps2_storage_pack_path(dat_path, sizeof(dat_path)))
+            snprintf(dat_path, sizeof(dat_path), "(unresolvable DAT path)");
+        /* Never hide a corrupt pack or a short USB read behind a generic
+         * "not found" panic. Display BOTH failure stage and exact device. */
+        ps2_panic("DAT: %s\n%s", ps2_assets_last_error(), dat_path);
     }
     ps2_save_init();
     /* libsd + sdrdrv are loaded here rather than with the base modules so a
