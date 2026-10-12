@@ -38,6 +38,11 @@ int ps2_storage_set_data_path(const char *path)
     return 1;
 }
 
+int ps2_storage_has_data_override(void)
+{
+    return sDataPath[0] != '\0';
+}
+
 int ps2_storage_pack_path(char *out, size_t out_size)
 {
     const char *source = sDataPath[0] ? sDataPath : sBootDir;
