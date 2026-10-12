@@ -35,7 +35,7 @@ extern void ps2_overlay_state_init(void);
 /* Media can enumerate asynchronously after driver startup. Allow a bounded
  * six-second wait for local storage, twelve for Ethernet link + UDP storage.
  * Always probe the selected DAT path, which may be on another device. */
-static void wait_for_boot_file(void)
+static int wait_for_boot_file(void)
 {
     extern void ps2_delay_vblanks(int n);
     char path[288];
@@ -46,16 +46,15 @@ static void wait_for_boot_file(void)
     if (!ps2_storage_pack_path(path, sizeof(path)))
     {
         ps2_log("boot: DAT path is invalid or too long");
-        return;
+        return -1;
     }
     for (i = 0; i < attempts; i++)
     {
         fd = open(path, O_RDONLY);
         if (fd >= 0)
         {
-            close(fd);
-            ps2_log("boot: %s found after %d ms", path, i * 100);
-            return;
+            ps2_log("boot: %s open after %d ms (fd=%d)", path, i * 100, fd);
+            return fd; /* Keep the valid descriptor through asset loading. */
         }
         if (ps2_storage_data_device() == PS2_BOOT_HOST)
         {
@@ -63,7 +62,8 @@ static void wait_for_boot_file(void)
         }
         ps2_delay_vblanks(6);
     }
-    ps2_log("boot: %s not found", path);
+    ps2_log("boot: %s could not be opened", path);
+    return -1;
 }
 
 int ps2_main(int argc, char *argv[])
@@ -139,7 +139,11 @@ int ps2_main(int argc, char *argv[])
         else
             ps2_log("boot: DAT path invalid");
     }
-    wait_for_boot_file();
+    {
+        int dat_fd = wait_for_boot_file();
+        if (dat_fd >= 0 && !ps2_assets_adopt_open_fd(dat_fd))
+            close(dat_fd); /* No descriptor leak on a rejected adoption. */
+    }
     if (ps2_storage_data_device() != PS2_BOOT_CDROM)
     {
         /* crash/panic reports write SSB64.LOG from here on */
