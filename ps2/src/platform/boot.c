@@ -123,6 +123,14 @@ int ps2_main(int argc, char *argv[])
         ps2_panic("invalid --data path (must be absolute and under 300 bytes)");
 
     ps2_iop_load_boot_device_drivers(ps2_storage_boot_device());
+    /* A DAT override can refer to a different transport. Bring up that
+     * backend without resetting the IOP or resampling massN: identity. */
+    if (ps2_storage_data_device() != ps2_storage_boot_device())
+    {
+        ps2_log("boot: secondary DAT device=%s",
+                ps2_storage_device_name(ps2_storage_data_device()));
+        ps2_iop_load_boot_device_drivers(ps2_storage_data_device());
+    }
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
     wait_for_boot_file();
     if (ps2_storage_boot_device() != PS2_BOOT_CDROM)
