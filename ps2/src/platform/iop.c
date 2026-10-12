@@ -587,8 +587,13 @@ int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
     switch (dev)
     {
     case PS2_BOOT_MASS:
-        /* Generic massN: can only be treated as USB after a clean reset.
-         * If the launcher preserved another BDM transport, we keep it above. */
+        /* massN: is shared across USB, ATA, MX4SIO and other BDM devices.
+         * After a reset its original physical mapping cannot be recovered
+         * from the pathname. Refuse a potentially wrong drive. Preserve
+         * launcher services above or use a typed usbN:/ataN:/... DAT path. */
+        ps2_log("IOP: shared massN needs inherited BDM or typed --data path");
+        return -1;
+    case PS2_BOOT_USB:
         if (load_bdm_core() < 0 ||
             LOAD_IRX(usbd_mini, 0x600060) < 0 ||
             LOAD_IRX(usbmass_bd_mini, 0x800060) < 0)
