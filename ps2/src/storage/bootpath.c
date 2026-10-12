@@ -73,6 +73,28 @@ static int starts_with(const char *s, const char *prefix)
     return strncmp(s, prefix, strlen(prefix)) == 0;
 }
 
+/* DATA can be hosted on another device than the ELF. Device selection
+ * is explicit; do not scan massN: drives for a matching DAT. */
+PS2BootDevice ps2_storage_data_device(void)
+{
+    const char *path = sDataPath;
+    if (!path[0])
+        return sDevice;
+    if (starts_with(path, "host:"))
+        return PS2_BOOT_HOST;
+    if (starts_with(path, "mass") || starts_with(path, "usb") || starts_with(path, "bdm"))
+        return PS2_BOOT_MASS;
+    if (starts_with(path, "mc"))
+        return PS2_BOOT_MC;
+    if (starts_with(path, "mmce"))
+        return PS2_BOOT_MMCE;
+    if (starts_with(path, "hdd") || starts_with(path, "pfs"))
+        return PS2_BOOT_HDD;
+    if (starts_with(path, "cdrom"))
+        return PS2_BOOT_CDROM;
+    return PS2_BOOT_UNKNOWN;
+}
+
 void ps2_storage_set_boot_path(const char *argv0)
 {
     const char *last_sep;
