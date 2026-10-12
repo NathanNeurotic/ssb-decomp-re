@@ -22,6 +22,12 @@ int main(void)
     check("usb1:/APPS/SSB64.ELF", PS2_BOOT_MASS, "usb1:/APPS/");
     check("bdm2:/GAMES/SSB64.ELF", PS2_BOOT_MASS, "bdm2:/GAMES/");
     check("mmce0:/SSB64.ELF", PS2_BOOT_MMCE, "mmce0:/");
+    check("mx4sio0:/SSB64.ELF", PS2_BOOT_MX4SIO, "mx4sio0:/");
+    check("ata0:/GAMES/SSB64.ELF", PS2_BOOT_ATA, "ata0:/GAMES/");
+    check("ilink0:/SSB64.ELF", PS2_BOOT_ILINK, "ilink0:/");
+    check("udpbd0:/SSB64.ELF", PS2_BOOT_UDPBD, "udpbd0:/");
+    check("udpfs:/SSB64.ELF", PS2_BOOT_UDPFS, "udpfs:/");
+    check("bdm:/SSB64.ELF", PS2_BOOT_UNKNOWN, "bdm:/");
     check("mc1:/APPS/SSB64.ELF", PS2_BOOT_MC, "mc1:/APPS/");
     check("host:ssb64.elf", PS2_BOOT_HOST, "host:");
     check("hdd0:__common:pfs:/APPS/SSB64.ELF", PS2_BOOT_HDD, "pfs0:/APPS/");
@@ -41,6 +47,8 @@ int main(void)
     assert(ps2_storage_has_data_override());
     assert(ps2_storage_pack_path(path, sizeof(path)) == 1);
     assert(strcmp(path, "mass2:/DATA/SSB64.DAT") == 0);
+    assert(ps2_storage_set_data_path("udpfs:/SSB64.DAT") == 1);
+    assert(ps2_storage_data_device() == PS2_BOOT_UDPFS);
     assert(ps2_storage_set_data_path("mmce1:/SSB64.DAT") == 1);
     assert(ps2_storage_data_device() == PS2_BOOT_MMCE);
     assert(ps2_storage_pack_path(path, sizeof(path)) == 1);
