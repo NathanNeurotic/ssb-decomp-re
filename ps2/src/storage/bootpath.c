@@ -26,6 +26,51 @@ static char sDataPath[DATA_PATH_MAX];
 static char sBootHddPartition[96];
 static char sDataHddPartition[96];
 
+/* Match complete PS2 device tokens, not arbitrary filename prefixes.
+ * The only permitted suffix before ':' is an optional numeric unit ID. */
+static int device_token(const char *path, const char *prefix)
+{
+    const char *p;
+    size_t length;
+    if (path == NULL)
+        return 0;
+    length = strlen(prefix);
+    if (strncmp(path, prefix, length) != 0)
+        return 0;
+    p = path + length;
+    while (*p >= '0' && *p <= '9')
+        p++;
+    return *p == ':';
+}
+
+static PS2BootDevice classify_device(const char *path)
+{
+    if (device_token(path, "host"))
+        return PS2_BOOT_HOST;
+    if (device_token(path, "mass") || device_token(path, "usb"))
+        return PS2_BOOT_MASS;
+    if (device_token(path, "ata"))
+        return PS2_BOOT_ATA;
+    if (device_token(path, "mx4sio") || device_token(path, "sdc"))
+        return PS2_BOOT_MX4SIO;
+    if (device_token(path, "ilink") || device_token(path, "sd"))
+        return PS2_BOOT_ILINK;
+    if (device_token(path, "udpbd"))
+        return PS2_BOOT_UDPBD;
+    if (device_token(path, "udpfs"))
+        return PS2_BOOT_UDPFS;
+    if (device_token(path, "mc"))
+        return PS2_BOOT_MC;
+    if (device_token(path, "hdd") || device_token(path, "pfs"))
+        return PS2_BOOT_HDD;
+    if (device_token(path, "mmce"))
+        return PS2_BOOT_MMCE;
+    if (device_token(path, "cdrom"))
+        return PS2_BOOT_CDROM;
+    /* bdmN: does not tell us which physical transport owns the mount. */
+    return PS2_BOOT_UNKNOWN;
+}
+
 /* A supplied DAT path is an explicit identity, never a device-search hint. */
 int ps2_storage_set_data_path(const char *path)
 {
@@ -35,8 +80,8 @@ int ps2_storage_set_data_path(const char *path)
     if (path == NULL || path[0] == '\0')
         return 1; /* No override: use ELF-adjacent DAT. */
     n = strlen(path);
-    if (strchr(path, ':') == NULL || n >= sizeof(sDataPath))
-        return 0; /* Absolute PS2 device paths only; no truncation. */
+    if (classify_device(path) == PS2_BOOT_UNKNOWN || n >= sizeof(sDataPath))
+        return 0; /* Recognized absolute PS2 device only; no truncation. */
     if (strncmp(path, "hdd", 3) == 0)
     {
         const char *pfs = strstr(path, ":pfs:");
@@ -100,32 +145,7 @@ static int starts_with(const char *s, const char *prefix)
  * is explicit; do not scan massN: drives for a matching DAT. */
 PS2BootDevice ps2_storage_data_device(void)
 {
-    const char *path = sDataPath;
-    if (!path[0])
-        return sDevice;
-    if (starts_with(path, "host:"))
-        return PS2_BOOT_HOST;
-    if (starts_with(path, "mass") || starts_with(path, "usb"))
-        return PS2_BOOT_MASS;
-    if (starts_with(path, "ata"))
-        return PS2_BOOT_ATA;
-    if (starts_with(path, "mx4sio") || starts_with(path, "sdc"))
-        return PS2_BOOT_MX4SIO;
-    if (starts_with(path, "ilink") || starts_with(path, "sd:"))
-        return PS2_BOOT_ILINK;
-    if (starts_with(path, "udpbd"))
-        return PS2_BOOT_UDPBD;
-    if (starts_with(path, "udpfs"))
-        return PS2_BOOT_UDPFS;
-    if (starts_with(path, "mc"))
-        return PS2_BOOT_MC;
-    if (starts_with(path, "mmce"))
-        return PS2_BOOT_MMCE;
-    if (starts_with(path, "hdd") || starts_with(path, "pfs"))
-        return PS2_BOOT_HDD;
-    if (starts_with(path, "cdrom"))
-        return PS2_BOOT_CDROM;
-    return PS2_BOOT_UNKNOWN;
+    return sDataPath[0] ? classify_device(sDataPath) : sDevice;
 }
 
 const char *ps2_storage_boot_hdd_partition(void)
@@ -165,30 +185,7 @@ void ps2_storage_set_boot_path(const char *argv0)
         }
     }
 
-    if (starts_with(argv0, "host"))
-        sDevice = PS2_BOOT_HOST;
-    else if (starts_with(argv0, "mass") || starts_with(argv0, "usb"))
-        sDevice = PS2_BOOT_MASS;
-    else if (starts_with(argv0, "ata"))
-        sDevice = PS2_BOOT_ATA;
-    else if (starts_with(argv0, "mx4sio") || starts_with(argv0, "sdc"))
-        sDevice = PS2_BOOT_MX4SIO;
-    else if (starts_with(argv0, "ilink") || starts_with(argv0, "sd:"))
-        sDevice = PS2_BOOT_ILINK;
-    else if (starts_with(argv0, "udpbd"))
-        sDevice = PS2_BOOT_UDPBD;
-    else if (starts_with(argv0, "udpfs"))
-        sDevice = PS2_BOOT_UDPFS;
-    else if (starts_with(argv0, "mc"))
-        sDevice = PS2_BOOT_MC;
-    else if (starts_with(argv0, "hdd") || starts_with(argv0, "pfs"))
-        sDevice = PS2_BOOT_HDD;
-    else if (starts_with(argv0, "mmce"))
-        sDevice = PS2_BOOT_MMCE;
-    else if (starts_with(argv0, "cdrom"))
-        sDevice = PS2_BOOT_CDROM;
-    else
-        sDevice = PS2_BOOT_UNKNOWN;
+    sDevice = classify_device(argv0);
 
     if (sDevice == PS2_BOOT_HDD && starts_with(argv0, "hdd"))
     {
