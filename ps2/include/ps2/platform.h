@@ -109,7 +109,8 @@ typedef enum PS2BootDevice
 {
     PS2_BOOT_UNKNOWN,
     PS2_BOOT_HOST,   /* host: (ps2link / PCSX2 host fs) */
-    PS2_BOOT_MASS,   /* generic indexed massN: BDM; preserve exact mount */
+    PS2_BOOT_MASS,   /* shared massN: BDM, backing driver may be non-USB */
+    PS2_BOOT_USB,    /* typed usbN: namespace, physical USB transport */
     PS2_BOOT_ATA,    /* ATA BDM/exFAT */
     PS2_BOOT_MX4SIO, /* memory-card SD block device */
     PS2_BOOT_ILINK,  /* IEEE1394 BDM */
