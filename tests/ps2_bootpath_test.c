@@ -49,6 +49,14 @@ int main(void)
     assert(strcmp(path, "mass2:/DATA/SSB64.DAT") == 0);
     assert(ps2_storage_set_data_path("udpfs:/SSB64.DAT") == 1);
     assert(ps2_storage_data_device() == PS2_BOOT_UDPFS);
+    /* Cross-device APA data stays bound to the exact named partition. */
+    assert(ps2_storage_set_data_path("hdd1:+OPL:pfs:/ASSETS/SSB64.DAT") == 1);
+    assert(ps2_storage_data_device() == PS2_BOOT_HDD);
+    assert(strcmp(ps2_storage_boot_hdd_partition(), "hdd1:+OPL") == 0);
+    assert(ps2_storage_pack_path(path, sizeof(path)) == 1);
+    assert(strcmp(path, "pfs0:/ASSETS/SSB64.DAT") == 0);
+    assert(ps2_storage_set_data_path("hdd0:INVALID") == 0);
+    assert(!ps2_storage_has_data_override());
     assert(ps2_storage_set_data_path("mmce1:/SSB64.DAT") == 1);
     assert(ps2_storage_data_device() == PS2_BOOT_MMCE);
     assert(ps2_storage_pack_path(path, sizeof(path)) == 1);
