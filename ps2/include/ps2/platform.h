@@ -144,6 +144,8 @@ int ps2_storage_set_data_path(const char *path);
 int ps2_storage_pack_path(char *out, size_t out_size);
 int ps2_storage_has_data_override(void);
 PS2BootDevice ps2_storage_data_device(void);
+/* Exact canonical hddN:partition extracted before converting to pfs0:. */
+const char *ps2_storage_boot_hdd_partition(void);
 
 /* Simple blocking file API over fileXio / fio (platform-internal). */
 int ps2_file_open_read(const char *path);
