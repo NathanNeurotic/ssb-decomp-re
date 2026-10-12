@@ -1,0 +1,35 @@
+/* Host-side boot-path identity regression: cc -std=c99 -Wall -Wextra
+ * -Ips2/include ps2/src/storage/bootpath.c tests/ps2_bootpath_test.c
+ * -o /tmp/ps2_bootpath_test && /tmp/ps2_bootpath_test
+ */
+#include <ps2/platform.h>
+#include <assert.h>
+#include <string.h>
+
+static void check(const char *source, PS2BootDevice device, const char *dir)
+{
+    ps2_storage_set_boot_path(source);
+    assert(ps2_storage_boot_device() == device);
+    assert(strcmp(ps2_storage_boot_dir(), dir) == 0);
+}
+
+int main(void)
+{
+    char path[300];
+    check("mass0:/APPS/SSB64.ELF", PS2_BOOT_MASS, "mass0:/APPS/");
+    check("mass1:/APPS/SSB64.ELF", PS2_BOOT_MASS, "mass1:/APPS/");
+    check("mass2:/SSB64.ELF", PS2_BOOT_MASS, "mass2:/");
+    check("usb1:/APPS/SSB64.ELF", PS2_BOOT_MASS, "usb1:/APPS/");
+    check("bdm2:/GAMES/SSB64.ELF", PS2_BOOT_MASS, "bdm2:/GAMES/");
+    check("mmce0:/SSB64.ELF", PS2_BOOT_MMCE, "mmce0:/");
+    check("mc1:/APPS/SSB64.ELF", PS2_BOOT_MC, "mc1:/APPS/");
+    check("host:ssb64.elf", PS2_BOOT_HOST, "host:");
+    check("hdd0:__common:pfs:/APPS/SSB64.ELF", PS2_BOOT_HDD, "pfs0:/APPS/");
+    check("mass0:/SSB64_240p.elf", PS2_BOOT_MASS, "mass0:/");
+    assert(ps2_video_progressive() == 1);
+    check("mass0:/SSB64.ELF", PS2_BOOT_MASS, "mass0:/");
+    assert(ps2_video_progressive() == 0);
+    ps2_storage_path(path, sizeof(path), "SSB64.DAT");
+    assert(strcmp(path, "mass0:/SSB64.DAT") == 0);
+    return 0;
+}
