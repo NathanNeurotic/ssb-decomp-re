@@ -21,6 +21,11 @@
 #include <ps2/platform.h>
 
 #include <fileXio_rpc.h>
+#include <delaythread.h>
+#include <ctype.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <unistd.h>
 #include <kernel.h>
 #include <iopcontrol.h>
 #include <iopheap.h>
@@ -46,10 +51,22 @@ DECLARE_IRX(bdmfs_fatfs);
 DECLARE_IRX(usbd_mini);
 DECLARE_IRX(usbmass_bd_mini);
 DECLARE_IRX(mmceman);
+DECLARE_IRX(ps2dev9);
+DECLARE_IRX(ps2atad);
+DECLARE_IRX(mx4sio_bd);
+DECLARE_IRX(iLinkman);
+DECLARE_IRX(IEEE1394_bd);
+DECLARE_IRX(smap_udpbd);
+DECLARE_IRX(udpfs_smap);
+DECLARE_IRX(udpfs_ministack);
+DECLARE_IRX(udpfs_ioman);
+DECLARE_IRX(ps2hdd);
+DECLARE_IRX(ps2fs);
+DECLARE_IRX(secrsif);
 DECLARE_IRX(libsd);
 DECLARE_IRX(sdr);
 
-#define MAX_TRACKED_MODULES 24
+#define MAX_TRACKED_MODULES 40
 
 static const char *sLoaded[MAX_TRACKED_MODULES];
 static int sLoadedCount;
@@ -232,6 +249,10 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
     int id;
     void *src = buf;
     void *bounce = NULL;
+    /* Reusing one shared backend can require the BDM core twice, once for
+     * the ELF device and once for an explicit DAT transport. Load once. */
+    if (ps2_iop_module_loaded(name))
+        return 0;
 
     /* SifExecModuleBuffer() sends the image with a SIF DMA REF tag, and the
      * DMAC only addresses whole quadwords.  A blob that the embedding step
@@ -290,6 +311,8 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
 #define LOAD_IRX_PATCHED(name, rgb, patch) \
     (ps2_boot_stage("IOP: loading " #name, (rgb)), load_irx(#name, name##_irx, size_##name##_irx, NULL, 0, (patch)))
 #define LOAD_IRX(name, rgb) LOAD_IRX_PATCHED(name, rgb, NULL)
+#define LOAD_IRX_ARGS(name, rgb, args, len) \
+    (ps2_boot_stage("IOP: loading " #name, (rgb)), load_irx(#name, name##_irx, size_##name##_irx, (args), (len), NULL))
 
 void ps2_iop_init(void)
 {
@@ -416,46 +439,170 @@ int ps2_iop_load_audio_drivers(void)
     return 0;
 }
 
-void ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
+/* Only use a fully validated first token from the PS2's IPCONFIG.DAT.
+ * Never start a network transport with a guessed IP configuration. */
+static int valid_ipv4(const char *s)
 {
+    int parts = 0, digits = 0, value = 0;
+    for (; *s; s++)
+    {
+        if (*s >= '0' && *s <= '9')
+        {
+            if (++digits > 3)
+                return 0;
+            value = value * 10 + (*s - '0');
+            if (value > 255)
+                return 0;
+        }
+        else if (*s == '.' && digits > 0 && parts < 3)
+        {
+            parts++;
+            digits = 0;
+            value = 0;
+        }
+        else
+            return 0;
+    }
+    return parts == 3 && digits != 0;
+}
+
+static int network_ip_arg(char *out, unsigned int max_len)
+{
+    const char *paths[2] = {"mc0:/SYS-CONF/IPCONFIG.DAT", "mc1:/SYS-CONF/IPCONFIG.DAT"};
+    char buf[128];
+    int i;
+    for (i = 0; i < 2; i++)
+    {
+        int fd = open(paths[i], O_RDONLY), n, k = 0;
+        if (fd < 0)
+            continue;
+        n = (int)read(fd, buf, sizeof(buf) - 1);
+        close(fd);
+        if (n < 1)
+            continue;
+        buf[n] = '\0';
+        while (buf[k] && isspace((unsigned char)buf[k]))
+            k++;
+        {
+            int begin = k;
+            while (buf[k] && !isspace((unsigned char)buf[k]))
+                k++;
+            buf[k] = '\0';
+            if (valid_ipv4(buf + begin))
+            {
+                int written = snprintf(out, max_len, "ip=%s", buf + begin);
+                if (written >= 0 && (unsigned int)written < max_len)
+                {
+                    ps2_log("IOP: network IP from %s", paths[i]);
+                    return 1;
+                }
+            }
+        }
+    }
+    ps2_log("IOP: UDP device requires valid mc?:/SYS-CONF/IPCONFIG.DAT");
+    return 0;
+}
+
+static int load_bdm_core(void)
+{
+    if (LOAD_IRX(bdm, 0x200060) < 0 ||
+        LOAD_IRX(bdmfs_fatfs, 0x400060) < 0)
+        return -1;
+    return 0;
+}
+
+int ps2_iop_load_boot_device_drivers(PS2BootDevice dev)
+{
+    char ip_arg[24];
     if (sInheritedFileXio)
     {
-        /* launcHER deliberately unmounts a PFS ELF partition before
-         * handoff, even while retaining its APA/PS2FS drivers. Remount the
-         * exact named partition; never guess a different HDD partition. */
+        /* launcHER unmounts the executable's PFS source during handoff.
+         * We can remount only an exact known APA partition, never infer one. */
         if (dev == PS2_BOOT_HDD && ps2_storage_boot_hdd_partition()[0])
         {
             int res = fileXioMount("pfs0:", ps2_storage_boot_hdd_partition(), FILEXIO_MOUNTFLAG_READONLY);
             ps2_log("IOP: APA mount %s -> pfs0: result=%d", ps2_storage_boot_hdd_partition(), res);
+            return res < 0 ? -1 : 0;
         }
-        return; /* Do not duplicate, unmount, or renumber launcher drivers. */
+        ps2_log("IOP: preserving inherited %s filesystem", ps2_storage_device_name(dev));
+        return 0;
     }
     switch (dev)
     {
     case PS2_BOOT_MASS:
-        /* USB mass storage enumerates asynchronously; boot.c waits for the
-         * asset pack to become visible. */
-        LOAD_IRX(bdm, 0x200060);
-        LOAD_IRX(bdmfs_fatfs, 0x400060);
-        LOAD_IRX(usbd_mini, 0x600060);
-        LOAD_IRX(usbmass_bd_mini, 0x800060);
-        break;
-
+        /* Generic massN: can only be treated as USB after a clean reset.
+         * If the launcher preserved another BDM transport, we keep it above. */
+        if (load_bdm_core() < 0 ||
+            LOAD_IRX(usbd_mini, 0x600060) < 0 ||
+            LOAD_IRX(usbmass_bd_mini, 0x800060) < 0)
+            return -1;
+        return 0;
+    case PS2_BOOT_ATA:
+        if (LOAD_IRX(ps2dev9, 0x200060) < 0 ||
+            load_bdm_core() < 0 ||
+            LOAD_IRX(ps2atad, 0x600060) < 0)
+            return -1;
+        return 0;
+    case PS2_BOOT_MX4SIO:
+        if (load_bdm_core() < 0 || LOAD_IRX(mx4sio_bd, 0x600060) < 0)
+            return -1;
+        return 0;
+    case PS2_BOOT_ILINK:
+        if (load_bdm_core() < 0 ||
+            LOAD_IRX(iLinkman, 0x600060) < 0 ||
+            LOAD_IRX(IEEE1394_bd, 0x800060) < 0)
+            return -1;
+        return 0;
+    case PS2_BOOT_UDPBD:
+        if (!network_ip_arg(ip_arg, sizeof(ip_arg)) ||
+            LOAD_IRX(ps2dev9, 0x200060) < 0 ||
+            load_bdm_core() < 0 ||
+            LOAD_IRX_ARGS(smap_udpbd, 0x800060, ip_arg, (int)strlen(ip_arg) + 1) < 0)
+            return -1;
+        return 0;
+    case PS2_BOOT_UDPFS:
+        if (!network_ip_arg(ip_arg, sizeof(ip_arg)) ||
+            LOAD_IRX(ps2dev9, 0x200060) < 0 ||
+            LOAD_IRX(udpfs_smap, 0x400060) < 0 ||
+            LOAD_IRX_ARGS(udpfs_ministack, 0x600060, ip_arg, (int)strlen(ip_arg) + 1) < 0 ||
+            LOAD_IRX(udpfs_ioman, 0x800060) < 0)
+            return -1;
+        return 0;
     case PS2_BOOT_MMCE:
-        LOAD_IRX(mmceman, 0x600060);
-        break;
-
+        return LOAD_IRX(mmceman, 0x600060);
     case PS2_BOOT_HDD:
-        /* HDD boot needs dev9/atad/hdd/pfs plus a partition mount; not yet
-         * wired up (see PS2_PORT_STATUS.md). */
-        ps2_log("IOP: HDD boot drivers not implemented yet");
-        break;
-
+    {
+        static const char hdd_args[] = "-o\0" "4\0" "-n\0" "20";
+        static const char pfs_args[] = "-o\0" "10\0" "-n\0" "40";
+        const char *part = ps2_storage_boot_hdd_partition();
+        if (!part[0])
+        {
+            ps2_log("IOP: no APA partition identity for PFS remount");
+            return -1;
+        }
+        if (LOAD_IRX(ps2dev9, 0x200060) < 0 ||
+            load_bdm_core() < 0 ||
+            LOAD_IRX(ps2atad, 0x600060) < 0)
+            return -1;
+        DelayThread(1000000); /* Allow ATAD to settle before APA probing. */
+        if (LOAD_IRX_ARGS(ps2hdd, 0x400060, hdd_args, sizeof(hdd_args)) < 0 ||
+            LOAD_IRX_ARGS(ps2fs, 0x600060, pfs_args, sizeof(pfs_args)) < 0 ||
+            LOAD_IRX(secrsif, 0x800060) < 0)
+            return -1;
+        {
+            int res = fileXioMount("pfs0:", part, FILEXIO_MOUNTFLAG_READONLY);
+            ps2_log("IOP: APA mount %s result=%d", part, res);
+            return res < 0 ? -1 : 0;
+        }
+    }
+    case PS2_BOOT_HOST:
+    case PS2_BOOT_MC:
+    case PS2_BOOT_CDROM:
+        return 0;
     case PS2_BOOT_UNKNOWN:
-        ps2_log("IOP: unknown launch device: refusing speculative USB setup");
-        break;
     default:
-        break;
+        ps2_log("IOP: unknown data transport; refusing guessed device");
+        return -1;
     }
 }
 
