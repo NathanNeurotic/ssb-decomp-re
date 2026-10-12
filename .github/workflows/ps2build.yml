@@ -61,6 +61,15 @@ jobs:
           /tmp/ssb64-bootpath-regression
           echo 'Boot-path regression PASS'
 
+      - name: Validate USB DAT loader errors and valid pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c99 -Wall -Wextra -Werror -Itests/stubs -Ips2/include \
+            ps2/src/storage/assets.c tests/ps2_asset_loader_test.c \
+            -o /tmp/ssb64-asset-regression
+          /tmp/ssb64-asset-regression
+
       - name: Generate ROM-independent linker symbols
         shell: bash
         run: |
