@@ -70,7 +70,8 @@ static int wait_for_boot_file(void)
      * exists. Distinguish a mounted volume with no DAT from an inaccessible
      * USB mount. Do not probe a different mass index or load duplicate
      * storage drivers into the launcher's inherited environment. */
-    if (ps2_storage_data_device() == PS2_BOOT_MASS)
+    if (ps2_storage_data_device() == PS2_BOOT_MASS ||
+        ps2_storage_data_device() == PS2_BOOT_USB)
     {
         const char *colon = strchr(path, ':');
         if (colon != NULL && (size_t)(colon - path) + 3 < 16)
@@ -83,12 +84,12 @@ static int wait_for_boot_file(void)
             {
                 close(root_fd);
                 snprintf(sDatMountStatus, sizeof(sDatMountStatus),
-                         "USB mount ready; DAT path missing");
+                         "Storage mount ready; DAT missing");
             }
             else
             {
                 snprintf(sDatMountStatus, sizeof(sDatMountStatus),
-                         "USB mount unavailable (errno %d)", errno);
+                         "Storage mount unavailable (errno %d)", errno);
             }
         }
     }
