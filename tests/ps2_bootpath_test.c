@@ -28,6 +28,10 @@ int main(void)
     check("udpbd0:/SSB64.ELF", PS2_BOOT_UDPBD, "udpbd0:/");
     check("udpfs:/SSB64.ELF", PS2_BOOT_UDPFS, "udpfs:/");
     check("bdm:/SSB64.ELF", PS2_BOOT_UNKNOWN, "bdm:/");
+    check("massive:/SSB64.ELF", PS2_BOOT_UNKNOWN, "massive:/");
+    check("udpfsbackup:/SSB64.ELF", PS2_BOOT_UNKNOWN, "udpfsbackup:/");
+    check("hostfile:/SSB64.ELF", PS2_BOOT_UNKNOWN, "hostfile:/");
+    check("sd0:/SSB64.ELF", PS2_BOOT_ILINK, "sd0:/");
     check("mc1:/APPS/SSB64.ELF", PS2_BOOT_MC, "mc1:/APPS/");
     check("host:ssb64.elf", PS2_BOOT_HOST, "host:");
     check("hdd0:__common:pfs:/APPS/SSB64.ELF", PS2_BOOT_HDD, "pfs0:/APPS/");
@@ -62,6 +66,9 @@ int main(void)
     assert(ps2_storage_pack_path(path, sizeof(path)) == 1);
     assert(strcmp(path, "mmce1:/SSB64.DAT") == 0);
     assert(ps2_storage_set_data_path("relative/data") == 0);
+    assert(ps2_storage_set_data_path("mass-fake:/ASSETS") == 0);
+    assert(ps2_storage_set_data_path("udpfsbroken:/ASSETS") == 0);
+    assert(ps2_storage_set_data_path("bdm2:/ASSETS") == 0);
     assert(ps2_storage_has_data_override() == 0);
     assert(ps2_storage_data_device() == PS2_BOOT_MASS);
     assert(ps2_storage_set_data_path(NULL) == 1);
