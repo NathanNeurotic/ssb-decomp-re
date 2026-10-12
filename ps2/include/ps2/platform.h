@@ -159,6 +159,7 @@ int ps2_file_seek(int fd, uint32_t offset);
 int ps2_file_size(int fd);
 void ps2_file_close(int fd);
 /* Last DAT bootstrap failure: differentiates open, format and read errors. */
+int ps2_assets_init(void);
 const char *ps2_assets_last_error(void);
 /* Transfer ownership of the already-open DAT probe descriptor to asset IO. */
 int ps2_assets_adopt_open_fd(int fd);
