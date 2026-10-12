@@ -24,17 +24,39 @@ static char sBootDir[BOOT_DIR_MAX] = "host:";
 static int sProgressive;
 static char sDataPath[DATA_PATH_MAX];
 static char sBootHddPartition[96];
+static char sDataHddPartition[96];
 
 /* A supplied DAT path is an explicit identity, never a device-search hint. */
 int ps2_storage_set_data_path(const char *path)
 {
     size_t n;
     sDataPath[0] = '\0';
+    sDataHddPartition[0] = '\0';
     if (path == NULL || path[0] == '\0')
         return 1; /* No override: use ELF-adjacent DAT. */
     n = strlen(path);
     if (strchr(path, ':') == NULL || n >= sizeof(sDataPath))
         return 0; /* Absolute PS2 device paths only; no truncation. */
+    if (strncmp(path, "hdd", 3) == 0)
+    {
+        const char *pfs = strstr(path, ":pfs:");
+        size_t part_len;
+        int written;
+        if (pfs == NULL)
+            return 0; /* Exact APA source is required for a fresh mount. */
+        part_len = (size_t)(pfs - path);
+        if (part_len < 6 || part_len >= sizeof(sDataHddPartition))
+            return 0;
+        written = snprintf(sDataPath, sizeof(sDataPath), "pfs0:%s", pfs + 5);
+        if (written < 0 || (size_t)written >= sizeof(sDataPath))
+        {
+            sDataPath[0] = '\0';
+            return 0;
+        }
+        memcpy(sDataHddPartition, path, part_len);
+        sDataHddPartition[part_len] = '\0';
+        return 1;
+    }
     memcpy(sDataPath, path, n + 1);
     return 1;
 }
@@ -108,7 +130,7 @@ PS2BootDevice ps2_storage_data_device(void)
 
 const char *ps2_storage_boot_hdd_partition(void)
 {
-    return sBootHddPartition;
+    return sDataPath[0] ? sDataHddPartition : sBootHddPartition;
 }
 
 void ps2_storage_set_boot_path(const char *argv0)
