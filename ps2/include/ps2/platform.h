@@ -160,6 +160,8 @@ int ps2_file_size(int fd);
 void ps2_file_close(int fd);
 /* Last DAT bootstrap failure: differentiates open, format and read errors. */
 const char *ps2_assets_last_error(void);
+/* Transfer ownership of the already-open DAT probe descriptor to asset IO. */
+int ps2_assets_adopt_open_fd(int fd);
 
 /* ------------------------------------------------------------------ */
 /* IOP modules (ps2/src/platform/iop.c)                                */
