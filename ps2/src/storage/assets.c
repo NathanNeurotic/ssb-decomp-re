@@ -56,7 +56,7 @@ int ps2_assets_init(void)
     }
     sFd = ps2_file_open_read(path);
     if (sFd < 0 && ps2_storage_boot_device() == PS2_BOOT_HOST &&
-        strcmp(path, "host:SSB64.DAT") != 0)
+        !ps2_storage_has_data_override() && strcmp(path, "host:SSB64.DAT") != 0)
     {
         ps2_log("assets: %s not found, trying host:%s", path, PACK_NAME);
         snprintf(path, sizeof(path), "host:%s", PACK_NAME);
