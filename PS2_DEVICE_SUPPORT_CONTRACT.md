@@ -2,13 +2,24 @@
 
 Baseline: `restart/cooper-v1.0-dat-only`, originally `c228be88907ec5d2075b9dd329062d627683f2e7`, based directly on johnson-cooper PS2 v1.0 `be273112ebbdf2d5dd4f0da41d8fbe58512af3b3`.
 
-This document records source-audited requirements. **It does not claim any new device implementation or console validation.** Preserve the DAT fixes in `ps2/tools/build_assets.py`, `src/relocData/341_PikachuModel.c`, and `docs/core/build.js`, as well as the website.
+This document records source-audited requirements and the progress made in PR #25. **Native builds do not establish retail-console device compatibility.** Preserve the DAT fixes in `ps2/tools/build_assets.py`, `src/relocData/341_PikachuModel.c`, and `docs/core/build.js`, as well as the website.
 
-## Verified baseline limitations
+## Current isolated implementation (PR #25)
+
+- Based on Cooper PS2 v1.0 and the DAT-only correction branch, not the experimental #24 runtime.
+- One compiled `ssb64` target creates three distributed files: standard ELF, filename-triggered 240p copy, and unstripped ELF with debugging symbols. They share the same device code.
+- `--data=<absolute-device-directory>` or `--data=<absolute-device-path-to-SSB64.DAT>` selects the **specific** DAT file without searching drives. Example: `--data=mass1:/SSB64/SSB64.DAT`; to override from another device use `--data=udpfs:/SSB64/` or `--data=hdd0:+OPL:pfs:/SSB64/`.
+- Following launcHER's verified USB path convention, `usb1:` is translated **only** to `mass1:`, `usb0:` to `mass0:`. No drive scan or index reassignment. `bdmN:` remains ambiguous and is explicitly rejected.
+- Supports inherited fileXio preservation and reuse of known resident IOP services; fresh IOP boot has device-specific USB, ATA/exFAT BDM, MX4SIO, i.LINK, UDPBD/UDPFS (from valid `IPCONFIG.DAT`), APA/PFS, and MMCE module initialization.
+- Pins the MMCE source already present in the fork, initializes its SIO2 hook before PAD/MC clients for fresh IOP, and retries **only the exact named APA partition** for a bounded interval.
+- Native ELF builds and host boot-path tests pass. Retail console startup, multi-drive enumeration, physical transport mount names, sustained MMCE stream/controls, IOP-reset behavior, network interoperability, and audio coexistence **are not yet proven**.
+- Some driver families expose files under `massN:` rather than a transport-specific path. Supplying a physical transport label such as `mx4sio:` does not itself prove the corresponding filesystem name is valid. The caller should use the actual mounted path and can explicitly request the driver via that path only where that device namespace is supported.
+
+## Original v1.0 baseline limitations (historical; being addressed)
 
 - `ps2/src/platform/iop.c:ps2_iop_init` always resets the IOP when the boot-device type is not HOST. This destroys inherited BDM, USB, network, and other launcher services. The current bootstrap then always loads iomanX/fileXio rather than negotiating with already-resident services.
 - `ps2/src/platform/iop.c:ps2_iop_load_boot_device_drivers` loads USB modules for MASS and UNKNOWN, mmceman for MMCE, and has an explicit unimplemented HDD branch. There is no generic UDPFS/MX4SIO/i.LINK/exFAT setup in this baseline.
-- `ps2/src/storage/bootpath.c` preserves literal massN paths but rewrites `usb:` and `bdm:` aliases to `mass:`, without proof of equivalent device identity. Treat that as an unsafe ambiguity; do not map the first matching DAT to a different physical device.
+- `ps2/src/storage/bootpath.c` preserves literal massN paths but rewrote some storage aliases to unindexed `mass:`, without preserving verified device identity. Treat that as an unsafe ambiguity; do not map the first matching DAT to a different physical device.
 - `ps2/src/storage/assets.c` opens `SSB64.DAT` next to the ELF and then uses `ps2_file_*`; the storage API in `ps2/src/storage/file.c` already abstracts open/read/seek/close. Keep the DAT parser unchanged.
 - `ps2/ps2.yaml` currently declares one native EE target (`ssb64`). Confirm the distribution's three ELF variants and their build provenance before asserting all three have distinct backends. Output filenames or video-mode variants need not imply three separate storage implementations.
 
