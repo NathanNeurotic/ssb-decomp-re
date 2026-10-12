@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <kernel.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 /* Game side (src/sys/main.c): the N64 boot thread's code. */
@@ -33,13 +34,17 @@ extern void ps2_overlay_state_init(void);
 
 /* USB (and MMCE) storage appears asynchronously after its drivers load;
  * wait until a file next to the ELF can be opened (up to ~6 s). */
-static void wait_for_boot_file(const char *name)
+static void wait_for_boot_file(void)
 {
     extern void ps2_delay_vblanks(int n);
     char path[288];
     int i, fd = -1;
 
-    ps2_storage_path(path, sizeof(path), name);
+    if (!ps2_storage_pack_path(path, sizeof(path)))
+    {
+        ps2_log("boot: DAT path is invalid or too long");
+        return;
+    }
     for (i = 0; i < 60; i++)
     {
         fd = open(path, O_RDONLY);
@@ -61,10 +66,22 @@ static void wait_for_boot_file(const char *name)
 int ps2_main(int argc, char *argv[])
 {
     const PS2MemStats *mem;
+    int bad_data_path = 0;
+    int i;
 
     ps2_log_init();
     ps2_crash_init();
     ps2_storage_set_boot_path((argc > 0) ? argv[0] : NULL);
+    ps2_storage_set_data_path(NULL);
+    /* Preserve the full caller-provided DAT identity across IOP setup. */
+    for (i = 1; i < argc; i++)
+    {
+        if (argv[i] != NULL && strncmp(argv[i], "--data=", 7) == 0)
+        {
+            if (!ps2_storage_set_data_path(argv[i] + 7))
+                bad_data_path = 1;
+        }
+    }
     /* Stage colours (troubleshooting on hardware, see PS2_PORT.md): navy =
      * started, half-intensity colours = IOP reset and one per IOP module,
      * blue = GS video init, full-intensity colours = GS init steps, then the
@@ -102,10 +119,12 @@ int ps2_main(int argc, char *argv[])
     ps2_gs_init();
     ps2_vblank_init();
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
+    if (bad_data_path)
+        ps2_panic("invalid --data path (must be absolute and under 300 bytes)");
 
     ps2_iop_load_boot_device_drivers(ps2_storage_boot_device());
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
-    wait_for_boot_file("SSB64.DAT");
+    wait_for_boot_file();
     if (ps2_storage_boot_device() != PS2_BOOT_CDROM)
     {
         /* crash/panic reports write SSB64.LOG from here on */
@@ -123,8 +142,7 @@ int ps2_main(int argc, char *argv[])
 
     if (!ps2_assets_init())
     {
-        ps2_panic("asset pack not found next to the ELF (%sSSB64.DAT). Run ps2/tools/prepare_assets.sh first.",
-                  ps2_storage_boot_dir());
+        ps2_panic("asset pack unavailable at requested path; check SSB64.DAT and device services");
     }
     ps2_save_init();
     /* libsd + sdrdrv are loaded here rather than with the base modules so a
