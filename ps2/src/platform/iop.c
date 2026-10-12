@@ -33,6 +33,7 @@
 #include <sbv_patches.h>
 #include <malloc.h>
 #include <sifrpc.h>
+#include <smod.h>
 #include <string.h>
 
 #define DECLARE_IRX(name)                         \
@@ -249,10 +250,38 @@ static int load_irx(const char *name, void *buf, unsigned int size, const char *
     int id;
     void *src = buf;
     void *bounce = NULL;
-    /* Reusing one shared backend can require the BDM core twice, once for
-     * the ELF device and once for an explicit DAT transport. Load once. */
+    /* Reusing a shared backend may require a module twice. Also check the
+     * *actual* IOP module list when a launcher owns the environment, rather
+     * than assuming the loader left the PAD/MC/audio stack unloaded. */
     if (ps2_iop_module_loaded(name))
         return 0;
+    if (sInheritedFileXio)
+    {
+        static const struct { const char *requested; const char *resident; } known[] = {
+            {"sio2man", "sio2man"},
+            {"mtapman", "multitap_manager"},
+            {"padman", "padman"},
+            {"mcman", "mcman_cex"},
+            {"mcman", "mcman"},
+            {"mcserv", "mcserv"},
+            {"libsd", "freesd"},
+            {"libsd", "libsd"},
+            {"filexio", "IOX/File_Manager_Rpc"},
+        };
+        smod_mod_info_t info;
+        unsigned int i;
+        for (i = 0; i < sizeof(known) / sizeof(known[0]); i++)
+        {
+            if (strcmp(name, known[i].requested) == 0 &&
+                smod_get_mod_by_name(known[i].resident, &info))
+            {
+                if (sLoadedCount < MAX_TRACKED_MODULES)
+                    sLoaded[sLoadedCount++] = name;
+                ps2_log("IOP: reusing resident %s (%s)", name, known[i].resident);
+                return 0;
+            }
+        }
+    }
 
     /* SifExecModuleBuffer() sends the image with a SIF DMA REF tag, and the
      * DMAC only addresses whole quadwords.  A blob that the embedding step
@@ -377,15 +406,16 @@ void ps2_iop_init(void)
 
     if (sInheritedFileXio)
     {
-        /* The launcher owns iomanX, fileXio and its device modules. Never
-         * overwrite that mount namespace. Input modules may already be
-         * present; an unsuccessful duplicate load is not proof they are
-         * absent. libpad/libmtap initialization remains the consumer check. */
-        if (LOAD_IRX(mtapman, 0x006020) < 0)
-            ps2_log("IOP: inherited mtapman retained or unavailable");
-        if (LOAD_IRX(padman, 0x404040) < 0)
-            ps2_log("IOP: inherited padman retained or unavailable");
-        ps2_log("IOP: inherited fileXio; boot drivers remain launcher-owned");
+        /* launcHER normally supplies sio2man/mcman/mcserv, but not always
+         * PAD or multitap. Reuse resident modules when present and load only
+         * missing base services. Do not replace the live I/O manager. */
+        if (LOAD_IRX(sio2man, 0x008000) < 0 ||
+            LOAD_IRX(mtapman, 0x006020) < 0 ||
+            LOAD_IRX(padman, 0x404040) < 0 ||
+            LOAD_IRX(mcman, 0x804040) < 0 ||
+            LOAD_IRX(mcserv, 0x402000) < 0)
+            goto module_failure;
+        ps2_log("IOP: inherited fileXio; existing device mounts retained");
         return;
     }
 
