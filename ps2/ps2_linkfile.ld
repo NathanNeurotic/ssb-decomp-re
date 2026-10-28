@@ -45,6 +45,14 @@ SECTIONS {
 		PROVIDE(__DTOR_END__ = .);
 	}
 
+	/* The pinned sdk-core crt0 also walks .init_array; this mirrors the SDK linkfile. */
+	.init_array ALIGN(16): {
+		PROVIDE(__init_array_start = .);
+		KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*)))
+		KEEP(*(.init_array))
+		PROVIDE(__init_array_end = .);
+	}
+
 	.reginfo : { *(.reginfo) }
 
 	.data ALIGN(128): {
