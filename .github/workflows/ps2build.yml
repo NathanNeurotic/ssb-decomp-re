@@ -24,8 +24,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The newest ps2build SDK: the latest versions come from git.techwritescode.dev's release API (or,
-      # when it is down, the newest NathanNeurotic/ps2build-mirror release). The SDK cached under them is
+      # The newest ps2build SDK: the latest versions come from ps2build's release manifest on GitHub (or,
+      # when it is down, the newest NathanNeurotic/old-ps2build-mirror release). The SDK cached under them is
       # restored, else an older cached SDK is updated in place, else it is installed; then it is cached. A
       # mirror fallback older than the latest is never cached under the latest versions.
       - name: Resolve the latest ps2build SDK

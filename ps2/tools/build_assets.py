@@ -82,7 +82,7 @@ def log(msg):
 def find_ee_gcc():
     ps2build = shutil.which("ps2build")
     if not ps2build:
-        sys.exit("ps2build not found in PATH (install the PS2Build SDK from https://ps2.techwritescode.dev/)")
+        sys.exit("ps2build not found in PATH (install the PS2Build SDK from https://ps2build.dev/)")
     root = os.path.dirname(os.path.realpath(ps2build))
     for name in ("mips64r5900el-ps2-elf-gcc.exe", "mips64r5900el-ps2-elf-gcc"):
         p = os.path.join(root, "toolchain", "ee", "bin", name)
