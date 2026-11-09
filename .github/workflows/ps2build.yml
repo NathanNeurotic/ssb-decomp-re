@@ -24,11 +24,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The newest ps2build SDK: the latest versions come from ps2build's release manifest on GitHub (or,
-      # when it is down, the newest NathanNeurotic/old-ps2build-mirror release). The SDK cached under them is
-      # restored, else an older cached SDK is updated in place, else it is installed; then it is cached. A
-      # mirror fallback older than the latest is never cached under the latest versions.
-      - name: Resolve the latest ps2build SDK
+      # The ps2build SDK pinned in .github/ps2build-sdk.env: resolving it makes no network call. The SDK
+      # cached under those versions is restored, else an older cached SDK is updated in place, else it is
+      # installed: from the official GitHub releases, or when they fail from the pinned
+      # NathanNeurotic/old-ps2build-mirror release. Then it is cached. A mirror fallback that does not hold
+      # the pinned versions is never cached under them.
+      - name: Resolve the pinned ps2build SDK
         env:
           PS2BUILD_SDK_MIRROR_TOKEN: ${{ secrets.PS2BUILD_MIRROR_TOKEN }}
         id: sdk
