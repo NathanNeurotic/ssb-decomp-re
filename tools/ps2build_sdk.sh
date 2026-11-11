@@ -6,9 +6,8 @@
 #        ps2build_sdk.sh --resolve [--llvm] OUT    (CI, before the cache step: write the versions to OUT)
 #
 # The pin file (PS2BUILD_SDK_PIN, default .github/ps2build-sdk.env) lists the components as name=vX, so
-# resolving them asks no server anything. .github/workflows/ps2build-sdk-watch.yml is what asks the
-# official release API, once a week, and proposes new pins. A bare name (or "latest") still works and
-# follows the newest official release (from ps2build's manifest, else the release API) in every run.
+# resolving them asks no server anything. Bumping the pins is a manual edit of that file. A bare name
+# (or "latest") still works and follows the newest official release (from ps2build's manifest, else the release API) in every run.
 # The versions are installed from:
 #   1. DEST, when it already holds exactly those versions (an actions/cache restore).
 #   2. The official GitHub releases, "ps2build update <component> --version <tag>" for each component that differs,
@@ -127,10 +126,19 @@ mirror_fetch() { # release (latest or a tag) name file: one file of a ps2build-m
     api_fetch "$MIRROR_API/repos/$PS2BUILD_SDK_MIRROR/releases/assets/$id" "$3" application/octet-stream
 }
 
-# Versions, tags and hashes from the network end up in a pin file that later steps source, so anything
-# but these characters is refused (an empty result, as if the value were missing).
+# Versions, tags and hashes from the network end up in a pin file that later steps source, and some are
+# split into words and evaluated, so anything but these characters is refused (an empty result, as if the
+# value were missing). Only PS2BUILD_COMPONENTS ("name=version ...") may hold spaces and "=".
 pin_value() { # name file -> the value a pin.env assigns, without quotes
-    sed -n "s/^$1=\"\{0,1\}\([A-Za-z0-9._+= -]*\)\"\{0,1\}\$/\1/p" "$2" | head -n 1
+    case $1 in PS2BUILD_COMPONENTS) chars='A-Za-z0-9._+= -' ;; *) chars='A-Za-z0-9._+-' ;; esac
+    sed -n "s/^$1=\"\{0,1\}\([$chars]*\)\"\{0,1\}\$/\1/p" "$2" | head -n 1
+}
+
+# A version taken from a mirror pin.env must be there: an empty one would be read as "latest" later.
+mirror_value() { # name file -> the value, or fail when it is missing or refused
+    value=$(pin_value "$1" "$2")
+    [ -n "$value" ] || { log "the newest ps2build-mirror pin.env has no valid $1" >&2; return 1; }
+    echo "$value"
 }
 
 version_in() { # component "name=version ..." -> version
@@ -203,11 +211,19 @@ resolve_mirror() { # the release API is down: the newest mirror release defines 
         resolved="$resolved${resolved:+ }$entry"
     done
     PS2BUILD_COMPONENTS=$resolved
-    [ "$PS2BUILD_LLVM_TOOLCHAIN" = latest ] && PS2BUILD_LLVM_TOOLCHAIN=$(pin_value PS2BUILD_LLVM_TOOLCHAIN "$pin_tmp")
+    if [ "$PS2BUILD_LLVM_TOOLCHAIN" = latest ]; then
+        PS2BUILD_LLVM_TOOLCHAIN=$(mirror_value PS2BUILD_LLVM_TOOLCHAIN "$pin_tmp") || { rm -f "$pin_tmp"; return 1; }
+    fi
     for name in $PS2BUILD_EXTRAS; do
         var=$(extra_var "$name")_VERSION
         eval "version=\${$var:-latest}"
-        [ "$version" = latest ] && eval "$var=\$(pin_value $var \"\$pin_tmp\")"
+        [ "$version" = latest ] || continue
+        if [ -n "$PS2BUILD_EXTRAS_TAG" ]; then # the SDK mirror cannot say what the separate extras release holds
+            log "$var is unpinned, and the extras come from $PS2BUILD_EXTRAS_TAG; pin it"
+            rm -f "$pin_tmp"
+            return 1
+        fi
+        eval "$var=\$(mirror_value $var \"\$pin_tmp\")" || { rm -f "$pin_tmp"; return 1; }
     done
     PS2BUILD_SDK_TAG=$(pin_value PS2BUILD_SDK_TAG "$pin_tmp")
     PS2BUILD_SDK_SUMS_SHA256=$(pin_value PS2BUILD_SDK_SUMS_SHA256 "$pin_tmp")
@@ -306,7 +322,8 @@ adopt_mirror_pin() { # pin.env of the newest mirror release: install that, and s
     sums=$(pin_value PS2BUILD_SDK_SUMS_SHA256 "$1")
     components=$(pin_value PS2BUILD_COMPONENTS "$1")
     llvm=$(pin_value PS2BUILD_LLVM_TOOLCHAIN "$1")
-    [ -n "$tag" ] && [ -n "$sums" ] && [ -n "$components" ] || { log "the newest ps2build-mirror pin.env is incomplete"; return 1; }
+    [ -n "$tag" ] && [ -n "$sums" ] && [ -n "$components" ] && { [ "$LLVM" = 0 ] || [ -n "$llvm" ]; } \
+        || { log "the newest ps2build-mirror pin.env is incomplete"; return 1; }
     [ "$LLVM" = 1 ] && components_llvm="$components llvm-toolchain=$llvm" latest_llvm="$PS2BUILD_COMPONENTS llvm-toolchain=$PS2BUILD_LLVM_TOOLCHAIN" \
         || components_llvm=$components latest_llvm=$PS2BUILD_COMPONENTS
     older=$(differences "$components_llvm" "$latest_llvm")
@@ -315,10 +332,12 @@ adopt_mirror_pin() { # pin.env of the newest mirror release: install that, and s
         warn "the newest ps2build-mirror release $tag does not hold the wanted SDK: ${older% }"
     fi
     PS2BUILD_SDK_TAG=$tag PS2BUILD_SDK_SUMS_SHA256=$sums PS2BUILD_COMPONENTS=$components PS2BUILD_LLVM_TOOLCHAIN=$llvm
-    for name in $PS2BUILD_EXTRAS; do
-        var=$(extra_var "$name")_VERSION
-        eval "$var=\$(pin_value $var \"\$1\")"
-    done
+    if [ -z "$PS2BUILD_EXTRAS_TAG" ]; then # with a separate extras release, the extras keep their own pins
+        for name in $PS2BUILD_EXTRAS; do
+            var=$(extra_var "$name")_VERSION
+            eval "$var=\$(mirror_value $var \"\$1\")" || return 1
+        done
+    fi
     # Later steps (the ogg/vorbis packages) then take the same release.
     if [ "$PS2BUILD_SDK_RESOLVED" = 1 ]; then
         write_pin "$PIN"
