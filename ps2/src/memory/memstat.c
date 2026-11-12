@@ -107,6 +107,18 @@ const char *ps2_mem_category_name(PS2MemCategory cat)
     return ((unsigned)cat < PS2_MEM_CATEGORY_COUNT) ? sNames[cat] : "?";
 }
 
+/* Keep DMA cache-line rounding in unsigned range AND within the signed
+ * accounting delta used by ps2_mem_add(). Anything beyond this value is
+ * impossible on a 32 MiB retail PS2 and would otherwise wrap to zero or
+ * become negative before memalign/accounting. */
+static uint32_t ps2_mem_checked_aligned_size(uint32_t size)
+{
+    if (size > 0x7fffffc0u)
+        ps2_panic("invalid EE allocation size %u (64-byte rounding overflow)",
+                  (unsigned)size);
+    return (size + 63u) & ~63u;
+}
+
 void *ps2_mem_alloc(PS2MemCategory cat, uint32_t size, uint32_t align)
 {
     void *p;
@@ -115,7 +127,7 @@ void *ps2_mem_alloc(PS2MemCategory cat, uint32_t size, uint32_t align)
     {
         align = 16; /* EE DMA / cache line friendliness */
     }
-    size = (size + 63u) & ~63u; /* whole cache lines: safe to invalidate */
+    size = ps2_mem_checked_aligned_size(size);
     p = memalign(align, size);
 
     if (p == NULL)
@@ -136,7 +148,7 @@ void ps2_mem_free(PS2MemCategory cat, void *p, uint32_t size)
 {
     if (p != NULL)
     {
-        size = (size + 63u) & ~63u;
+        size = ps2_mem_checked_aligned_size(size);
         free(p);
         ps2_mem_add(cat, -(int32_t)size);
     }

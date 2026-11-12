@@ -36,3 +36,29 @@ User reports Cooper original release runs smoothly on the same console while bb1
 ## Console feedback and texture follow-up
 
 User confirms c17dce07f eliminates lag, but Mario hat, Pikachu face, Mario fireballs and intro light remain visually wrong. Preserve the Cooper GS/VI baseline. Reapply only masked/clamped tile materialization and signed STQ rectangle coordinates from 7e409f7b2; retain upstream combiner, diagnostics and presentation. Coordinate harness passes 8,388,608 cases. Intro light alpha/blending cause remains unresolved and requires further evidence; no console graphics or performance pass claimed for this follow-up.
+
+## MMCE severe gameplay lag follow-up (2026-10-09)
+
+User reports MMCE gameplay is effectively unplayable and recalls an earlier
+working revision. No specific original binary has been identified yet.
+Source history confirms 5336b065 deliberately disabled MMCEDRV promotion;
+the current game retains the persistent MMCEMAN descriptor. Do not reconnect
+the dormant reset/handoff experiment as a speculative performance repair.
+
+5e9bc6eec removed MMCEMAN's 2 KiB read quantum and 500 us inter-chunk yield,
+leaving 16 KiB synchronous bursts through shared SIO2. Restore that narrow
+policy from 00b4a3a6b, preserving retries and other transport read limits.
+This is a scheduling regression candidate, not proof of the reported FPS
+cause; smaller requests and yields can increase total loading time.
+
+The existing SELECT+R3 performance overlay now reports asset I/O wait ms/s
+alongside total bytes and renderer time. It counts synchronous seek/read,
+retry and reopen elapsed time, excludes lock acquisition and memory-resident
+copies, and includes scheduling preemption during a read. Interpret it as
+wall time in the asset I/O path, not pure card transfer time. If bytes stop
+increasing and I/O wait is zero during severe lag, continue renderer/audio
+investigation rather than further changing MMCE transfer sizes.
+
+Source-extracted host regression covers bounded reads, partial reads, retries,
+and unchanged non-MMCE policy. Native ELF compile/link passed. Actual MMCE
+FPS, audio, input and IGR acceptance remains pending on the candidate.

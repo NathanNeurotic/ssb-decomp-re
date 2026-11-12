@@ -109,7 +109,9 @@ typedef struct PS2RenderStats
     uint32_t dl_commands;
     uint32_t kicks;
     uint32_t packet_bytes;
-    uint32_t gfx_us;        /* last gfx task translate+draw time */
+    uint32_t gfx_us;        /* total gfx task translate + DMA + GS completion */
+    uint32_t dma_wait_us;   /* blocking GIF DMA waits within gfx task */
+    uint32_t gs_wait_us;    /* blocking GS FINISH waits within gfx task */
     uint32_t unknown_cmds;
 } PS2RenderStats;
 

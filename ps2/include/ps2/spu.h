@@ -17,6 +17,10 @@
 int ps2_spu_init(void);
 int ps2_spu_ready(void);
 
+/* Best-effort, bounded SPU2 key-off/mute before an IGR/OSDSYS handoff.
+ * No changes to normal audio frame scheduling. */
+void ps2_spu_shutdown(void);
+
 /* Finds the converted sample for an N64 wavetable (wav->base, wav->len and
  * its loop points in samples, 0/0 when not looped). Returns an id or -1. */
 int ps2_spu_find_sample(uint32_t rom_key, uint32_t len, uint32_t loop_start, uint32_t loop_end);

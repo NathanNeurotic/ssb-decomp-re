@@ -19,12 +19,14 @@ static volatile uint32_t sPresented;
 static uint32_t sFpsWindowStart;
 static uint32_t sFpsWindowFrames;
 static uint32_t sFpsX10;
+static uint32_t sIoWindowUs, sIoMsPerSecond;
 static char sSceneName[32] = "?";
 
 extern uint32_t ps2_arena_size(void);
 extern uint32_t ps2_audio_memory_used(void);
 extern int32_t ps2_ultra_coroutine_stacks_in_use(void);
 extern uint32_t ps2_assets_bytes_read(void);
+extern uint32_t ps2_assets_io_time_us(void);
 /* Game heap pointer (src/sys/taskman.c) - sampled for arena use. */
 extern uint8_t gPS2SceneArena[];
 typedef struct { uint32_t id; void *start, *end, *ptr; } PS2GameHeapView;
@@ -38,6 +40,10 @@ int ps2_overlay_enabled(void)
 void ps2_overlay_toggle(void)
 {
     sEnabled = !sEnabled;
+    sFpsWindowStart = ps2_time_us();
+    sFpsWindowFrames = sPresented;
+    sIoWindowUs = ps2_assets_io_time_us();
+    sIoMsPerSecond = 0;
 }
 
 void ps2_overlay_set_scene_name(const char *name)
@@ -75,13 +81,19 @@ void ps2_overlay_draw(void)
     const PS2RenderStats *r = &gPS2RenderStatsLast;
     uint32_t now = ps2_time_us();
     uint32_t arena_used = 0;
+    uint32_t gfx_wait = r->dma_wait_us + r->gs_wait_us;
+    uint32_t gfx_other = (r->gfx_us > gfx_wait) ? r->gfx_us - gfx_wait : 0;
     int y = 12; /* clear of the top overscan area on TVs */
     uint32_t warn = 0x4040FF, ok = 0xE0FFE0, dim = 0xC0C0C0;
 
     if (now - sFpsWindowStart >= 1000000u)
     {
         uint32_t frames = sPresented - sFpsWindowFrames;
+        uint32_t io = ps2_assets_io_time_us();
 
+        sIoMsPerSecond = (uint32_t)(((uint64_t)(io - sIoWindowUs) * 1000u) /
+                                  (now - sFpsWindowStart));
+        sIoWindowUs = io;
         sFpsX10 = (frames * 10000000u) / (now - sFpsWindowStart);
         sFpsWindowStart = now;
         sFpsWindowFrames = sPresented;
@@ -91,9 +103,13 @@ void ps2_overlay_draw(void)
         arena_used = (uint32_t)((uint8_t *)gSYTaskmanGeneralHeap.ptr - gPS2SceneArena);
     }
 
-    ps2_gs_rect(0, 0, 200, 150, 0xA0000000);
-    line(&y, ok, "FPS %u.%u  gfx %u.%ums", (unsigned)(sFpsX10 / 10), (unsigned)(sFpsX10 % 10),
+    ps2_gs_rect(0, 0, 256, 162, 0xA0000000);
+    line(&y, ok, "FPS %u.%u gfx %u.%ums", (unsigned)(sFpsX10 / 10), (unsigned)(sFpsX10 % 10),
          (unsigned)(r->gfx_us / 1000), (unsigned)((r->gfx_us / 100) % 10));
+    /* gfx_other includes EE translation, packet construction and overlay;
+     * DMA/GS waits remain separately visible instead of blaming storage. */
+    line(&y, dim, "EE %ums GIF %ums GS %ums", (unsigned)(gfx_other / 1000),
+         (unsigned)(r->dma_wait_us / 1000), (unsigned)(r->gs_wait_us / 1000));
     line(&y, (m->total_used > m->budget) ? warn : ok, "EE %uK/%uK pk %uK", (unsigned)(m->total_used >> 10),
          (unsigned)(m->budget >> 10), (unsigned)(m->total_peak >> 10));
     line(&y, dim, " code %uK arena %uK/%uK", (unsigned)(m->used[PS2_MEM_CODE_STATIC] >> 10),
@@ -109,7 +125,8 @@ void ps2_overlay_draw(void)
     line(&y, dim, "tri %u rect %u batch %u", (unsigned)r->triangles, (unsigned)r->rects, (unsigned)r->batches);
     line(&y, dim, "dl %u st %u pkt %uK", (unsigned)r->dl_commands, (unsigned)r->state_writes,
          (unsigned)(r->packet_bytes >> 10));
-    line(&y, dim, "io %uK scene %s", (unsigned)(ps2_assets_bytes_read() >> 10), sSceneName);
+    line(&y, dim, "io %uK wait %ums/s %s", (unsigned)(ps2_assets_bytes_read() >> 10),
+         (unsigned)sIoMsPerSecond, sSceneName);
     if (r->unknown_cmds)
     {
         line(&y, warn, "unknown GBI cmds %u", (unsigned)r->unknown_cmds);

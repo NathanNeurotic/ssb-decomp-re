@@ -8,11 +8,21 @@
  * loaded that the current scene did not ask for.
  */
 #include <ps2/platform.h>
+#include <ps2/input.h>
 #include <ps2/assetpack.h>
 
+#include <errno.h>
 #include <kernel.h>
 #include <stdio.h>
 #include <string.h>
+
+/* Recovery-only controller/GS menu uses the existing boot renderer.
+ * These calls do not occur on ordinary, unambiguous asset startup. */
+extern void ps2_delay_vblanks(int n);
+extern void ps2_gs_clear(int fb_index, uint32_t rgba, int clear_z);
+extern void ps2_gs_text(int x, int y, uint32_t rgba, const char *s);
+extern void ps2_pkt_finish(void);
+extern void ps2_gs_present_now(int fb_index);
 
 #define PACK_NAME "SSB64.DAT"
 
@@ -26,10 +36,14 @@ static PS2PackRegion *sRegions;
 static uint8_t **sResidentPtr; /* per region: EE copy or NULL */
 static uint8_t *sResidentBlob;
 static int sReadSema = -1;
+/* A rejected open is not evidence that DAT generation was faulty. */
+static int sInitFailReason;
+static int sInitOpenErrno;
 
 static uint32_t sBytesRead;
 static uint32_t sReads;
 static uint32_t sMisses;
+static uint32_t sIoTimeUs;
 
 static int reopen_pack_stream(void)
 {
@@ -59,6 +73,7 @@ static int read_exact(void *dst, uint32_t offset, uint32_t size)
 {
     extern void ps2_delay_vblanks(int n);
     int attempt;
+    uint32_t started = ps2_time_us();
 
     sLastSeekRc = 0;
     sLastReadGot = 0;
@@ -80,7 +95,10 @@ static int read_exact(void *dst, uint32_t offset, uint32_t size)
         {
             sLastReadGot = ps2_file_read(sFd, dst, size);
             if (sLastReadGot == (int)size)
+            {
+                sIoTimeUs += ps2_time_us() - started;
                 return 1;
+            }
 
             ps2_log("assets: short/read fail off=0x%08x want=%u got=%d attempt=%d",
                     (unsigned)offset, (unsigned)size, sLastReadGot, attempt + 1);
@@ -93,6 +111,148 @@ static int read_exact(void *dst, uint32_t offset, uint32_t size)
         }
     }
 
+    sIoTimeUs += ps2_time_us() - started;
+    return 0;
+}
+
+
+/* Validate all pack-controlled offsets BEFORE allocating buffers or forming
+ * resident pointers. The format writer stores a fixed 64-byte header, a
+ * packed region table, then a contiguous resident-data area. Corrupt media
+ * must never turn a valid DAT open into EE memory corruption. */
+static int pack_header_layout_valid(const PS2PackHeader *h)
+{
+    uint32_t table_bytes;
+    uint32_t table_end;
+
+    if (h->total_size < sizeof(*h) || h->total_size > 0x7fffffffu ||
+        h->region_count == 0 || h->region_table_offset < sizeof(*h) ||
+        h->region_table_offset > h->total_size)
+        return 0;
+
+    if (h->region_count > (h->total_size - h->region_table_offset) /
+                              (uint32_t)sizeof(PS2PackRegion))
+        return 0;
+
+    table_bytes = h->region_count * (uint32_t)sizeof(PS2PackRegion);
+    table_end = h->region_table_offset + table_bytes;
+    if (h->resident_offset < table_end ||
+        h->resident_offset > h->total_size ||
+        h->resident_bytes > h->total_size - h->resident_offset ||
+        h->resident_bytes > UINT32_MAX - 64u)
+        return 0;
+
+    return 1;
+}
+
+/* Ensure every ROM range and file span is well-formed before the loader
+ * stores pointers into the resident blob. These checks do not modify
+ * descriptors or require extra filesystem calls on valid packs. */
+static int pack_region_layout_valid(const PS2PackHeader *h,
+                                    const PS2PackRegion *regions)
+{
+    uint32_t previous_end = 0;
+    uint32_t i;
+
+    for (i = 0; i < h->region_count; i++)
+    {
+        const PS2PackRegion *r = &regions[i];
+
+        if ((r->flags & ~PS2PACK_REGION_RESIDENT) != 0 ||
+            r->size > UINT32_MAX - r->vrom_start ||
+            (i != 0 && r->vrom_start < previous_end) ||
+            r->file_offset > h->total_size ||
+            r->size > h->total_size - r->file_offset)
+            return 0;
+
+        previous_end = r->vrom_start + r->size;
+        if (r->flags & PS2PACK_REGION_RESIDENT)
+        {
+            uint32_t from_resident;
+            if (r->file_offset < h->resident_offset)
+                return 0;
+            from_resident = r->file_offset - h->resident_offset;
+            if (from_resident > h->resident_bytes ||
+                r->size > h->resident_bytes - from_resident)
+                return 0;
+        }
+    }
+
+    return 1;
+}
+
+
+/* Only used after a launcher IOP reset has lost the original partition ID.
+ * Do not silently choose whichever massN: happens to mount first. The
+ * existing GS/PAD modules are ready; initialize input only for this unusual
+ * recovery screen, not during ordinary asset loading. */
+static int choose_ambiguous_mass_slot(unsigned int mask)
+{
+    int candidates[4];
+    int count = 0;
+    int selected = 0;
+    int last = 0;
+    int frames;
+    unsigned int i;
+
+    for (i = 0; i < 4; ++i)
+        if (mask & (1u << i))
+            candidates[count++] = (int)i;
+    if (count < 2)
+        return 0;
+
+    ps2_log("assets: rebuilt IOP has %d DAT partitions; awaiting controller choice", count);
+    ps2_input_init();
+
+    for (frames = 0; frames < 1800; ++frames) /* max 30 seconds */
+    {
+        const PS2InputState *pad;
+        int held, edge;
+
+        ps2_input_poll();
+        pad = ps2_input_state(0);
+        held = (pad != NULL && pad->connected) ? pad->buttons : 0;
+        edge = held & ~last;
+        last = held;
+
+        if (edge & N64_BTN_DU)
+            selected = (selected + count - 1) % count;
+        if (edge & N64_BTN_DD)
+            selected = (selected + 1) % count;
+        if (edge & N64_BTN_B)
+        {
+            ps2_log("assets: rebuilt mass selection cancelled");
+            return 0;
+        }
+        if (edge & N64_BTN_A)
+            return ps2_storage_select_rebuilt_mass_slot((unsigned int)candidates[selected]);
+
+        /* Do not force a full GS redraw every VBlank; keep input responsive
+         * while avoiding additional IOP filesystem and GIF work. */
+        if (frames == 0 || edge != 0 || (frames % 120) == 0)
+        {
+            char line[64];
+            int n;
+
+            ps2_gs_clear(0, 0x201018, 0);
+            ps2_gs_text(8, 16, 0x80C0FF, "SSB64 - CHOOSE DAT PARTITION");
+            ps2_gs_text(8, 36, 0xFFFFFF, "Launcher IOP reset changed mass IDs.");
+            ps2_gs_text(8, 48, 0xFFFFFF, "Choose the original game volume:");
+            for (n = 0; n < count; ++n)
+            {
+                snprintf(line, sizeof(line), "%s mass%d:/",
+                         (n == selected) ? ">" : " ", candidates[n]);
+                ps2_gs_text(20, 70 + n * 15,
+                            (n == selected) ? 0x40FF40 : 0xC0C0C0, line);
+            }
+            ps2_gs_text(8, 167, 0xFFFFFF, "UP/DOWN choose  X confirm");
+            ps2_gs_text(8, 179, 0xFFFFFF, "O cancel  (30s timeout)");
+            ps2_pkt_finish();
+            ps2_gs_present_now(0);
+        }
+        ps2_delay_vblanks(1);
+    }
+    ps2_log("assets: rebuilt mass selection timed out");
     return 0;
 }
 
@@ -102,9 +262,14 @@ int ps2_assets_init(void)
     uint32_t i, table_bytes;
     ee_sema_t sema = { 0 };
 
+    sInitFailReason = 0;
+    sInitOpenErrno = 0;
+
     sema.init_count = 1;
     sema.max_count = 1;
     sReadSema = CreateSema(&sema);
+    if (sReadSema < 0)
+        ps2_panic("assets: cannot create stream semaphore");
 
     /*
      * Wait for the real pack by opening the handle we will keep for the
@@ -115,15 +280,19 @@ int ps2_assets_init(void)
     {
         extern void ps2_delay_vblanks(int n);
         int attempt;
+        int recovered_choice = 0;
 
         sFd = -1;
-        for (attempt = 0; attempt < 100; attempt++)
+        for (attempt = 0; attempt < (recovered_choice ? 10 : 100); attempt++)
         {
             if (ps2_storage_resolve_data_root(PACK_NAME))
             {
                 ps2_storage_path(path, sizeof(path), PACK_NAME);
                 snprintf(sPackPath, sizeof(sPackPath), "%s", path);
+                errno = 0;
                 sFd = ps2_file_open_read(sPackPath);
+                if (sFd < 0)
+                    sInitOpenErrno = errno;
             }
 
             /* PCSX2 Run ELF can lose argv[0]'s directory separators. */
@@ -131,13 +300,31 @@ int ps2_assets_init(void)
             {
                 snprintf(path, sizeof(path), "host:%s", PACK_NAME);
                 snprintf(sPackPath, sizeof(sPackPath), "%s", path);
+                errno = 0;
                 sFd = ps2_file_open_read(sPackPath);
+                if (sFd < 0)
+                    sInitOpenErrno = errno;
             }
 
             if (sFd >= 0)
             {
                 ps2_log("assets: persistent %s opened after %d ms", path, attempt * 100);
                 ps2_gs_boot_screen(PS2_BOOT_TITLE);
+                break;
+            }
+
+            /* massN: entries are logical partitions, not physical USB
+             * identities. Only in the rebuilt-IOP ambiguous case, present
+             * the user with the matching partitions; otherwise retain the
+             * automatic fast path and its original device binding. */
+            if (ps2_storage_pack_conflict_mask() != 0)
+            {
+                if (choose_ambiguous_mass_slot(ps2_storage_pack_conflict_mask()))
+                {
+                    recovered_choice = 1;
+                    continue; /* open exactly the chosen logical volume */
+                }
+                sInitFailReason = 6;
                 break;
             }
 
@@ -169,13 +356,31 @@ int ps2_assets_init(void)
     }
     if (sFd < 0)
     {
-        ps2_log("assets: cannot open %s", path);
+        /* The failing path is known but the reason is not: it may be a
+         * missing file, missing/hidden mount or an incompatible legacy
+         * FILEIO namespace. Do not advise re-generating valid DAT content. */
+        if (sInitFailReason != 6)
+            sInitFailReason = 1;
+        if (sInitFailReason != 6 && ps2_storage_pack_probe_count() > 0)
+            ps2_storage_pack_root_probe();
+        ps2_log("assets: cannot access %s errno=%d probes=%d root=%d",
+                path, ps2_storage_pack_probe_errno(),
+                ps2_storage_pack_probe_count(), ps2_storage_pack_root_accessible());
         return 0;
     }
     if (!read_exact(&sHeader, 0, sizeof(sHeader)) || memcmp(sHeader.magic, PS2PACK_MAGIC, 8) != 0 ||
         sHeader.version != PS2PACK_VERSION)
     {
-        ps2_log("assets: %s is not a v%d SSB64 pack", path, PS2PACK_VERSION);
+        sInitFailReason = 2;
+        ps2_log("assets: %s header invalid/unreadable (seek=%d read=%d)", path,
+                sLastSeekRc, sLastReadGot);
+        return 0;
+    }
+
+    if (!pack_header_layout_valid(&sHeader))
+    {
+        sInitFailReason = 5;
+        ps2_log("assets: SSB64.DAT header has invalid table/resident bounds");
         return 0;
     }
 
@@ -184,7 +389,15 @@ int ps2_assets_init(void)
     sResidentPtr = ps2_mem_alloc(PS2_MEM_GAME_HEAP, sHeader.region_count * sizeof(uint8_t *), 64);
     if (!read_exact(sRegions, sHeader.region_table_offset, table_bytes))
     {
+        sInitFailReason = 3;
         ps2_log("assets: region table read failed");
+        return 0;
+    }
+
+    if (!pack_region_layout_valid(&sHeader, sRegions))
+    {
+        sInitFailReason = 5;
+        ps2_log("assets: SSB64.DAT region has invalid ROM/file/resident range");
         return 0;
     }
 
@@ -193,6 +406,7 @@ int ps2_assets_init(void)
     if (sHeader.resident_bytes != 0 &&
         !read_exact(sResidentBlob, sHeader.resident_offset, sHeader.resident_bytes))
     {
+        sInitFailReason = 4;
         ps2_log("assets: resident block read failed");
         return 0;
     }
@@ -207,6 +421,47 @@ int ps2_assets_init(void)
             (unsigned)(sHeader.resident_bytes >> 10), (unsigned)(sHeader.total_size >> 10));
     ps2_gs_boot_screen(PS2_BOOT_TITLE);
     return 1;
+}
+
+const char *ps2_assets_last_init_error(void)
+{
+    static char message[220];
+
+    switch (sInitFailReason)
+    {
+    case 1:
+        snprintf(message, sizeof(message),
+                 "Cannot open SSB64.DAT on %s (errno=%d, tried=%d, root=%d). Check mount/path, not DAT generation.",
+                 ps2_storage_boot_dir(),
+                 ps2_storage_pack_probe_count() ? ps2_storage_pack_probe_errno() : sInitOpenErrno,
+                 ps2_storage_pack_probe_count(),
+                 ps2_storage_pack_root_accessible());
+        break;
+    case 2:
+        snprintf(message, sizeof(message),
+                 "SSB64.DAT opened but header read/validation failed (seek=%d read=%d)",
+                 sLastSeekRc, sLastReadGot);
+        break;
+    case 3:
+        snprintf(message, sizeof(message), "SSB64.DAT region table I/O failed");
+        break;
+    case 4:
+        snprintf(message, sizeof(message), "SSB64.DAT resident data I/O failed");
+        break;
+    case 5:
+        snprintf(message, sizeof(message), "SSB64.DAT opened but contains invalid region/layout metadata");
+        break;
+    case 6:
+        snprintf(message, sizeof(message),
+                 "DAT on multiple mass partitions (mask=0x%x). Controller selection cancelled/timed out; keep IOP or retry selection.",
+                 ps2_storage_pack_conflict_mask());
+        break;
+    default:
+        snprintf(message, sizeof(message), "SSB64.DAT runtime initialization failed");
+        break;
+    }
+
+    return message;
 }
 
 static int find_region(uint32_t addr)
@@ -226,6 +481,15 @@ static int find_region(uint32_t addr)
             return mid;
     }
     return -1;
+}
+
+uint32_t ps2_assets_region_size(uint32_t vrom_start)
+{
+    int index = (sRegions != NULL) ? find_region(vrom_start) : -1;
+
+    return index >= 0 && sRegions[index].vrom_start == vrom_start
+               ? sRegions[index].size
+               : 0;
 }
 
 void ps2_rom_read(uint32_t rom_addr, void *dst, uint32_t size)
@@ -289,6 +553,11 @@ void ps2_rom_read(uint32_t rom_addr, void *dst, uint32_t size)
 uint32_t ps2_assets_bytes_read(void)
 {
     return sBytesRead;
+}
+
+uint32_t ps2_assets_io_time_us(void)
+{
+    return sIoTimeUs;
 }
 
 uint32_t ps2_assets_read_count(void)

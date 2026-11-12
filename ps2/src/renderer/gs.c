@@ -168,7 +168,11 @@ static void dma_wait_gif(void)
 {
     if (sPktInFlight)
     {
+        /* Distinguish GIF DMA backpressure from CPU display-list work.
+         * These timestamps are passive; there is no change in wait order. */
+        uint32_t started = ps2_time_us();
         dmaKit_wait(DMA_CHANNEL_GIF, 0);
+        gPS2RenderStats.dma_wait_us += ps2_time_us() - started;
         sPktInFlight = 0;
     }
 }
@@ -259,8 +263,12 @@ void ps2_pkt_finish(void)
     *PGS_CSR = PGS_CSR_FINISH; /* clear FINISH */
     pkt_kick();
     dma_wait_gif();
-    while (!(*PGS_CSR & PGS_CSR_FINISH))
     {
+        uint32_t started = ps2_time_us();
+        while (!(*PGS_CSR & PGS_CSR_FINISH))
+        {
+        }
+        gPS2RenderStats.gs_wait_us += ps2_time_us() - started;
     }
 }
 
@@ -827,7 +835,7 @@ void ps2_gs_init(void)
     /* gsKit programs SMODE/SYNC/DISPLAY for the mode; from here on the
      * renderer owns VRAM layout, FRAME/ZBUF and the display circuit. */
     gsKit_init_screen(sGsGlobal);
-    ps2_boot_stage("GS: screen ready", 0xFF00FF); /* bright magenta */
+    ps2_boot_stage("GS: screen ready", 0x404040); /* grey: before first packet */
 
     ps2_mem_reclassify_static(PS2_MEM_GFX_STAGING, sizeof(sPktBuf));
 
